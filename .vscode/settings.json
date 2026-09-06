@@ -1,0 +1,6 @@
+{
+  "[elixir]": {
+    "editor.formatOnSave": true
+  },
+  "elixirLS.autoBuild": true
+}

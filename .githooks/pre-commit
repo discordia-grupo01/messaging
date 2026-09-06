@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Autoformatea los archivos .ex/.exs staged antes de cada commit.
+# Se activa una vez por clone con: git config core.hooksPath .githooks
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM -- "*.ex" "*.exs")
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+echo "Formateando con mix format..."
+mix format $STAGED
+git add $STAGED
+
+exit 0
