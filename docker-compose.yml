@@ -4,8 +4,14 @@ services:
     ports:
       - "4000:4000"
     env_file: .env
+    environment:
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/messaging_dev}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   mongo:
     image: mongo:7
@@ -13,6 +19,25 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ping: 1})"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   mongo_data:
+  rabbitmq_data:

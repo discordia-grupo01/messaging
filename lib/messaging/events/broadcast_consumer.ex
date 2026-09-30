@@ -1,0 +1,80 @@
+defmodule Messaging.Events.BroadcastConsumer do
+  use GenServer
+  require Logger
+
+  alias Messaging.Events.Backoff
+
+  @exchange "messaging.broadcast"
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(opts) do
+    url = Keyword.fetch!(opts, :url)
+    send(self(), :connect)
+    {:ok, %{url: url, backoff: Backoff.initial(), conn: nil, chan: nil}}
+  end
+
+  @impl true
+  def handle_info(:connect, state) do
+    case connect(state.url) do
+      {:ok, conn, chan} ->
+        Process.monitor(conn.pid)
+        Logger.info("messaging: broadcast_consumer connected exchange=#{@exchange}")
+        {:noreply, %{state | conn: conn, chan: chan, backoff: Backoff.initial()}}
+
+      {:error, reason} ->
+        Logger.warning(
+          "messaging: broadcast_consumer connect_failed reason=#{inspect(reason)} retry_in_ms=#{state.backoff}"
+        )
+
+        Process.send_after(self(), :connect, state.backoff)
+        {:noreply, %{state | backoff: Backoff.next(state.backoff)}}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
+    Logger.warning("messaging: broadcast_consumer connection_down reason=#{inspect(reason)}")
+    send(self(), :connect)
+    {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
+  end
+
+  @impl true
+  def handle_info({:basic_consume_ok, _meta}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:basic_cancel, _meta}, state), do: {:stop, :normal, state}
+
+  @impl true
+  def handle_info({:basic_cancel_ok, _meta}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:basic_deliver, payload, meta}, state) do
+    deliver_locally(payload)
+    AMQP.Basic.ack(state.chan, meta.delivery_tag)
+    {:noreply, state}
+  end
+
+  defp deliver_locally(payload) do
+    case Jason.decode(payload) do
+      {:ok, %{"channel_id" => channel_id} = message} ->
+        MessagingWeb.Endpoint.broadcast!("channel:" <> channel_id, "new_message", message)
+
+      {:error, reason} ->
+        Logger.warning("messaging: broadcast_consumer bad_message reason=#{inspect(reason)}")
+    end
+  end
+
+  defp connect(url) do
+    with {:ok, conn} <- AMQP.Connection.open(url),
+         {:ok, chan} <- AMQP.Channel.open(conn),
+         :ok <- AMQP.Exchange.declare(chan, @exchange, :fanout, durable: true),
+         {:ok, %{queue: queue}} <-
+           AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true),
+         :ok <- AMQP.Queue.bind(chan, queue, @exchange),
+         {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
+      {:ok, conn, chan}
+    end
+  end
+end

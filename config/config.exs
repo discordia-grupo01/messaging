@@ -1,8 +1,8 @@
 import Config
 
-config :my_app, MyAppWeb.Endpoint,
+config :messaging, MessagingWeb.Endpoint,
   url: [host: "localhost"],
-  render_errors: [formats: [json: MyAppWeb.ErrorJSON]],
-  pubsub_server: MyApp.PubSub
+  render_errors: [formats: [json: MessagingWeb.ErrorJSON]],
+  pubsub_server: Messaging.PubSub
 
 import_config "#{config_env()}.exs"
