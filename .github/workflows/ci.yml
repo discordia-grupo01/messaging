@@ -8,8 +8,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping: 1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        ports: ["5672:5672", "15672:15672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.16"
@@ -33,7 +54,53 @@ jobs:
         run: mix credo --strict
 
       - run: mix compile --warnings-as-errors
-      - run: mix test --cover
+
+      - name: Regenerar openapi.yaml
+        run: make openapi
+      - name: Commitear openapi.yaml si cambió
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs(openapi): regenerate openapi.yaml [skip ci]"
+          file_pattern: openapi.yaml
+
+      - name: Tests (unitarios + integracion contra Mongo y RabbitMQ reales; falla si la cobertura < 70%)
+        env:
+          MONGO_URL: mongodb://localhost:27017/messaging_test
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+        run: mix coveralls
 
       - name: Analisis estatico (Dialyzer)
         run: mix dialyzer
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Construir y publicar imagen
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/discordia-messaging"
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+  deploy:
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-messaging
+      cancel-in-progress: false
+    steps:
+      - name: Deploy a Oracle por SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.MESSAGING_VM_HOST }}
+          username: ${{ secrets.MESSAGING_VM_USER }}
+          key: ${{ secrets.MESSAGING_VM_SSH_KEY }}
+          script: ~/deploy.sh "${{ secrets.DOCKERHUB_USERNAME }}/discordia-messaging:${{ github.sha }}"
