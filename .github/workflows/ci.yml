@@ -65,6 +65,7 @@ jobs:
 
       - name: Tests (unitarios + integracion contra Mongo y RabbitMQ reales; falla si la cobertura < 70%)
         env:
+          MIX_ENV: test
           MONGO_URL: mongodb://localhost:27017/messaging_test
           RABBITMQ_URL: amqp://guest:guest@localhost:5672
         run: mix coveralls
