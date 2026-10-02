@@ -14,6 +14,10 @@ if config_env() == :prod do
   config :messaging, MessagingWeb.Endpoint,
     http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("PORT") || "4000")],
     secret_key_base: System.fetch_env!("SECRET_KEY_BASE"),
+    check_origin:
+      "CHECK_ORIGIN"
+      |> System.get_env("https://discordia-g1.vercel.app")
+      |> String.split(",", trim: true),
     server: true
 
   config :messaging,
