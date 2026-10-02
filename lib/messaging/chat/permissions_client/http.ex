@@ -4,7 +4,14 @@ defmodule Messaging.Chat.PermissionsClient.Http do
   require Logger
 
   @impl true
-  def can_send_messages?(server_id, user_id, raw_jwt) do
+  def can_send_messages?(server_id, user_id, raw_jwt),
+    do: has_permission?(server_id, user_id, raw_jwt, "SEND_MESSAGES")
+
+  @impl true
+  def can_view_channel?(server_id, user_id, raw_jwt),
+    do: has_permission?(server_id, user_id, raw_jwt, "VIEW_CHANNELS")
+
+  defp has_permission?(server_id, user_id, raw_jwt, permission) do
     base_url = Application.fetch_env!(:messaging, :servers_base_url)
     url = "#{base_url}/v1/servers/#{server_id}/members/#{user_id}/permissions"
 
@@ -13,7 +20,7 @@ defmodule Messaging.Chat.PermissionsClient.Http do
 
     case Req.get(url, opts) do
       {:ok, %Req.Response{status: 200, body: %{"permissions" => permissions}}} ->
-        {:ok, "SEND_MESSAGES" in permissions}
+        {:ok, permission in permissions}
 
       {:ok, %Req.Response{status: status}} when status in [401, 403, 404] ->
         {:ok, false}
