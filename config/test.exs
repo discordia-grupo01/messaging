@@ -7,6 +7,7 @@ config :messaging, MessagingWeb.Endpoint,
   debug_errors: false
 
 config :messaging, :start_amqp_consumers, false
+config :messaging, :ensure_indexes, false
 config :messaging, :chat_repo, Messaging.Chat.RepoMock
 config :messaging, :permissions_client, Messaging.Chat.PermissionsClientMock
 config :messaging, :ticket_store, Messaging.Auth.TicketStoreMock

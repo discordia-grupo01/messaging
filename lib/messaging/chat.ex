@@ -9,6 +9,7 @@ defmodule Messaging.Chat do
   @max_page_limit 100
 
   def max_message_length, do: @max_message_length
+  def max_page_limit, do: @max_page_limit
 
   defp repo, do: Application.get_env(:messaging, :chat_repo, Messaging.Chat.Repo.Mongo)
 
@@ -40,38 +41,29 @@ defmodule Messaging.Chat do
           {:ok, [Message.t()], String.t() | nil} | {:error, atom()}
   def list_messages(channel_id, opts \\ []) do
     limit = opts |> Keyword.get(:limit) |> clamp_limit()
+    before_id = Keyword.get(opts, :before)
+    after_id = Keyword.get(opts, :after)
 
-    with {:ok, before_dt} <- resolve_cursor(Keyword.get(opts, :before)),
-         {:ok, docs} <- repo().list_messages(channel_id, before: before_dt, limit: limit) do
-      messages = Enum.map(docs, &Message.from_doc/1)
-      {:ok, messages, next_cursor(messages, limit)}
-    end
-  end
-
-  @spec messages_since(String.t(), DateTime.t()) :: {:ok, [Message.t()]} | {:error, atom()}
-  def messages_since(channel_id, %DateTime{} = since) do
-    case repo().list_messages(channel_id, before: nil, limit: @max_page_limit) do
-      {:ok, docs} ->
-        messages =
-          docs
-          |> Enum.map(&Message.from_doc/1)
-          |> Enum.filter(&(DateTime.compare(&1.inserted_at, since) == :gt))
-          |> Enum.reverse()
-
-        {:ok, messages}
-
-      {:error, _reason} = error ->
-        error
+    with :ok <- exclusive_cursors(before_id, after_id),
+         {:ok, before_pos} <- resolve_cursor(channel_id, before_id),
+         {:ok, after_pos} <- resolve_cursor(channel_id, after_id),
+         {:ok, docs} <-
+           repo().list_messages(channel_id,
+             before: before_pos,
+             after: after_pos,
+             limit: limit + 1
+           ) do
+      build_page(docs, limit, direction(after_id))
     end
   end
 
   @spec channel_exists?(String.t()) :: {:ok, ChannelCache.t()} | {:error, atom()}
   def channel_exists?(channel_id), do: fetch_text_channel(channel_id)
 
-  @spec can_send_messages?(ChannelCache.t(), String.t(), String.t()) ::
+  @spec can_view_channel?(ChannelCache.t(), String.t(), String.t()) ::
           {:ok, boolean()} | {:error, term()}
-  def can_send_messages?(%ChannelCache{} = channel, user_id, raw_jwt),
-    do: check_permission(channel, user_id, raw_jwt)
+  def can_view_channel?(%ChannelCache{server_id: server_id}, user_id, raw_jwt),
+    do: permissions_client().can_view_channel?(server_id, user_id, raw_jwt)
 
   @spec upsert_channel(ChannelCache.t()) :: :ok | {:error, term()}
   def upsert_channel(%ChannelCache{} = channel) do
@@ -117,12 +109,12 @@ defmodule Messaging.Chat do
 
   defp persist_message(%ChannelCache{} = channel, user_id, content) do
     message = %Message{
-      id: UUID.generate(),
+      id: UUID.generate_v7(),
       channel_id: channel.channel_id,
       server_id: channel.server_id,
       user_id: user_id,
       content: content,
-      inserted_at: DateTime.utc_now()
+      inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond)
     }
 
     doc = %{
@@ -151,23 +143,30 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp resolve_cursor(nil), do: {:ok, nil}
+  defp exclusive_cursors(nil, _after_id), do: :ok
+  defp exclusive_cursors(_before_id, nil), do: :ok
+  defp exclusive_cursors(_before_id, _after_id), do: {:error, :invalid_cursor}
 
-  defp resolve_cursor(message_id) do
+  defp resolve_cursor(_channel_id, nil), do: {:ok, nil}
+
+  defp resolve_cursor(channel_id, message_id) when is_binary(message_id) do
     case repo().get_message(message_id) do
-      nil -> {:error, :invalid_cursor}
-      {:error, _reason} -> {:error, :invalid_cursor}
-      doc -> {:ok, Message.from_doc(doc).inserted_at}
+      %{"channel_id" => ^channel_id, "inserted_at" => %DateTime{} = at} -> {:ok, {at, message_id}}
+      _other -> {:error, :invalid_cursor}
     end
   end
 
-  defp next_cursor(messages, limit) do
-    if length(messages) == limit do
-      %Message{id: id} = List.last(messages)
-      id
-    else
-      nil
-    end
+  defp resolve_cursor(_channel_id, _message_id), do: {:error, :invalid_cursor}
+
+  defp direction(nil), do: :backward
+  defp direction(_after_id), do: :forward
+
+  defp build_page(docs, limit, direction) do
+    {page, rest} = Enum.split(docs, limit)
+    messages = Enum.map(page, &Message.from_doc/1)
+    next_cursor = if rest == [], do: nil, else: List.last(messages).id
+    ordered = if direction == :backward, do: Enum.reverse(messages), else: messages
+    {:ok, ordered, next_cursor}
   end
 
   defp clamp_limit(n) when is_integer(n) and n > 0 and n <= @max_page_limit, do: n

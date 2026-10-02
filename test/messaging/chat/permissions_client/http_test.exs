@@ -47,4 +47,16 @@ defmodule Messaging.Chat.PermissionsClient.HttpTest do
 
     assert {:error, %Req.TransportError{}} = Http.can_send_messages?("srv-1", "user-1", "a-jwt")
   end
+
+  test "can_view_channel?/3 is true when the permissions list includes VIEW_CHANNELS" do
+    Req.Test.stub(Http, fn conn -> Req.Test.json(conn, %{"permissions" => ["VIEW_CHANNELS"]}) end)
+
+    assert {:ok, true} = Http.can_view_channel?("srv-1", "user-1", "a-jwt")
+  end
+
+  test "can_view_channel?/3 is false without VIEW_CHANNELS, even with SEND_MESSAGES" do
+    Req.Test.stub(Http, fn conn -> Req.Test.json(conn, %{"permissions" => ["SEND_MESSAGES"]}) end)
+
+    assert {:ok, false} = Http.can_view_channel?("srv-1", "user-1", "a-jwt")
+  end
 end

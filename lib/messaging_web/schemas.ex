@@ -34,7 +34,8 @@ defmodule MessagingWeb.Schemas do
         next_cursor: %Schema{
           type: :string,
           nullable: true,
-          description: "Message id to pass as `before` for the next page."
+          description:
+            "Hay más mensajes: id para pasar como `before` (o como `after` si se pidió con `after`). null si no hay más."
         }
       },
       required: [:messages, :next_cursor]

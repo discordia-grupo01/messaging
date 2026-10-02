@@ -38,6 +38,37 @@ defmodule Messaging.ChatTest do
                Chat.send_message(send_params())
     end
 
+    test "stores the timestamp with millisecond precision, as Mongo does" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ ->
+        {:ok, true}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      assert {:ok, %Message{inserted_at: %DateTime{microsecond: {_, 3}}}} =
+               Chat.send_message(send_params())
+    end
+
+    test "ids grow with every message so same-millisecond messages keep their send order" do
+      stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ ->
+        {:ok, true}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      ids =
+        for i <- 1..300 do
+          {:ok, message} = Chat.send_message(send_params(%{content: "m#{i}"}))
+          message.id
+        end
+
+      assert ids == Enum.sort(ids)
+    end
+
     test "rejects empty content" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
@@ -104,38 +135,149 @@ defmodule Messaging.ChatTest do
   end
 
   describe "list_messages/2" do
-    test "returns messages and a next_cursor when the page is full" do
-      docs =
-        for i <- 1..2 do
-          %{
-            "_id" => "msg-#{i}",
-            "channel_id" => @channel_id,
-            "server_id" => @server_id,
-            "user_id" => @user_id,
-            "content" => "msg #{i}",
-            "inserted_at" => ~U[2026-09-28 12:00:00Z]
-          }
-        end
+    defp doc(id, at, channel_id \\ @channel_id),
+      do: %{
+        "_id" => id,
+        "channel_id" => channel_id,
+        "server_id" => @server_id,
+        "user_id" => @user_id,
+        "content" => "msg #{id}",
+        "inserted_at" => at
+      }
 
+    test "without cursor returns the latest page in chronological order" do
       expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
-        assert Keyword.get(opts, :limit) == 2
-        {:ok, docs}
+        assert opts[:limit] == 3
+        assert opts[:before] == nil and opts[:after] == nil
+        {:ok, [doc("c", ~U[2026-09-28 12:00:03Z]), doc("b", ~U[2026-09-28 12:00:02Z])]}
       end)
 
-      assert {:ok, messages, "msg-2"} = Chat.list_messages(@channel_id, limit: 2)
-      assert length(messages) == 2
+      assert {:ok, [%Message{id: "b"}, %Message{id: "c"}], nil} =
+               Chat.list_messages(@channel_id, limit: 2)
     end
 
-    test "next_cursor is nil when the page isn't full" do
-      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts -> {:ok, []} end)
+    test "a full page returns the oldest id as cursor for the next older page" do
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+        {:ok,
+         [
+           doc("c", ~U[2026-09-28 12:00:03Z]),
+           doc("b", ~U[2026-09-28 12:00:02Z]),
+           doc("a", ~U[2026-09-28 12:00:01Z])
+         ]}
+      end)
 
-      assert {:ok, [], nil} = Chat.list_messages(@channel_id, limit: 50)
+      assert {:ok, [%Message{id: "b"}, %Message{id: "c"}], "b"} =
+               Chat.list_messages(@channel_id, limit: 2)
     end
 
-    test "an unknown before cursor is an error" do
+    test "an exactly full last page has no cursor" do
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+        {:ok, [doc("b", ~U[2026-09-28 12:00:02Z]), doc("a", ~U[2026-09-28 12:00:01Z])]}
+      end)
+
+      assert {:ok, [_, _], nil} = Chat.list_messages(@channel_id, limit: 2)
+    end
+
+    test "before passes the cursor's timestamp and id to the repo" do
+      at = ~U[2026-09-28 12:00:02Z]
+      expect(Messaging.Chat.RepoMock, :get_message, fn "b" -> doc("b", at) end)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
+        assert opts[:before] == {at, "b"}
+        {:ok, []}
+      end)
+
+      assert {:ok, [], nil} = Chat.list_messages(@channel_id, before: "b")
+    end
+
+    test "after keeps the repo's ascending order and returns the newest id as cursor" do
+      at = ~U[2026-09-28 12:00:01Z]
+      expect(Messaging.Chat.RepoMock, :get_message, fn "a" -> doc("a", at) end)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
+        assert opts[:after] == {at, "a"}
+
+        {:ok,
+         [
+           doc("b", ~U[2026-09-28 12:00:02Z]),
+           doc("c", ~U[2026-09-28 12:00:03Z]),
+           doc("d", ~U[2026-09-28 12:00:04Z])
+         ]}
+      end)
+
+      assert {:ok, [%Message{id: "b"}, %Message{id: "c"}], "c"} =
+               Chat.list_messages(@channel_id, after: "a", limit: 2)
+    end
+
+    test "limit is clamped to the allowed range" do
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
+        assert opts[:limit] == 101
+        {:ok, []}
+      end)
+
+      assert {:ok, [], nil} = Chat.list_messages(@channel_id, limit: 100)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
+        assert opts[:limit] == 51
+        {:ok, []}
+      end)
+
+      assert {:ok, [], nil} = Chat.list_messages(@channel_id, limit: 100_000)
+    end
+
+    test "an unknown cursor is an error" do
       expect(Messaging.Chat.RepoMock, :get_message, fn "does-not-exist" -> nil end)
 
       assert {:error, :invalid_cursor} = Chat.list_messages(@channel_id, before: "does-not-exist")
+    end
+
+    test "a cursor from another channel is an error" do
+      expect(Messaging.Chat.RepoMock, :get_message, fn "x" ->
+        doc("x", ~U[2026-09-28 12:00:00Z], "other-channel")
+      end)
+
+      assert {:error, :invalid_cursor} = Chat.list_messages(@channel_id, after: "x")
+    end
+
+    test "a cursor lookup failure is an invalid cursor" do
+      expect(Messaging.Chat.RepoMock, :get_message, fn "x" -> {:error, :timeout} end)
+
+      assert {:error, :invalid_cursor} = Chat.list_messages(@channel_id, after: "x")
+    end
+
+    test "a non-string cursor is rejected without touching the repo" do
+      assert {:error, :invalid_cursor} = Chat.list_messages(@channel_id, before: %{"$ne" => "x"})
+    end
+
+    test "before and after together are rejected" do
+      assert {:error, :invalid_cursor} = Chat.list_messages(@channel_id, before: "a", after: "b")
+    end
+
+    test "a repo failure is propagated" do
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.list_messages(@channel_id)
+    end
+  end
+
+  describe "can_view_channel?/3" do
+    test "asks the permissions client about VIEW_CHANNELS for the channel's server" do
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+                                                                          @user_id,
+                                                                          @raw_jwt ->
+        {:ok, true}
+      end)
+
+      channel = %Messaging.Chat.ChannelCache{
+        channel_id: @channel_id,
+        server_id: @server_id,
+        name: "general",
+        kind: "text"
+      }
+
+      assert {:ok, true} = Chat.can_view_channel?(channel, @user_id, @raw_jwt)
     end
   end
 

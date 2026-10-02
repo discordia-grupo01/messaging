@@ -82,7 +82,7 @@ components:
           x-struct:
           x-validate:
         next_cursor:
-          description: Message id to pass as `before` for the next page.
+          description: 'Hay más mensajes: id para pasar como `before` (o como `after` si se pidió con `after`). null si no hay más.'
           nullable: true
           type: string
           x-struct:
@@ -164,6 +164,7 @@ paths:
   /v1/channels/{channel_id}/messages:
     get:
       callbacks: {}
+      description: Cada página viene en orden cronológico (del más viejo al más nuevo). Sin cursor devuelve los mensajes más recientes; con `before` devuelve los anteriores a ese mensaje; con `after` devuelve los posteriores (para ponerse al día tras una desconexión). `before` y `after` son excluyentes.
       operationId: MessagingWeb.MessageController.index
       parameters:
         - description: UUID del canal
@@ -182,9 +183,17 @@ paths:
             type: integer
             x-struct:
             x-validate:
-        - description: Id de mensaje devuelto como next_cursor en la página anterior
+        - description: Id de mensaje devuelto como next_cursor al pedir la página anterior
           in: query
           name: before
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Id del último mensaje que el cliente ya tiene; devuelve los posteriores
+          in: query
+          name: after
           required: false
           schema:
             type: string
@@ -196,7 +205,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MessageList'
-          description: Página de mensajes, más nuevos primero
+          description: Página de mensajes en orden cronológico
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Cursor inválido, de otro canal, o `before` y `after` juntos
         '401':
           content:
             application/json:
@@ -208,7 +223,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: El usuario no tiene SEND_MESSAGES en este canal
+          description: El usuario no tiene VIEW_CHANNELS en este canal
         '404':
           content:
             application/json:
