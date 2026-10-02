@@ -15,20 +15,36 @@ defmodule Messaging.Chat.Repo.Mongo do
 
   @impl true
   def list_messages(channel_id, opts) do
-    filter =
-      case Keyword.get(opts, :before) do
-        nil -> %{"channel_id" => channel_id}
-        %DateTime{} = dt -> %{"channel_id" => channel_id, "inserted_at" => %{"$lt" => dt}}
-      end
-
     limit = Keyword.fetch!(opts, :limit)
+    {filter, direction} = page_query(channel_id, opts[:before], opts[:after])
 
-    case Mongo.find(@conn, @messages, filter, sort: %{"inserted_at" => -1}, limit: limit) do
+    case Mongo.find(@conn, @messages, filter,
+           sort: [inserted_at: direction, _id: direction],
+           limit: limit
+         ) do
       {:error, reason} -> {:error, reason}
       cursor -> {:ok, Enum.to_list(cursor)}
     end
   rescue
     error -> {:error, error}
+  end
+
+  defp page_query(channel_id, nil, nil), do: {%{"channel_id" => channel_id}, -1}
+
+  defp page_query(channel_id, {%DateTime{} = at, id}, nil),
+    do: {keyset(channel_id, "$lt", at, id), -1}
+
+  defp page_query(channel_id, nil, {%DateTime{} = at, id}),
+    do: {keyset(channel_id, "$gt", at, id), 1}
+
+  defp keyset(channel_id, op, at, id) do
+    %{
+      "channel_id" => channel_id,
+      "$or" => [
+        %{"inserted_at" => %{op => at}},
+        %{"inserted_at" => at, "_id" => %{op => id}}
+      ]
+    }
   end
 
   @impl true
@@ -59,5 +75,14 @@ defmodule Messaging.Chat.Repo.Mongo do
       {:ok, _doc} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @impl true
+  def ensure_indexes do
+    indexes = [
+      [name: "messages_channel_inserted_at_id", key: [channel_id: 1, inserted_at: -1, _id: -1]]
+    ]
+
+    Mongo.create_indexes(@conn, @messages, indexes)
   end
 end
