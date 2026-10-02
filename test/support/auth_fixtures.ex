@@ -1,13 +1,25 @@
 defmodule Messaging.AuthFixtures do
-  alias Messaging.Auth.Token
-
-  def token_for(user_id, opts \\ []) do
-    secret = Application.fetch_env!(:messaging, :jwt_secret)
-    signer = Joken.Signer.create("HS256", secret)
-    exp = System.system_time(:second) + Keyword.get(opts, :ttl, 3_600)
-
-    {:ok, token, _claims} = Token.generate_and_sign(%{"sub" => user_id, "exp" => exp}, signer)
-
-    token
+  def token_for(user_id) do
+    Enum.join(
+      [encode(%{"alg" => "HS256", "typ" => "JWT"}), encode(%{"sub" => user_id}), "sig"],
+      "."
+    )
   end
+
+  def token_with_claims(claims) do
+    Enum.join([encode(%{"alg" => "HS256", "typ" => "JWT"}), encode(claims), "sig"], ".")
+  end
+
+  def ticket_doc(user_id, opts \\ []) do
+    ttl = Keyword.get(opts, :ttl, 30)
+
+    %{
+      "_id" => "ticket-hash",
+      "user_id" => user_id,
+      "raw_jwt" => token_for(user_id),
+      "expires_at" => DateTime.add(DateTime.utc_now(), ttl, :second)
+    }
+  end
+
+  defp encode(map), do: map |> Jason.encode!() |> Base.url_encode64(padding: false)
 end

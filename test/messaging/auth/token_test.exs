@@ -4,38 +4,42 @@ defmodule Messaging.Auth.TokenTest do
   alias Messaging.Auth.Token
   alias Messaging.AuthFixtures
 
-  test "verify_user_id/1 returns the sub claim for a valid token" do
-    token = AuthFixtures.token_for("user-42")
-
-    assert {:ok, "user-42"} = Token.verify_user_id(token)
+  test "user_id/1 returns the sub claim without checking the signature" do
+    assert {:ok, "user-42"} = Token.user_id(AuthFixtures.token_for("user-42"))
   end
 
-  test "verify_user_id/1 rejects an expired token" do
-    token = AuthFixtures.token_for("user-42", ttl: -1)
-
-    assert {:error, _reason} = Token.verify_user_id(token)
+  test "user_id/1 trims the sub claim" do
+    assert {:ok, "user-42"} = Token.user_id(AuthFixtures.token_for("  user-42 "))
   end
 
-  test "verify_user_id/1 rejects garbage" do
-    assert {:error, _reason} = Token.verify_user_id("not-a-jwt")
+  test "user_id/1 rejects a token with no sub claim" do
+    token = AuthFixtures.token_with_claims(%{"name" => "x"})
+
+    assert {:error, :invalid_token} = Token.user_id(token)
   end
 
-  test "verify_user_id/1 rejects a non-binary input" do
-    assert {:error, :invalid_token} = Token.verify_user_id(nil)
+  test "user_id/1 rejects a blank sub claim" do
+    assert {:error, :invalid_token} = Token.user_id(AuthFixtures.token_for("   "))
   end
 
-  test "verify_user_id/1 rejects a token signed with a different secret" do
-    other_signer = Joken.Signer.create("HS256", "a-completely-different-secret")
-    {:ok, token, _claims} = Token.generate_and_sign(%{"sub" => "user-42"}, other_signer)
+  test "user_id/1 rejects a non-string sub claim" do
+    token = AuthFixtures.token_with_claims(%{"sub" => 42})
 
-    assert {:error, _reason} = Token.verify_user_id(token)
+    assert {:error, :invalid_token} = Token.user_id(token)
   end
 
-  test "verify_user_id/1 rejects a token with no sub claim" do
-    secret = Application.fetch_env!(:messaging, :jwt_secret)
-    signer = Joken.Signer.create("HS256", secret)
-    {:ok, token, _claims} = Token.generate_and_sign(%{}, signer)
+  test "user_id/1 rejects garbage" do
+    assert {:error, :invalid_token} = Token.user_id("not-a-jwt")
+    assert {:error, :invalid_token} = Token.user_id("a.b.c")
+  end
 
-    assert {:error, :missing_sub} = Token.verify_user_id(token)
+  test "user_id/1 rejects a payload that is not JSON" do
+    payload = Base.url_encode64("not json", padding: false)
+
+    assert {:error, :invalid_token} = Token.user_id("h." <> payload <> ".s")
+  end
+
+  test "user_id/1 rejects a non-binary input" do
+    assert {:error, :invalid_token} = Token.user_id(nil)
   end
 end

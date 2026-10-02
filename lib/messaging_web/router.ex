@@ -20,5 +20,6 @@ defmodule MessagingWeb.Router do
     pipe_through [:api, :authenticated]
 
     get "/channels/:channel_id/messages", MessageController, :index
+    post "/socket-tickets", SocketTicketController, :create
   end
 end

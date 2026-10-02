@@ -10,7 +10,8 @@ largo).
 - BDD: MongoDB (`mongodb_driver`)
 - Event bus: RabbitMQ (`amqp`) -- tanto para consumir eventos de dominio de
   `discordia.events` como para la propagación entre instancias (ver ADR más abajo)
-- Auth: `joken` (JWT, HS256, mismo `JWT_SECRET` que el resto de Discordia)
+- Auth: Kong valida el JWT; `messaging` confía y solo lee el claim `sub` del
+  payload (sin verificar la firma, igual que `servers`)
 - HTTP client: `req` (llamada a `servers` para el chequeo de permisos)
 - OpenAPI: `open_api_spex`, generado automáticamente desde las anotaciones
   `operation` de los controllers
@@ -55,9 +56,21 @@ dominio para otros servicios.
 - `GET /livez`, `GET /readyz` (`readyz` pinguea Mongo).
 
 Formato de error (REST y WS) siempre `{ "error": { "code", "message", "details" } }`.
-Auth: `Authorization: Bearer <jwt>` en REST; en el socket, el JWT viaja en
-los params de conexión (`{"token": "..."}`) porque el WebSocket API del
-browser no permite headers custom en el handshake.
+Auth REST: `Authorization: Bearer <jwt>`, validado por Kong; `messaging` toma
+el `user_id` del claim `sub`.
+
+Auth del socket: el WebSocket API del browser no permite headers custom en el
+handshake, y poner el JWT en la URL lo deja en logs. Por eso:
+1. `POST /v1/socket-tickets` (con el Bearer normal) devuelve
+   `{ "ticket": "...", "expires_in": 30 }`.
+2. El cliente conecta a `/socket/websocket?ticket=<ticket>&vsn=2.0.0`.
+
+El ticket es de un solo uso, vive 30 segundos y se guarda hasheado en Mongo
+(colección `socket_tickets`, con índice TTL), así que funciona aunque el
+ticket lo emita una instancia y lo consuma otra. El JWT ya no viaja en la URL.
+
+`messaging` no verifica la firma del JWT: confía en que Kong lo validó. Por eso
+no debe quedar expuesto directo a internet (solo detrás del gateway).
 
 ## Setup local
 
@@ -166,7 +179,10 @@ lib/
 │   ├── application.ex            # Arranca el supervisor de la app
 │   ├── uuid.ex                   # UUIDv4 (sin depender de Ecto)
 │   ├── auth/
-│   │   └── token.ex              # Verificacion de JWT (joken)
+│   │   ├── token.ex              # user_id (claim sub) del Bearer; la firma la valida Kong
+│   │   ├── socket_ticket.ex      # Emite/canjea tickets de un solo uso para el WebSocket
+│   │   ├── ticket_store.ex       # Behaviour de almacenamiento de tickets
+│   │   └── ticket_store/mongo.ex # Implementacion real (Mongo, indice TTL)
 │   ├── chat/                     # Context: mensajes y canales
 │   │   ├── message.ex            # Entity: un mensaje
 │   │   ├── channel_cache.ex      # Entity: read-model local de un canal
@@ -193,11 +209,12 @@ lib/
     ├── controllers/
     │   ├── health_controller.ex
     │   ├── message_controller.ex
+    │   ├── socket_ticket_controller.ex
     │   └── error_json.ex
     ├── plugs/
-    │   └── authenticate.ex        # Authorization: Bearer <jwt> (REST)
+    │   └── authenticate.ex        # Authorization: Bearer <jwt> (REST), toma el sub
     └── channels/
-        ├── user_socket.ex         # Punto de entrada de websockets (JWT por params)
+        ├── user_socket.ex         # Punto de entrada de websockets (ticket por params)
         └── room_channel.ex        # Channel de un canal de texto
 ```
 

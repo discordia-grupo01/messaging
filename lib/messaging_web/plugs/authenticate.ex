@@ -3,14 +3,12 @@ defmodule MessagingWeb.Plugs.Authenticate do
 
   alias Messaging.Auth.Token
 
-  @dialyzer {:nowarn_function, call: 2}
-
   def init(opts), do: opts
 
   def call(conn, _opts) do
     with [header] <- get_req_header(conn, "authorization"),
          "Bearer " <> token <- header,
-         {:ok, user_id} <- Token.verify_user_id(token) do
+         {:ok, user_id} <- Token.user_id(token) do
       conn |> assign(:user_id, user_id) |> assign(:raw_jwt, token)
     else
       _other ->

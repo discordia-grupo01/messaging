@@ -1,22 +1,15 @@
 defmodule Messaging.Auth.Token do
-  use Joken.Config
-
-  @impl true
-  def token_config, do: default_claims(skip: [:aud, :iss])
-
-  @spec verify_user_id(String.t()) :: {:ok, String.t()} | {:error, atom()}
-  def verify_user_id(raw_token) when is_binary(raw_token) do
-    case verify_and_validate(raw_token, signer()) do
-      {:ok, %{"sub" => sub}} when is_binary(sub) and sub != "" -> {:ok, sub}
-      {:ok, _claims} -> {:error, :missing_sub}
-      {:error, reason} -> {:error, reason}
+  @spec user_id(term()) :: {:ok, String.t()} | {:error, :invalid_token}
+  def user_id(raw_token) when is_binary(raw_token) do
+    with [_header, payload, _signature] <- String.split(raw_token, "."),
+         {:ok, json} <- Base.url_decode64(payload, padding: false),
+         {:ok, %{"sub" => sub}} when is_binary(sub) <- Jason.decode(json),
+         trimmed when trimmed != "" <- String.trim(sub) do
+      {:ok, trimmed}
+    else
+      _invalid -> {:error, :invalid_token}
     end
   end
 
-  def verify_user_id(_other), do: {:error, :invalid_token}
-
-  defp signer do
-    secret = Application.fetch_env!(:messaging, :jwt_secret)
-    Joken.Signer.create("HS256", secret)
-  end
+  def user_id(_other), do: {:error, :invalid_token}
 end

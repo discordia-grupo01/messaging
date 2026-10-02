@@ -18,6 +18,7 @@ defmodule MessagingWeb.ApiErrorTest do
     assert ApiError.http_status(:channel_not_found) == 404
     assert ApiError.http_status(:empty_content) == 400
     assert ApiError.http_status(:message_too_long) == 400
+    assert ApiError.http_status(:ticket_unavailable) == 503
   end
 
   test "describe/1 covers every reason with a non-empty code and message" do
@@ -27,7 +28,8 @@ defmodule MessagingWeb.ApiErrorTest do
           :forbidden,
           :channel_not_found,
           :channel_not_text,
-          :invalid_cursor
+          :invalid_cursor,
+          :ticket_unavailable
         ] do
       assert {code, message} = ApiError.describe(reason)
       assert code != ""

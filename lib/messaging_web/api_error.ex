@@ -6,6 +6,7 @@ defmodule MessagingWeb.ApiError do
           | :channel_not_found
           | :channel_not_text
           | :invalid_cursor
+          | :ticket_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -25,14 +26,18 @@ defmodule MessagingWeb.ApiError do
 
   def describe(:invalid_cursor), do: {"INVALID_CURSOR", "El cursor de paginación no es válido."}
 
+  def describe(:ticket_unavailable),
+    do: {"TICKET_UNAVAILABLE", "No se pudo emitir el ticket, intentá de nuevo."}
+
   @spec payload(reason(), map()) :: map()
   def payload(reason, details \\ %{}) do
     {code, message} = describe(reason)
     %{error: %{code: code, message: message, details: details}}
   end
 
-  @spec http_status(reason()) :: 400 | 403 | 404
+  @spec http_status(reason()) :: 400 | 403 | 404 | 503
   def http_status(:forbidden), do: 403
   def http_status(:channel_not_found), do: 404
+  def http_status(:ticket_unavailable), do: 503
   def http_status(_other), do: 400
 end

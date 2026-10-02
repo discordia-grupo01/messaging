@@ -39,6 +39,17 @@ defmodule MessagingWeb.MessageControllerTest do
     assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
   end
 
+  test "401s on a bearer token without a sub claim", %{conn: conn} do
+    token = AuthFixtures.token_with_claims(%{"name" => "no-sub"})
+
+    conn =
+      conn
+      |> Plug.Conn.put_req_header("authorization", "Bearer " <> token)
+      |> get("/v1/channels/#{@channel_id}/messages")
+
+    assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
+  end
+
   test "returns the channel's messages, newest first", %{conn: conn} do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 

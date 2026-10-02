@@ -32,7 +32,6 @@ defmodule Messaging.MixProject do
       {:mongodb_driver, "~> 1.4"},
       {:amqp, "~> 3.3"},
       {:req, "~> 0.5"},
-      {:joken, "~> 2.6"},
       {:open_api_spex, "~> 3.21"},
       {:ymlr, "~> 5.0", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},

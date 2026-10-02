@@ -16,8 +16,11 @@ defmodule MessagingWeb.RoomChannelTest do
     do: %{"_id" => @channel_id, "server_id" => @server_id, "name" => "general", "kind" => "text"}
 
   defp join_socket(user_id) do
-    token = AuthFixtures.token_for(user_id)
-    {:ok, socket} = connect(MessagingWeb.UserSocket, %{"token" => token})
+    stub(Messaging.Auth.TicketStoreMock, :take, fn _id ->
+      {:ok, AuthFixtures.ticket_doc(user_id)}
+    end)
+
+    {:ok, socket} = connect(MessagingWeb.UserSocket, %{"ticket" => "a-ticket"})
     socket
   end
 

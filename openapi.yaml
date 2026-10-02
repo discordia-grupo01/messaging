@@ -94,6 +94,25 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.MessageList
       x-validate:
+    SocketTicket:
+      properties:
+        expires_in:
+          description: Segundos que el ticket es válido desde que se emite.
+          type: integer
+          x-struct:
+          x-validate:
+        ticket:
+          description: Ticket de un solo uso. Se manda como `?ticket=<ticket>` al conectar el WebSocket.
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - ticket
+        - expires_in
+      title: SocketTicket
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.SocketTicket
+      x-validate:
 info:
   description: Mensajes de canal en tiempo real (envío por WebSocket, historial por REST).
   title: Discordia — Messaging
@@ -199,6 +218,34 @@ paths:
       summary: Historial de mensajes de un canal
       tags:
         - messages
+  /v1/socket-tickets:
+    post:
+      callbacks: {}
+      description: El navegador no puede mandar el header Authorization al abrir un WebSocket, y poner el JWT en la URL lo deja en logs. En su lugar, el cliente pide acá un ticket (autenticado con el Bearer normal) y conecta con `?ticket=<ticket>`.
+      operationId: MessagingWeb.SocketTicketController.create
+      parameters: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocketTicket'
+          description: Ticket emitido
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo guardar el ticket
+      summary: Emite un ticket de un solo uso para conectar el WebSocket
+      tags:
+        - auth
 security: []
 servers:
   - url: http://localhost:4000

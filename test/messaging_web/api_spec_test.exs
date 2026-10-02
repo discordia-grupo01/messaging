@@ -8,5 +8,6 @@ defmodule MessagingWeb.ApiSpecTest do
     assert Map.has_key?(spec.paths, "/livez")
     assert Map.has_key?(spec.paths, "/readyz")
     assert Map.has_key?(spec.paths, "/v1/channels/{channel_id}/messages")
+    assert Map.has_key?(spec.paths, "/v1/socket-tickets")
   end
 end
