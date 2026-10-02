@@ -17,7 +17,7 @@ defmodule MessagingWeb.ApiError do
        "El mensaje supera el largo máximo permitido (#{Messaging.Chat.max_message_length()} caracteres)."}
 
   def describe(:forbidden),
-    do: {"FORBIDDEN", "No tenés permiso para enviar mensajes en este canal."}
+    do: {"FORBIDDEN", "No tenés permiso para realizar esta acción en este canal."}
 
   def describe(:channel_not_found), do: {"CHANNEL_NOT_FOUND", "El canal no existe."}
 

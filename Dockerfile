@@ -8,7 +8,7 @@ ENV MIX_ENV=prod
 RUN mix compile && mix release
 
 FROM alpine:3.19.1
-RUN apk add --no-cache libstdc++ openssl ncurses-libs
+RUN apk add --no-cache libstdc++ openssl ncurses-libs ca-certificates
 WORKDIR /app
 COPY --from=builder /app/_build/prod/rel/messaging ./
 EXPOSE 4000

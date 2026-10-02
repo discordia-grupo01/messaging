@@ -4,15 +4,22 @@ defmodule Messaging.Application do
   @impl true
   def start(_type, _args) do
     mongo_url = Application.fetch_env!(:messaging, :mongo_url)
+    Messaging.UUID.init()
 
     children =
       [
         {Phoenix.PubSub, name: Messaging.PubSub},
-        {Mongo, name: Messaging.Mongo, url: mongo_url}
-      ] ++ amqp_children() ++ [MessagingWeb.Endpoint]
+        {Mongo, Messaging.MongoOptions.build(mongo_url)}
+      ] ++ index_children() ++ amqp_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp index_children do
+    if Application.get_env(:messaging, :ensure_indexes, true),
+      do: [Messaging.Chat.IndexSetup],
+      else: []
   end
 
   defp amqp_children do

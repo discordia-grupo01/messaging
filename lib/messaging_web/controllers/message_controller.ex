@@ -11,6 +11,11 @@ defmodule MessagingWeb.MessageController do
 
   operation :index,
     summary: "Historial de mensajes de un canal",
+    description:
+      "Cada página viene en orden cronológico (del más viejo al más nuevo). Sin cursor devuelve " <>
+        "los mensajes más recientes; con `before` devuelve los anteriores a ese mensaje; con " <>
+        "`after` devuelve los posteriores (para ponerse al día tras una desconexión). " <>
+        "`before` y `after` son excluyentes.",
     parameters: [
       channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
       limit: [
@@ -23,16 +28,25 @@ defmodule MessagingWeb.MessageController do
         in: :query,
         type: :string,
         required: false,
-        description: "Id de mensaje devuelto como next_cursor en la página anterior"
+        description: "Id de mensaje devuelto como next_cursor al pedir la página anterior"
+      ],
+      after: [
+        in: :query,
+        type: :string,
+        required: false,
+        description: "Id del último mensaje que el cliente ya tiene; devuelve los posteriores"
       ]
     ],
     responses: [
-      ok: {"Página de mensajes, más nuevos primero", "application/json", Schemas.MessageList},
+      ok: {"Página de mensajes en orden cronológico", "application/json", Schemas.MessageList},
+      bad_request:
+        {"Cursor inválido, de otro canal, o `before` y `after` juntos", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
       forbidden:
-        {"El usuario no tiene SEND_MESSAGES en este canal", "application/json",
+        {"El usuario no tiene VIEW_CHANNELS en este canal", "application/json",
          Schemas.ErrorResponse},
       not_found: {"El canal no existe", "application/json", Schemas.ErrorResponse}
     ]
@@ -41,12 +55,15 @@ defmodule MessagingWeb.MessageController do
     user_id = conn.assigns.user_id
     raw_jwt = conn.assigns.raw_jwt
     limit = params |> Map.get("limit") |> parse_limit()
-    before_id = Map.get(params, "before")
 
     with {:ok, channel} <- Chat.channel_exists?(channel_id),
-         {:ok, true} <- Chat.can_send_messages?(channel, user_id, raw_jwt),
+         {:ok, true} <- Chat.can_view_channel?(channel, user_id, raw_jwt),
          {:ok, messages, next_cursor} <-
-           Chat.list_messages(channel_id, limit: limit, before: before_id) do
+           Chat.list_messages(channel_id,
+             limit: limit,
+             before: Map.get(params, "before"),
+             after: Map.get(params, "after")
+           ) do
       json(conn, %{
         "messages" => Enum.map(messages, &Message.to_api/1),
         "next_cursor" => next_cursor

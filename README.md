@@ -1,9 +1,10 @@
 # messaging (Elixir)
 
 Servicio de **mensajería** de Discordia: mensajes de texto en canales, con
-entrega en tiempo real. Cubre la historia **"Enviar mensaje en un canal"**
+entrega en tiempo real. Cubre las historias **"Enviar mensaje en un canal"**
 (CA1 envío exitoso, CA2 mensaje vacío, CA3 sin permisos, CA4 mensaje muy
-largo).
+largo) e **"Historial y reconexión"** (CA1 carga paginada, CA2 reconexión sin
+pérdida, CA3 orden cronológico).
 
 ## Stack
 - Lenguaje: Elixir / Phoenix (Channels para WS, controllers para REST)
@@ -48,11 +49,15 @@ dominio para otros servicios.
 
 ## Endpoints / Channels
 - WS `/socket`, channel `"channel:" <> channel_id` (`MessagingWeb.RoomChannel`):
-  - `join` con `{"since": "<ISO8601>"}` opcional -- valida canal + permiso,
-    y si viene `since` empuja `"missed_messages"` con lo perdido en la desconexión.
-  - `handle_in("new_message", %{"content" => "..."})` -- CA1-CA4.
-- `GET /v1/channels/:channel_id/messages?limit=&before=<messageId>` --
-  historial paginado por cursor, más nuevos primero.
+  - `join` con `{"last_message_id": "<id>"}` opcional -- valida canal y que el
+    usuario tenga `VIEW_CHANNELS`. Si viene `last_message_id`, empuja
+    `"missed_messages"` con lo enviado después de ese mensaje (ver
+    [Historial y reconexión](#historial-y-reconexión)).
+  - `handle_in("new_message", %{"content" => "..."})` -- requiere
+    `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+- `GET /v1/channels/:channel_id/messages?limit=&before=<id>&after=<id>` --
+  historial paginado por cursor, cada página en orden cronológico. Requiere
+  `VIEW_CHANNELS`.
 - `GET /livez`, `GET /readyz` (`readyz` pinguea Mongo).
 
 Formato de error (REST y WS) siempre `{ "error": { "code", "message", "details" } }`.
@@ -71,6 +76,56 @@ ticket lo emita una instancia y lo consuma otra. El JWT ya no viaja en la URL.
 
 `messaging` no verifica la firma del JWT: confía en que Kong lo validó. Por eso
 no debe quedar expuesto directo a internet (solo detrás del gateway).
+
+## Historial y reconexión
+
+**Historial (REST).** `GET /v1/channels/:id/messages?limit=50` devuelve los
+mensajes más recientes **de más viejo a más nuevo** (`limit` máx. 100). Si hay
+más, `next_cursor` trae el id del mensaje más viejo de la página; se pide la
+página anterior con `?before=<next_cursor>` hasta que `next_cursor` sea `null`.
+`?after=<id>` hace lo inverso: devuelve lo posterior a ese mensaje, también en
+orden cronológico. `before` y `after` no se pueden combinar y el cursor tiene
+que ser un mensaje de ese mismo canal (si no, `400 INVALID_CURSOR`).
+
+**Orden.** Se ordena por `(inserted_at, _id)`. Mongo guarda fechas con
+milisegundos, así que dos mensajes del mismo milisegundo se desempatan por
+`_id`; los ids de mensaje son UUID v7 (`Messaging.UUID.generate_v7/0`),
+monótonos dentro de una instancia, así el desempate respeta el orden de envío.
+El índice `messages_channel_inserted_at_id` lo crea `Messaging.Chat.IndexSetup`
+al arrancar (reintenta hasta que Mongo responda).
+
+**Reconexión.** El broker de tiempo real no guarda nada para quien está
+desconectado, así que el cliente se pone al día pidiendo lo que falta:
+1. Se guarda el `id` del último mensaje que recibió (en vivo o por historial).
+2. Al reconectar pide un ticket nuevo (son de un solo uso) y conecta de nuevo.
+3. Hace `join` con `{"last_message_id": "<id>"}`. El servidor empuja
+   `"missed_messages"` con `{"messages": [...], "next_cursor": ...}`, en orden
+   cronológico, hasta 100 por lote. Siempre se empuja, aun vacío, para que el
+   cliente sepa que terminó de ponerse al día.
+4. Si `next_cursor` no es `null` había más de un lote: sigue con
+   `GET .../messages?after=<next_cursor>` hasta vaciar.
+
+Garantías y casos borde:
+- La puesta al día corre **después** de suscribirse al canal, así que no hay
+  hueco entre lo recuperado y lo que llega en vivo. A cambio, un mensaje puede
+  llegar dos veces (en vivo y en `missed_messages`): el cliente deduplica por `id`.
+- Si el `last_message_id` no existe o es de otro canal, el servidor empuja
+  `"resync_required"` y el cliente recarga el historial por REST. Si no es un
+  string, el `join` falla con `INVALID_CURSOR`.
+- Si falla la consulta a Mongo durante la puesta al día, el canal se cierra con
+  error y el cliente de Phoenix reintenta el `join` solo.
+- Un cliente que nunca recibió un mensaje no tiene `last_message_id`: al
+  reconectar recarga el historial por REST.
+- Al abrir un canal conviene hacer primero el `join` (y bufferear lo que llegue
+  en vivo) y después pedir el historial, deduplicando por `id`, para no perder
+  lo enviado entre ambos pasos.
+
+## Mongo con TLS (Atlas)
+Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
+`Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los
+certificados raíz del sistema y verificación de hostname. Sin eso, OTP 26
+rechaza la conexión (`cacerts: :undefined`). La imagen de Docker instala
+`ca-certificates` por esa razón. Con una URL sin TLS (Mongo local) no se agrega nada.
 
 ## Setup local
 
@@ -112,7 +167,7 @@ Los tests unitarios y el e2e de `RoomChannel` usan `Mox`
 `Messaging.Events.LocalBroadcaster` (entrega en tiempo real in-process, sin
 broker) -- no necesitan Mongo ni RabbitMQ reales.
 
-Dos tests de integración sí necesitan infraestructura real y se saltan solos
+Algunos tests de integración sí necesitan infraestructura real y se saltan solos
 si no está (mismo patrón que `servers`/`identify-service` con
 `DATABASE_HOST`):
 ```bash
@@ -124,6 +179,8 @@ mix test
 ```
 - `test/messaging/events/channel_lifecycle_consumer_test.exs`: publica un
   evento real y confirma que la caché de canales en Mongo se actualiza.
+- `test/messaging/chat/repo/mongo_test.exs`: paginación hacia atrás y hacia
+  adelante contra Mongo real, con mensajes del mismo milisegundo y el índice.
 - `test/messaging/events/broadcast_test.exs`: el camino real
   `BroadcastPublisher` -> RabbitMQ -> `BroadcastConsumer` -> PubSub local.
 
@@ -177,7 +234,8 @@ global para todo el proyecto.
 lib/
 ├── messaging/                    # Logica de negocio pura, sin HTTP
 │   ├── application.ex            # Arranca el supervisor de la app
-│   ├── uuid.ex                   # UUIDv4 (sin depender de Ecto)
+│   ├── mongo_options.ex          # Opciones del driver de Mongo (TLS para Atlas)
+│   ├── uuid.ex                   # UUIDv4 y UUIDv7 monótono (ids de mensajes), sin depender de Ecto
 │   ├── auth/
 │   │   ├── token.ex              # user_id (claim sub) del Bearer; la firma la valida Kong
 │   │   ├── socket_ticket.ex      # Emite/canjea tickets de un solo uso para el WebSocket
@@ -188,7 +246,8 @@ lib/
 │   │   ├── channel_cache.ex      # Entity: read-model local de un canal
 │   │   ├── repo.ex               # Behaviour de persistencia (Mongo o Mox en tests)
 │   │   ├── repo/mongo.ex         # Implementacion real (mongodb_driver)
-│   │   ├── permissions_client.ex # Behaviour del chequeo SEND_MESSAGES
+│   │   ├── index_setup.ex        # Crea el índice del historial al arrancar (con reintentos)
+│   │   ├── permissions_client.ex # Behaviour de permisos (SEND_MESSAGES / VIEW_CHANNELS)
 │   │   └── permissions_client/http.ex  # Implementacion real (Req -> servers)
 │   ├── chat.ex                   # API publica del context (hace de "Service")
 │   └── events/                   # Consumo/publicacion de eventos (discordia.events y messaging.broadcast)
