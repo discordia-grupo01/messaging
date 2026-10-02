@@ -120,6 +120,13 @@ Garantías y casos borde:
   en vivo) y después pedir el historial, deduplicando por `id`, para no perder
   lo enviado entre ambos pasos.
 
+## Mongo con TLS (Atlas)
+Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
+`Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los
+certificados raíz del sistema y verificación de hostname. Sin eso, OTP 26
+rechaza la conexión (`cacerts: :undefined`). La imagen de Docker instala
+`ca-certificates` por esa razón. Con una URL sin TLS (Mongo local) no se agrega nada.
+
 ## Setup local
 
 Este repo es autocontenido: su propio `docker-compose.yml` trae Mongo y
@@ -227,6 +234,7 @@ global para todo el proyecto.
 lib/
 ├── messaging/                    # Logica de negocio pura, sin HTTP
 │   ├── application.ex            # Arranca el supervisor de la app
+│   ├── mongo_options.ex          # Opciones del driver de Mongo (TLS para Atlas)
 │   ├── uuid.ex                   # UUIDv4 y UUIDv7 monótono (ids de mensajes), sin depender de Ecto
 │   ├── auth/
 │   │   ├── token.ex              # user_id (claim sub) del Bearer; la firma la valida Kong

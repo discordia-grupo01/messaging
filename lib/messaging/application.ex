@@ -9,7 +9,7 @@ defmodule Messaging.Application do
     children =
       [
         {Phoenix.PubSub, name: Messaging.PubSub},
-        {Mongo, name: Messaging.Mongo, url: mongo_url}
+        {Mongo, Messaging.MongoOptions.build(mongo_url)}
       ] ++ index_children() ++ amqp_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
