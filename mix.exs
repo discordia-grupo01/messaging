@@ -1,9 +1,9 @@
-defmodule MyApp.MixProject do
+defmodule Messaging.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :my_app,
+      app: :messaging,
       version: "0.1.0",
       elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -15,7 +15,7 @@ defmodule MyApp.MixProject do
 
   def application do
     [
-      mod: {MyApp.Application, []},
+      mod: {Messaging.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -28,17 +28,16 @@ defmodule MyApp.MixProject do
       {:phoenix, "~> 1.7"},
       {:jason, "~> 1.4"},
       {:plug_cowboy, "~> 2.7"},
-      # Descomentar si este servicio usa MongoDB:
-      # {:mongodb_driver, "~> 1.4"},
-      # Descomentar si usan RabbitMQ como event bus:
-      # {:amqp, "~> 3.3"},
-      # Validacion de JWT
-      {:joken, "~> 2.6"},
-      # Descomentar solo en Notificaciones (FCM/APNs):
-      # {:pigeon, "~> 2.0"},
+      {:cowlib, "~> 2.19.0", override: true},
+      {:mongodb_driver, "~> 1.4"},
+      {:amqp, "~> 3.3"},
+      {:req, "~> 0.5"},
+      {:open_api_spex, "~> 3.21"},
+      {:ymlr, "~> 5.0", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mox, "~> 1.1", only: :test}
     ]
   end
 end

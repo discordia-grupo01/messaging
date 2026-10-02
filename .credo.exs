@@ -9,10 +9,9 @@
       strict: true,
       checks: %{
         disabled: [
-          # Dejamos TODOs a proposito como placeholders de trabajo pendiente.
-          # No tiene sentido que bloqueen el pipeline.
           {Credo.Check.Design.TagTODO, []},
-          {Credo.Check.Design.TagFIXME, []}
+          {Credo.Check.Design.TagFIXME, []},
+          {Credo.Check.Readability.ModuleDoc, []}
         ]
       }
     }

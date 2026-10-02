@@ -1,0 +1,253 @@
+---
+components:
+  responses: {}
+  schemas:
+    ErrorResponse:
+      properties:
+        error:
+          properties:
+            code:
+              type: string
+              x-struct:
+              x-validate:
+            details:
+              type: object
+              x-struct:
+              x-validate:
+            message:
+              type: string
+              x-struct:
+              x-validate:
+          required:
+            - code
+            - message
+            - details
+          type: object
+          x-struct:
+          x-validate:
+      required:
+        - error
+      title: ErrorResponse
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.ErrorResponse
+      x-validate:
+    Message:
+      properties:
+        channel_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        content:
+          type: string
+          x-struct:
+          x-validate:
+        id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        inserted_at:
+          description: ISO 8601, UTC, always with a trailing Z
+          format: date-time
+          type: string
+          x-struct:
+          x-validate:
+        server_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        user_id:
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - id
+        - channel_id
+        - server_id
+        - user_id
+        - content
+        - inserted_at
+      title: Message
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.Message
+      x-validate:
+    MessageList:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          type: array
+          x-struct:
+          x-validate:
+        next_cursor:
+          description: Message id to pass as `before` for the next page.
+          nullable: true
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - messages
+        - next_cursor
+      title: MessageList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.MessageList
+      x-validate:
+    SocketTicket:
+      properties:
+        expires_in:
+          description: Segundos que el ticket es válido desde que se emite.
+          type: integer
+          x-struct:
+          x-validate:
+        ticket:
+          description: Ticket de un solo uso. Se manda como `?ticket=<ticket>` al conectar el WebSocket.
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - ticket
+        - expires_in
+      title: SocketTicket
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.SocketTicket
+      x-validate:
+info:
+  description: Mensajes de canal en tiempo real (envío por WebSocket, historial por REST).
+  title: Discordia — Messaging
+  version: 0.1.0
+openapi: 3.0.0
+paths:
+  /livez:
+    get:
+      callbacks: {}
+      operationId: MessagingWeb.HealthController.livez
+      parameters: []
+      responses:
+        '200':
+          content:
+            text/plain:
+              schema:
+                type: string
+                x-struct:
+                x-validate:
+          description: ok
+      summary: Liveness -- confirma que el proceso responde, sin tocar Mongo ni el broker
+      tags:
+        - ops
+  /readyz:
+    get:
+      callbacks: {}
+      operationId: MessagingWeb.HealthController.readyz
+      parameters: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                x-struct:
+                x-validate:
+          description: ready
+        '503':
+          content:
+            application/json:
+              schema:
+                type: object
+                x-struct:
+                x-validate:
+          description: Mongo no responde
+      summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo)
+      tags:
+        - ops
+  /v1/channels/{channel_id}/messages:
+    get:
+      callbacks: {}
+      operationId: MessagingWeb.MessageController.index
+      parameters:
+        - description: UUID del canal
+          in: path
+          name: channel_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Tamaño de página (default 50, máx 100)
+          in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            x-struct:
+            x-validate:
+        - description: Id de mensaje devuelto como next_cursor en la página anterior
+          in: query
+          name: before
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+          description: Página de mensajes, más nuevos primero
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El usuario no tiene SEND_MESSAGES en este canal
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal no existe
+      summary: Historial de mensajes de un canal
+      tags:
+        - messages
+  /v1/socket-tickets:
+    post:
+      callbacks: {}
+      description: El navegador no puede mandar el header Authorization al abrir un WebSocket, y poner el JWT en la URL lo deja en logs. En su lugar, el cliente pide acá un ticket (autenticado con el Bearer normal) y conecta con `?ticket=<ticket>`.
+      operationId: MessagingWeb.SocketTicketController.create
+      parameters: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocketTicket'
+          description: Ticket emitido
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo guardar el ticket
+      summary: Emite un ticket de un solo uso para conectar el WebSocket
+      tags:
+        - auth
+security: []
+servers:
+  - url: http://localhost:4000
+    variables: {}
+tags: []
