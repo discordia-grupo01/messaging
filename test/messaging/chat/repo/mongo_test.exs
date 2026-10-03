@@ -92,6 +92,33 @@ if mongo_url do
       assert {:error, :invalid_cursor} = Chat.list_messages(channel_id, before: foreign)
     end
 
+    test "delete_channel/1 removes the channel and its messages, leaving other channels intact",
+         %{channel_id: channel_id} do
+      other_id = "other-" <> channel_id
+      kept = seed(other_id, 3)
+      seed(channel_id, 5)
+
+      :ok =
+        Repo.upsert_channel(%{
+          "_id" => channel_id,
+          "server_id" => "srv-1",
+          "name" => "general",
+          "kind" => "text"
+        })
+
+      assert :ok = Repo.delete_channel(channel_id)
+
+      assert Repo.get_channel(channel_id) == nil
+      assert {:ok, []} = Repo.list_messages(channel_id, limit: 50)
+      assert {:ok, page} = Repo.list_messages(other_id, limit: 50)
+      assert Enum.sort(Enum.map(page, & &1["_id"])) == Enum.sort(kept)
+    end
+
+    test "delete_channel/1 is idempotent", %{channel_id: channel_id} do
+      assert :ok = Repo.delete_channel(channel_id)
+      assert :ok = Repo.delete_channel(channel_id)
+    end
+
     test "ensure_indexes/0 creates the history index and can run again" do
       assert :ok = Repo.ensure_indexes()
       assert :ok = Repo.ensure_indexes()

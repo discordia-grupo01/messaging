@@ -89,7 +89,7 @@ if rabbitmq_url && mongo_url do
              end)
     end
 
-    test "consuming servers.channel_deleted evicts the channel from the local read model", %{
+    test "consuming servers.channel_deleted evicts the channel and its messages", %{
       chan: chan
     } do
       channel_id = "chan-#{System.unique_integer([:positive])}"
@@ -105,6 +105,16 @@ if rabbitmq_url && mongo_url do
 
       assert {:ok, _channel} = Chat.channel_exists?(channel_id)
 
+      {:ok, _} =
+        Mongo.insert_one(Messaging.Mongo, "messages", %{
+          "_id" => Messaging.UUID.generate(),
+          "channel_id" => channel_id,
+          "server_id" => server_id,
+          "user_id" => "user-1",
+          "content" => "hola",
+          "inserted_at" => DateTime.utc_now()
+        })
+
       payload =
         Jason.encode!(%{
           "event_id" => Messaging.UUID.generate(),
@@ -119,6 +129,9 @@ if rabbitmq_url && mongo_url do
       assert wait_until(fn ->
                match?({:error, :channel_not_found}, Chat.channel_exists?(channel_id))
              end)
+
+      assert Mongo.count_documents!(Messaging.Mongo, "messages", %{"channel_id" => channel_id}) ==
+               0
     end
 
     defp consumed_event(event_id),
