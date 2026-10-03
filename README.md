@@ -63,8 +63,12 @@ dominio para otros servicios.
     usuario tenga `VIEW_CHANNELS`. Si viene `last_message_id`, empuja
     `"missed_messages"` con lo enviado después de ese mensaje (ver
     [Historial y reconexión](#historial-y-reconexión)).
+  - `handle_in("edit_message", %{"id" => "<id>", "content" => "..."})` -- edita un
+    mensaje propio (ver [Editar mensajes](#editar-mensajes)).
   - `handle_in("new_message", %{"content" => "..."})` -- requiere
     `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+- `PATCH /v1/channels/:channel_id/messages/:message_id` con `{"content": "..."}` --
+  edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
 - `GET /v1/channels/:channel_id/messages?limit=&before=<id>&after=<id>` --
   historial paginado por cursor, cada página en orden cronológico. Requiere
   `VIEW_CHANNELS`.
@@ -86,6 +90,39 @@ ticket lo emita una instancia y lo consuma otra. El JWT ya no viaja en la URL.
 
 `messaging` no verifica la firma del JWT: confía en que Kong lo validó. Por eso
 no debe quedar expuesto directo a internet (solo detrás del gateway).
+
+## Editar mensajes
+Un mensaje se edita por REST (`PATCH /v1/channels/:channel_id/messages/:message_id`,
+cuerpo `{"content": "..."}`) o por el socket (`edit_message` con `{"id", "content"}`):
+las dos entradas usan la misma función de dominio (`Messaging.Chat.edit_message/1`).
+
+- **Solo el autor.** Otro usuario recibe `403 NOT_MESSAGE_AUTHOR` (por el socket, el
+  mismo código en la respuesta de error). Además tiene que seguir pudiendo escribir en
+  el canal (`SEND_MESSAGES`): si lo sacaron o le revocaron el permiso, `403 FORBIDDEN`.
+- **Mismas reglas que al enviar:** el contenido se recorta, no puede quedar vacío
+  (`EMPTY_CONTENT`) ni superar los 2000 caracteres (`MESSAGE_TOO_LONG`). Un mensaje que
+  no existe, o que es de otro canal, da `404 MESSAGE_NOT_FOUND`. Un cuerpo sin `content`
+  de tipo string da `400 INVALID_PAYLOAD`.
+- **Marca de edición.** Todo mensaje trae `edited` (`true`/`false`) y `edited_at`
+  (ISO 8601 en UTC, o `null`). Los mensajes anteriores a esta función, que no tienen el
+  campo guardado, salen como `edited: false`. El orden del historial no cambia: se
+  sigue ordenando por `inserted_at`, que la edición no toca.
+- **Sin cambios, sin ruido.** Si el contenido nuevo (ya recortado) es igual al actual, la
+  respuesta es `200` con el mensaje tal cual, **no** se marca como editado y no se emite
+  nada.
+- **Tiempo real.** Al editar, el mensaje completo se emite a quien tenga el canal abierto
+  como evento `message_updated` (mismo formato que `new_message`, ya con `edited: true`).
+  Viaja por el mismo fanout de RabbitMQ que `new_message`, así que llega también a los
+  clientes conectados a otra instancia. El cuerpo en el fanout pasó a ser
+  `{"event": ..., "payload": ...}`; el consumidor sigue aceptando el formato anterior
+  (el mensaje "pelado") como `new_message` y descarta los eventos que no conoce. Si el
+  broadcast fallara (RabbitMQ caído), la edición queda guardada y se responde igual
+  `200`/`ok`; solo se pierde el aviso en vivo.
+- **Concurrencia.** Si dos ediciones del mismo mensaje llegan a la vez, gana la última
+  que escribe. La escritura filtra por id, canal y autor, así que ni siquiera una
+  carrera puede modificar un mensaje ajeno.
+- **Ediciones mientras estabas desconectado.** Ver
+  [Cambios mientras estabas desconectado](#cambios-mientras-estabas-desconectado).
 
 ## Historial y reconexión
 
@@ -115,6 +152,9 @@ desconectado, así que el cliente se pone al día pidiendo lo que falta:
 4. Si `next_cursor` no es `null` había más de un lote: sigue con
    `GET .../messages?after=<next_cursor>` hasta vaciar.
 
+Para enterarse además de lo que **cambió** (hoy, ediciones) en mensajes que ya tenía,
+ver [Cambios mientras estabas desconectado](#cambios-mientras-estabas-desconectado).
+
 Garantías y casos borde:
 - La puesta al día corre **después** de suscribirse al canal, así que no hay
   hueco entre lo recuperado y lo que llega en vivo. A cambio, un mensaje puede
@@ -136,6 +176,40 @@ Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
 certificados raíz del sistema y verificación de hostname. Sin eso, OTP 26
 rechaza la conexión (`cacerts: :undefined`). La imagen de Docker instala
 `ca-certificates` por esa razón. Con una URL sin TLS (Mongo local) no se agrega nada.
+
+## Cambios mientras estabas desconectado
+`missed_messages` trae solo mensajes **nuevos**. Para que un cliente que volvió se entere
+también de los mensajes que **cambiaron** (editados; el mismo mecanismo va a llevar los
+borrados) hay un segundo cursor, basado en el reloj del servidor:
+
+1. Cada `join` responde `{"server_time": "<ISO 8601 UTC, ms>"}`. El cliente lo guarda
+   como cursor. Si además recibió `message_updated` en vivo, puede avanzarlo al
+   `edited_at` más nuevo que vio (opcional: solo evita reenvíos).
+2. Al reconectar manda en el `join` `{"last_message_id": ..., "changes_since": "<cursor>"}`.
+3. El servidor empuja `"changed_messages"` con `{"messages": [...]}`: los mensajes de ese
+   canal que cambiaron desde el cursor, **sin importar qué tan viejos sean**, del cambio más
+   viejo al más nuevo, ya con el texto vigente y `edited: true`. Va después de
+   `missed_messages` y se empuja siempre (aun vacío) cuando se manda `changes_since`, para
+   que el cliente sepa que está al día. Un mensaje nuevo que además fue editado aparece en
+   los dos: el cliente aplica por `id`, y el último evento gana.
+4. Si hubo más de **200** cambios, no se manda una lista parcial: se empuja
+   `"resync_required"` y el cliente recarga el historial por REST.
+
+Detalles:
+- **Margen de 5 s.** El servidor busca cambios desde `changes_since - 5 s`, para absorber
+  diferencias de reloj entre instancias. Por eso un cursor pegado a una edición reciente la
+  vuelve a mandar: es inocuo, el cliente aplica por `id`.
+- **Compatibilidad.** Sin `changes_since` no hay `changed_messages`: un cliente anterior sigue
+  funcionando igual (solo ignora el `server_time` de la respuesta del `join`).
+- **Cursor inválido.** Si `changes_since` no es un ISO 8601 válido, el `join` falla con
+  `INVALID_CURSOR`.
+- **Cómo se guarda.** Cada edición escribe también `changed_at`, el cursor interno. Hay un
+  índice **parcial** `(channel_id, changed_at)` que solo incluye mensajes con `changed_at`,
+  así que los mensajes que nunca cambiaron no ocupan lugar en él. `Messaging.Chat.IndexSetup`
+  lo crea al arrancar.
+- **Para "Eliminar mensaje".** Basta con que el borrado marque `changed_at` (y conserve un
+  marcador de borrado en vez de eliminar el documento): el mismo cursor, la misma consulta
+  y el mismo evento `changed_messages` lo llevan a los clientes desconectados.
 
 ## Setup local
 
