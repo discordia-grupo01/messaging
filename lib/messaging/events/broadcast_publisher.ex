@@ -15,6 +15,7 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   @impl GenServer
   def init(opts) do
+    Process.flag(:trap_exit, true)
     url = Keyword.fetch!(opts, :url)
     send(self(), :connect)
     {:ok, %{url: url, backoff: Backoff.initial(), conn: nil, chan: nil}}
@@ -56,6 +57,22 @@ defmodule Messaging.Events.BroadcastPublisher do
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
   end
+
+  @impl GenServer
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, %{conn: conn}) when not is_nil(conn) do
+    try do
+      AMQP.Connection.close(conn)
+    catch
+      :exit, _ -> :ok
+    end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),
