@@ -17,9 +17,35 @@ defmodule MessagingWeb.Schemas do
           type: :string,
           format: :"date-time",
           description: "ISO 8601, UTC, always with a trailing Z"
+        },
+        edited: %Schema{
+          type: :boolean,
+          description: "true si el autor lo editó después de enviarlo"
+        },
+        edited_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "Momento de la última edición (ISO 8601, UTC); null si nunca se editó"
         }
       },
-      required: [:id, :channel_id, :server_id, :user_id, :content, :inserted_at]
+      required: [:id, :channel_id, :server_id, :user_id, :content, :inserted_at, :edited]
+    })
+  end
+
+  defmodule EditMessageRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "EditMessageRequest",
+      type: :object,
+      properties: %{
+        content: %Schema{
+          type: :string,
+          description: "Contenido nuevo (máx. 2000 caracteres, se recorta)"
+        }
+      },
+      required: [:content]
     })
   end
 

@@ -2,6 +2,19 @@
 components:
   responses: {}
   schemas:
+    EditMessageRequest:
+      properties:
+        content:
+          description: Contenido nuevo (máx. 2000 caracteres, se recorta)
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - content
+      title: EditMessageRequest
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.EditMessageRequest
+      x-validate:
     ErrorResponse:
       properties:
         error:
@@ -42,6 +55,18 @@ components:
           type: string
           x-struct:
           x-validate:
+        edited:
+          description: true si el autor lo editó después de enviarlo
+          type: boolean
+          x-struct:
+          x-validate:
+        edited_at:
+          description: Momento de la última edición (ISO 8601, UTC); null si nunca se editó
+          format: date-time
+          nullable: true
+          type: string
+          x-struct:
+          x-validate:
         id:
           format: uuid
           type: string
@@ -69,6 +94,7 @@ components:
         - user_id
         - content
         - inserted_at
+        - edited
       title: Message
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.Message
@@ -231,6 +257,69 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: El canal no existe
       summary: Historial de mensajes de un canal
+      tags:
+        - messages
+  /v1/channels/{channel_id}/messages/{message_id}:
+    patch:
+      callbacks: {}
+      description: Solo el autor puede editarlo y tiene que seguir pudiendo escribir en el canal (`SEND_MESSAGES`). El contenido nuevo pasa las mismas reglas que al enviar (se recorta, no puede quedar vacío ni superar los 2000 caracteres). Si queda igual al actual no se marca como editado ni se emite nada. Al editar, el mensaje completo se emite en tiempo real a los miembros con el canal abierto como evento `message_updated`.
+      operationId: MessagingWeb.MessageController.update
+      parameters:
+        - description: UUID del canal
+          in: path
+          name: channel_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: UUID del mensaje
+          in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditMessageRequest'
+        description: Contenido nuevo
+        required: false
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: El mensaje, ya editado
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Contenido vacío o demasiado largo, o cuerpo mal formado
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No es el autor del mensaje, o no tiene SEND_MESSAGES en el canal
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal o el mensaje no existen
+      summary: Editar un mensaje propio
       tags:
         - messages
   /v1/socket-tickets:
