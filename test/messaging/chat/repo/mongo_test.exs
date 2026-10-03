@@ -92,6 +92,71 @@ if mongo_url do
       assert {:error, :invalid_cursor} = Chat.list_messages(channel_id, before: foreign)
     end
 
+    defp cache_channel(server_id, channel_id) do
+      :ok =
+        Repo.upsert_channel(%{
+          "_id" => channel_id,
+          "server_id" => server_id,
+          "name" => "general",
+          "kind" => "text"
+        })
+    end
+
+    defp message_count(channel_id) do
+      {:ok, n} = Mongo.count_documents(Messaging.Mongo, "messages", %{"channel_id" => channel_id})
+      n
+    end
+
+    test "delete_server_data/2 removes the messages and cached channels of that server only",
+         %{channel_id: channel_a} do
+      server = "srv-" <> Messaging.UUID.generate()
+      channel_b = "chan-" <> Messaging.UUID.generate()
+      other_server = "srv-" <> Messaging.UUID.generate()
+      other_channel = "chan-" <> Messaging.UUID.generate()
+
+      for {srv, ch} <- [{server, channel_a}, {server, channel_b}, {other_server, other_channel}] do
+        cache_channel(srv, ch)
+        seed(ch, 5)
+      end
+
+      assert :ok = Repo.delete_server_data(server, [channel_a, channel_b])
+
+      assert message_count(channel_a) == 0
+      assert message_count(channel_b) == 0
+      assert Repo.get_channel(channel_a) == nil
+      assert Repo.get_channel(channel_b) == nil
+      assert message_count(other_channel) == 5
+      assert %{"server_id" => ^other_server} = Repo.get_channel(other_channel)
+    end
+
+    test "delete_server_data/2 also purges channels it only knows from its own cache",
+         %{channel_id: channel_id} do
+      server = "srv-" <> Messaging.UUID.generate()
+      cache_channel(server, channel_id)
+      seed(channel_id, 3)
+
+      assert :ok = Repo.delete_server_data(server, [])
+
+      assert message_count(channel_id) == 0
+      assert Repo.get_channel(channel_id) == nil
+    end
+
+    test "delete_server_data/2 purges channel ids from the event even if the cache never had them",
+         %{channel_id: channel_id} do
+      seed(channel_id, 3)
+
+      assert :ok = Repo.delete_server_data("srv-" <> Messaging.UUID.generate(), [channel_id])
+
+      assert message_count(channel_id) == 0
+    end
+
+    test "delete_server_data/2 is idempotent and fine for a server it never heard of" do
+      server = "srv-" <> Messaging.UUID.generate()
+
+      assert :ok = Repo.delete_server_data(server, [])
+      assert :ok = Repo.delete_server_data(server, ["chan-" <> Messaging.UUID.generate()])
+    end
+
     test "delete_channel/1 removes the channel and its messages, leaving other channels intact",
          %{channel_id: channel_id} do
       other_id = "other-" <> channel_id

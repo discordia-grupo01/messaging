@@ -21,7 +21,9 @@ pérdida, CA3 orden cronológico).
 
 - **Chequeo de canal (existencia + tipo `text`)**: caché local en Mongo
   (colección `channels`), poblada consumiendo `servers.channel_created` /
-  `servers.channel_deleted` (`Messaging.Events.ChannelLifecycleConsumer`).
+  `servers.channel_deleted` (`Messaging.Events.ChannelLifecycleConsumer`). Se
+  guardan también los canales de voz: así escribir en uno responde
+  `CHANNEL_NOT_TEXT` en vez de un engañoso "el canal no existe".
 - **Chequeo de permisos (`SEND_MESSAGES`)**: llamada HTTP síncrona a
   `servers` (`Messaging.Chat.PermissionsClient`) en el momento de unirse al
   canal y en cada envío -- no se cachea porque un rol puede revocarse en
@@ -36,10 +38,18 @@ pérdida, CA3 orden cronológico).
 ## Eventos que consume
 - `servers.channel_created` -- upsert en la caché local de canales.
 - `servers.channel_deleted` -- evicción de la caché local de canales.
+- `servers.server_deleted` -- se eliminó el servidor: se borran **todos los
+  mensajes** de sus canales y los canales de la caché. El evento trae los ids de
+  los canales (`channel_ids`) y además se usan los que la caché conoce de ese
+  servidor, así que no depende de que la caché esté completa. Es idempotente:
+  si se entrega dos veces, la segunda no encuentra nada que borrar. Un
+  `channel_ids` que no sea una lista de strings se descarta
+  (`discarded_invalid_payload` en `consumed_events`) sin tocar nada.
 
-Ambos definidos en
+Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)
-(`channels/events.go` + `channels/events.ex`) y documentados en
+(`channels/events.go` + `channels/events.ex` y `servers/events.go` +
+`servers/events.ex`) y documentados en
 [`docs/asyncapi/channels.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/channels.yaml).
 
 ## Eventos que publica

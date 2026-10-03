@@ -6,6 +6,8 @@ defmodule Messaging.Chat.Repo do
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}
+  @callback delete_server_data(server_id :: String.t(), channel_ids :: [String.t()]) ::
+              :ok | {:error, term()}
   @callback ping() :: :ok | {:error, term()}
   @callback ensure_indexes() :: :ok | {:error, term()}
 end

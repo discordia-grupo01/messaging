@@ -70,6 +70,28 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def delete_server_data(server_id, channel_ids) do
+    channels = cached_channel_ids(server_id)
+    all_ids = Enum.uniq(channel_ids ++ channels)
+
+    with {:ok, _result} <-
+           Mongo.delete_many(@conn, @messages, %{"channel_id" => %{"$in" => all_ids}}),
+         {:ok, _result} <- Mongo.delete_many(@conn, @channels, %{"server_id" => server_id}) do
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp cached_channel_ids(server_id) do
+    @conn
+    |> Mongo.find(@channels, %{"server_id" => server_id}, projection: %{"_id" => 1})
+    |> Enum.map(& &1["_id"])
+  end
+
+  @impl true
   def ping do
     case Mongo.ping(@conn) do
       {:ok, _doc} -> :ok

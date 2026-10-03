@@ -307,6 +307,24 @@ defmodule Messaging.ChatTest do
     end
   end
 
+  describe "delete_server_data/2" do
+    test "delegates to the repo with the server and its channel ids" do
+      expect(Messaging.Chat.RepoMock, :delete_server_data, fn "srv-1", ["chan-1", "chan-2"] ->
+        :ok
+      end)
+
+      assert :ok = Chat.delete_server_data("srv-1", ["chan-1", "chan-2"])
+    end
+
+    test "propagates a repo failure" do
+      expect(Messaging.Chat.RepoMock, :delete_server_data, fn _server_id, _channel_ids ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.delete_server_data("srv-1", [])
+    end
+  end
+
   describe "mongo_ready?/0" do
     test "true when the repo pings successfully" do
       expect(Messaging.Chat.RepoMock, :ping, fn -> :ok end)
