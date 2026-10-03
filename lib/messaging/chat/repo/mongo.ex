@@ -48,6 +48,20 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def update_message(id, channel_id, user_id, content, edited_at) do
+    filter = %{"_id" => id, "channel_id" => channel_id, "user_id" => user_id}
+
+    update = %{
+      "$set" => %{"content" => content, "edited_at" => edited_at, "changed_at" => edited_at}
+    }
+
+    case Mongo.find_one_and_update(@conn, @messages, filter, update, return_document: :after) do
+      {:ok, %Mongo.FindAndModifyResult{value: doc}} -> {:ok, doc}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
   def get_message(id), do: Mongo.find_one(@conn, @messages, %{"_id" => id})
 
   @impl true

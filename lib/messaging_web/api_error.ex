@@ -7,6 +7,9 @@ defmodule MessagingWeb.ApiError do
           | :channel_not_text
           | :invalid_cursor
           | :ticket_unavailable
+          | :message_not_found
+          | :not_message_author
+          | :invalid_payload
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -29,6 +32,14 @@ defmodule MessagingWeb.ApiError do
   def describe(:ticket_unavailable),
     do: {"TICKET_UNAVAILABLE", "No se pudo emitir el ticket, intentá de nuevo."}
 
+  def describe(:message_not_found), do: {"MESSAGE_NOT_FOUND", "El mensaje no existe."}
+
+  def describe(:not_message_author),
+    do: {"NOT_MESSAGE_AUTHOR", "Solo el autor de un mensaje puede editarlo."}
+
+  def describe(:invalid_payload),
+    do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
+
   @spec payload(reason(), map()) :: map()
   def payload(reason, details \\ %{}) do
     {code, message} = describe(reason)
@@ -37,6 +48,8 @@ defmodule MessagingWeb.ApiError do
 
   @spec http_status(reason()) :: 400 | 403 | 404 | 503
   def http_status(:forbidden), do: 403
+  def http_status(:not_message_author), do: 403
+  def http_status(:message_not_found), do: 404
   def http_status(:channel_not_found), do: 404
   def http_status(:ticket_unavailable), do: 503
   def http_status(_other), do: 400

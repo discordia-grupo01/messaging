@@ -134,6 +134,218 @@ defmodule Messaging.ChatTest do
     end
   end
 
+  describe "edit_message/1" do
+    defp stored_doc(overrides \\ %{}) do
+      Map.merge(
+        %{
+          "_id" => "msg-1",
+          "channel_id" => @channel_id,
+          "server_id" => @server_id,
+          "user_id" => @user_id,
+          "content" => "texto original",
+          "inserted_at" => ~U[2026-09-28 12:00:00Z]
+        },
+        overrides
+      )
+    end
+
+    defp edit_params(overrides \\ %{}) do
+      Map.merge(
+        %{
+          channel_id: @channel_id,
+          message_id: "msg-1",
+          user_id: @user_id,
+          content: "texto corregido",
+          raw_jwt: @raw_jwt
+        },
+        overrides
+      )
+    end
+
+    defp allow_edit(doc \\ stored_doc()) do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+                                                                           @user_id,
+                                                                           @raw_jwt ->
+        {:ok, true}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+    end
+
+    test "the author changes the content and the message comes back marked as edited" do
+      allow_edit()
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn "msg-1",
+                                                          @channel_id,
+                                                          @user_id,
+                                                          "texto corregido",
+                                                          %DateTime{} = edited_at ->
+        assert {_micro, 3} = edited_at.microsecond
+        {:ok, stored_doc(%{"content" => "texto corregido", "edited_at" => edited_at})}
+      end)
+
+      assert {:ok, %Message{content: "texto corregido", edited_at: %DateTime{}}, :updated} =
+               Chat.edit_message(edit_params())
+    end
+
+    test "the new content is trimmed like on send" do
+      allow_edit()
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, "con espacios", _at ->
+        {:ok, stored_doc(%{"content" => "con espacios", "edited_at" => DateTime.utc_now()})}
+      end)
+
+      assert {:ok, %Message{content: "con espacios"}, :updated} =
+               Chat.edit_message(edit_params(%{content: "   con espacios \n"}))
+    end
+
+    test "the original timestamp and author are untouched: only the filter pins them" do
+      allow_edit()
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn "msg-1",
+                                                          @channel_id,
+                                                          @user_id,
+                                                          _c,
+                                                          _t ->
+        {:ok, stored_doc(%{"content" => "texto corregido", "edited_at" => DateTime.utc_now()})}
+      end)
+
+      assert {:ok, %Message{inserted_at: ~U[2026-09-28 12:00:00Z], user_id: @user_id}, :updated} =
+               Chat.edit_message(edit_params())
+    end
+
+    test "an edit that leaves the content identical changes nothing and is not marked as edited" do
+      allow_edit()
+
+      assert {:ok, %Message{content: "texto original", edited_at: nil}, :unchanged} =
+               Chat.edit_message(edit_params(%{content: "  texto original "}))
+    end
+
+    test "someone who is not the author is rejected without touching the message" do
+      allow_edit(stored_doc(%{"user_id" => "another-user"}))
+
+      assert {:error, :not_message_author} = Chat.edit_message(edit_params())
+    end
+
+    test "the author check comes before content validation" do
+      allow_edit(stored_doc(%{"user_id" => "another-user"}))
+
+      assert {:error, :not_message_author} = Chat.edit_message(edit_params(%{content: "   "}))
+    end
+
+    test "rejects empty content" do
+      allow_edit()
+
+      assert {:error, :empty_content} = Chat.edit_message(edit_params(%{content: "  "}))
+    end
+
+    test "rejects content over the limit and accepts exactly the limit" do
+      allow_edit()
+
+      assert {:error, :message_too_long} =
+               Chat.edit_message(
+                 edit_params(%{content: String.duplicate("a", Chat.max_message_length() + 1)})
+               )
+
+      allow_edit()
+      exact = String.duplicate("a", Chat.max_message_length())
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, ^exact, _at ->
+        {:ok, stored_doc(%{"content" => exact, "edited_at" => DateTime.utc_now()})}
+      end)
+
+      assert {:ok, %Message{}, :updated} = Chat.edit_message(edit_params(%{content: exact}))
+    end
+
+    test "a message that does not exist" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ ->
+        {:ok, true}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> nil end)
+
+      assert {:error, :message_not_found} = Chat.edit_message(edit_params())
+    end
+
+    test "a message that belongs to another channel is reported as not found" do
+      allow_edit(stored_doc(%{"channel_id" => "other-channel"}))
+
+      assert {:error, :message_not_found} = Chat.edit_message(edit_params())
+    end
+
+    test "an id that is not a string never reaches the repository" do
+      bad_ids = [%{"$ne" => "x"}, nil, 123, ["msg-1"]]
+      calls = length(bad_ids)
+
+      expect(Messaging.Chat.RepoMock, :get_channel, calls, fn @channel_id ->
+        text_channel_doc()
+      end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, calls, fn _, _, _ ->
+        {:ok, true}
+      end)
+
+      for bad <- bad_ids do
+        assert {:error, :message_not_found} = Chat.edit_message(edit_params(%{message_id: bad}))
+      end
+    end
+
+    test "someone who can no longer write in the channel cannot edit" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ ->
+        {:ok, false}
+      end)
+
+      assert {:error, :forbidden} = Chat.edit_message(edit_params())
+    end
+
+    test "a failing permissions check is propagated" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.edit_message(edit_params())
+    end
+
+    test "an unknown channel and a voice channel are rejected" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> nil end)
+      assert {:error, :channel_not_found} = Chat.edit_message(edit_params())
+
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id ->
+        %{"_id" => @channel_id, "server_id" => @server_id, "name" => "voz", "kind" => "voice"}
+      end)
+
+      assert {:error, :channel_not_text} = Chat.edit_message(edit_params())
+    end
+
+    test "the message vanishing between the read and the write is reported as not found" do
+      allow_edit()
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, _c, _t ->
+        {:ok, nil}
+      end)
+
+      assert {:error, :message_not_found} = Chat.edit_message(edit_params())
+    end
+
+    test "a repository failure on update is propagated" do
+      allow_edit()
+
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, _c, _t ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.edit_message(edit_params())
+    end
+  end
+
   describe "list_messages/2" do
     defp doc(id, at, channel_id \\ @channel_id),
       do: %{

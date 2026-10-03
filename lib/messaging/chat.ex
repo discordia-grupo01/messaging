@@ -37,6 +37,35 @@ defmodule Messaging.Chat do
     end
   end
 
+  @type edit_message_params :: %{
+          channel_id: String.t(),
+          message_id: term(),
+          user_id: String.t(),
+          content: String.t(),
+          raw_jwt: String.t()
+        }
+
+  @spec edit_message(edit_message_params()) ::
+          {:ok, Message.t(), :updated | :unchanged} | {:error, MessagingWeb.ApiError.reason()}
+  def edit_message(%{
+        channel_id: channel_id,
+        message_id: message_id,
+        user_id: user_id,
+        content: content,
+        raw_jwt: raw_jwt
+      }) do
+    with {:ok, channel} <- fetch_text_channel(channel_id),
+         {:ok, true} <- check_permission(channel, user_id, raw_jwt),
+         {:ok, message} <- fetch_message(channel_id, message_id),
+         :ok <- require_author(message, user_id),
+         {:ok, trimmed} <- validate_content(content) do
+      apply_edit(message, trimmed)
+    else
+      {:ok, false} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
   @spec list_messages(String.t(), keyword()) ::
           {:ok, [Message.t()], String.t() | nil} | {:error, atom()}
   def list_messages(channel_id, opts \\ []) do
@@ -150,6 +179,49 @@ defmodule Messaging.Chat do
   defp exclusive_cursors(nil, _after_id), do: :ok
   defp exclusive_cursors(_before_id, nil), do: :ok
   defp exclusive_cursors(_before_id, _after_id), do: {:error, :invalid_cursor}
+
+  defp fetch_message(channel_id, message_id) when is_binary(message_id) do
+    case repo().get_message(message_id) do
+      %{"channel_id" => ^channel_id} = doc -> {:ok, Message.from_doc(doc)}
+      _other -> {:error, :message_not_found}
+    end
+  end
+
+  defp fetch_message(_channel_id, _message_id), do: {:error, :message_not_found}
+
+  defp require_author(%Message{user_id: user_id}, user_id), do: :ok
+  defp require_author(%Message{}, _user_id), do: {:error, :not_message_author}
+
+  defp apply_edit(%Message{content: content} = message, content), do: {:ok, message, :unchanged}
+
+  defp apply_edit(%Message{} = message, new_content) do
+    edited_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+    case repo().update_message(
+           message.id,
+           message.channel_id,
+           message.user_id,
+           new_content,
+           edited_at
+         ) do
+      {:ok, nil} ->
+        {:error, :message_not_found}
+
+      {:ok, doc} ->
+        Logger.info(
+          "messaging: message_edited channel_id=#{message.channel_id} user_id=#{message.user_id} message_id=#{message.id}"
+        )
+
+        {:ok, Message.from_doc(doc), :updated}
+
+      {:error, reason} = error ->
+        Logger.warning(
+          "messaging: message_update_failed channel_id=#{message.channel_id} reason=#{inspect(reason)}"
+        )
+
+        error
+    end
+  end
 
   defp resolve_cursor(_channel_id, nil), do: {:ok, nil}
 
