@@ -1,3 +1,10 @@
+defmodule Messaging.FailingBroadcaster do
+  @behaviour Messaging.Events.Broadcaster
+
+  @impl true
+  def publish(_event, _payload), do: {:error, :not_connected}
+end
+
 defmodule MessagingWeb.RoomChannelTest do
   use MessagingWeb.ChannelCase
   import Mox
@@ -115,6 +122,156 @@ defmodule MessagingWeb.RoomChannelTest do
 
     ref = push(socket, "new_message", %{"content" => "hola"})
     assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+  end
+
+  describe "edit_message" do
+    defp stored_message(overrides \\ %{}) do
+      Map.merge(
+        %{
+          "_id" => "msg-1",
+          "channel_id" => @channel_id,
+          "server_id" => @server_id,
+          "user_id" => "user-a",
+          "content" => "texto original",
+          "inserted_at" => ~U[2026-09-28 12:00:00Z]
+        },
+        overrides
+      )
+    end
+
+    defp stub_stored(doc \\ stored_message()) do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+
+      stub(Messaging.Chat.RepoMock, :update_message, fn "msg-1", _cid, _uid, content, edited_at ->
+        {:ok, Map.merge(doc, %{"content" => content, "edited_at" => edited_at})}
+      end)
+    end
+
+    defp join_as(user_id) do
+      {:ok, _reply, socket} =
+        subscribe_and_join(join_socket(user_id), RoomChannel, "channel:" <> @channel_id)
+
+      socket
+    end
+
+    test "CA1+CA3: the author's edit reaches every member with the channel open, marked as edited" do
+      stub_stored()
+      author = join_as("user-a")
+      _reader = join_as("user-b")
+
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => "texto corregido"})
+
+      assert_reply ref, :ok, %{
+        "id" => "msg-1",
+        "content" => "texto corregido",
+        "edited" => true,
+        "edited_at" => edited_at
+      }
+
+      assert is_binary(edited_at)
+
+      for _member <- 1..2 do
+        assert_push "message_updated", %{
+          "id" => "msg-1",
+          "content" => "texto corregido",
+          "edited" => true,
+          "inserted_at" => "2026-09-28T12:00:00Z"
+        }
+      end
+    end
+
+    test "CA2: someone who is not the author is rejected and nobody sees a change" do
+      stub_stored()
+      intruder = join_as("user-b")
+
+      ref = push(intruder, "edit_message", %{"id" => "msg-1", "content" => "ahora es mio"})
+
+      assert_reply ref, :error, %{error: %{code: "NOT_MESSAGE_AUTHOR"}}
+      refute_push "message_updated", _payload
+    end
+
+    test "an edit that changes nothing replies ok, stays unmarked and emits nothing" do
+      stub_stored()
+      author = join_as("user-a")
+
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => " texto original "})
+
+      assert_reply ref, :ok, %{"edited" => false, "edited_at" => nil}
+      refute_push "message_updated", _payload
+    end
+
+    test "rejects empty and over-long content" do
+      stub_stored()
+      author = join_as("user-a")
+
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => "   "})
+      assert_reply ref, :error, %{error: %{code: "EMPTY_CONTENT"}}
+
+      too_long = String.duplicate("a", Chat.max_message_length() + 1)
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => too_long})
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_TOO_LONG"}}
+      refute_push "message_updated", _payload
+    end
+
+    test "a message that does not exist" do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "ghost" -> nil end)
+      author = join_as("user-a")
+
+      ref = push(author, "edit_message", %{"id" => "ghost", "content" => "hola"})
+
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_NOT_FOUND"}}
+    end
+
+    test "losing SEND_MESSAGES after joining blocks the edit" do
+      stub_stored()
+      author = join_as("user-a")
+
+      stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+        {:ok, false}
+      end)
+
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => "hola"})
+
+      assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+      refute_push "message_updated", _payload
+    end
+
+    test "malformed payloads get an error reply instead of crashing the channel" do
+      stub_stored()
+      author = join_as("user-a")
+
+      for payload <- [%{}, %{"id" => "msg-1"}, %{"content" => "hola"}] do
+        ref = push(author, "edit_message", payload)
+        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      end
+
+      ref = push(author, "new_message", %{"texto" => "sin content"})
+      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      ref = push(author, "new_message", %{"content" => "sigue funcionando"})
+      assert_reply ref, :ok
+    end
+
+    test "a message id that is not a string cannot be used to query the database" do
+      author = join_as("user-a")
+
+      ref = push(author, "edit_message", %{"id" => %{"$ne" => "x"}, "content" => "hola"})
+
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_NOT_FOUND"}}
+    end
+
+    test "if the realtime broadcast fails the edit is still saved and acknowledged" do
+      stub_stored()
+      previous = Application.get_env(:messaging, :broadcaster)
+      Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+      on_exit(fn -> Application.put_env(:messaging, :broadcaster, previous) end)
+      author = join_as("user-a")
+
+      ref = push(author, "edit_message", %{"id" => "msg-1", "content" => "texto corregido"})
+
+      assert_reply ref, :ok, %{"edited" => true}
+    end
   end
 
   describe "reconnection catch-up" do

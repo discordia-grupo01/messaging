@@ -65,6 +65,44 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
+  def handle_in("edit_message", %{"id" => message_id, "content" => content}, socket) do
+    params = %{
+      channel_id: socket.assigns.channel_id,
+      message_id: message_id,
+      user_id: socket.assigns.user_id,
+      content: content,
+      raw_jwt: socket.assigns.raw_jwt
+    }
+
+    case Chat.edit_message(params) do
+      {:ok, message, :updated} ->
+        publish_update(message)
+        {:reply, {:ok, Message.to_api(message)}, socket}
+
+      {:ok, message, :unchanged} ->
+        {:reply, {:ok, Message.to_api(message)}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, ApiError.payload(reason)}, socket}
+    end
+  end
+
+  def handle_in(event, _payload, socket) when event in ["new_message", "edit_message"] do
+    {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+  end
+
+  defp publish_update(message) do
+    case Broadcaster.publish("message_updated", Message.to_api(message)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "messaging: message_updated_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        )
+    end
+  end
+
   defp validate_cursor(nil), do: :ok
   defp validate_cursor(id) when is_binary(id), do: :ok
   defp validate_cursor(_other), do: {:error, :invalid_cursor}
