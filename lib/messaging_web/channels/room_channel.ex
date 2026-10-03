@@ -16,12 +16,13 @@ defmodule MessagingWeb.RoomChannel do
     last_message_id = Map.get(params, "last_message_id")
 
     with :ok <- validate_cursor(last_message_id),
+         {:ok, changes_since} <- parse_changes_since(Map.get(params, "changes_since")),
          {:ok, channel} <- Chat.channel_exists?(channel_id),
          {:ok, true} <- Chat.can_view_channel?(channel, user_id, raw_jwt) do
       socket = assign(socket, channel_id: channel_id)
-      send(self(), {:after_join, last_message_id})
+      send(self(), {:after_join, last_message_id, changes_since})
       Logger.info("messaging: channel_joined channel_id=#{channel_id} user_id=#{user_id}")
-      {:ok, socket}
+      {:ok, %{"server_time" => Chat.server_time()}, socket}
     else
       {:ok, false} ->
         {:error, ApiError.payload(:forbidden)}
@@ -32,11 +33,11 @@ defmodule MessagingWeb.RoomChannel do
   end
 
   @impl true
-  def handle_info({:after_join, last_message_id}, socket) do
-    case push_missed_messages(socket, last_message_id) do
-      :ok ->
-        {:noreply, socket}
-
+  def handle_info({:after_join, last_message_id, changes_since}, socket) do
+    with :ok <- push_missed_messages(socket, last_message_id),
+         :ok <- push_changes(socket, changes_since) do
+      {:noreply, socket}
+    else
       {:error, reason} ->
         Logger.warning(
           "messaging: catch_up_failed channel_id=#{socket.assigns.channel_id} reason=#{inspect(reason)}"
@@ -106,6 +107,34 @@ defmodule MessagingWeb.RoomChannel do
   defp validate_cursor(nil), do: :ok
   defp validate_cursor(id) when is_binary(id), do: :ok
   defp validate_cursor(_other), do: {:error, :invalid_cursor}
+
+  defp parse_changes_since(nil), do: {:ok, nil}
+
+  defp parse_changes_since(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, datetime, _offset} -> {:ok, datetime}
+      {:error, _reason} -> {:error, :invalid_cursor}
+    end
+  end
+
+  defp parse_changes_since(_other), do: {:error, :invalid_cursor}
+
+  defp push_changes(_socket, nil), do: :ok
+
+  defp push_changes(socket, since) do
+    case Chat.list_changes(socket.assigns.channel_id, since) do
+      {:ok, messages} ->
+        push(socket, "changed_messages", %{"messages" => Enum.map(messages, &Message.to_api/1)})
+        :ok
+
+      {:error, :too_many_changes} ->
+        push(socket, "resync_required", %{})
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
 
   defp push_missed_messages(_socket, nil), do: :ok
 

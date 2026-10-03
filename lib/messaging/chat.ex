@@ -7,6 +7,8 @@ defmodule Messaging.Chat do
   @max_message_length 2_000
   @default_page_limit 50
   @max_page_limit 100
+  @max_changes 200
+  @clock_skew_ms 5_000
 
   def max_message_length, do: @max_message_length
   def max_page_limit, do: @max_page_limit
@@ -85,6 +87,22 @@ defmodule Messaging.Chat do
       build_page(docs, limit, direction(after_id))
     end
   end
+
+  @spec list_changes(String.t(), DateTime.t()) ::
+          {:ok, [Message.t()]} | {:error, :too_many_changes | term()}
+  def list_changes(channel_id, %DateTime{} = since) do
+    from = DateTime.add(since, -@clock_skew_ms, :millisecond)
+
+    case repo().list_changes(channel_id, from, @max_changes + 1) do
+      {:ok, docs} when length(docs) > @max_changes -> {:error, :too_many_changes}
+      {:ok, docs} -> {:ok, Enum.map(docs, &Message.from_doc/1)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @spec server_time() :: String.t()
+  def server_time,
+    do: DateTime.utc_now() |> DateTime.truncate(:millisecond) |> Message.iso8601_z()
 
   @spec channel_exists?(String.t()) :: {:ok, ChannelCache.t()} | {:error, atom()}
   def channel_exists?(channel_id), do: fetch_text_channel(channel_id)

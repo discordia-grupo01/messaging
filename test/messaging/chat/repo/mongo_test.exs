@@ -270,6 +270,76 @@ if mongo_url do
 
       assert Enum.any?(indexes, &(&1["name"] == "messages_channel_inserted_at_id"))
     end
+
+    defp edit(doc, channel_id, at) do
+      {:ok, _} = Repo.update_message(doc["_id"], channel_id, doc["user_id"], "editado", at)
+    end
+
+    test "list_changes/3 returns edited messages since the cursor oldest first, whatever their age",
+         %{channel_id: channel_id} do
+      ancient = %{
+        one_message(channel_id, "user-a")
+        | "inserted_at" => ~U[2020-01-01 00:00:00.000Z]
+      }
+
+      {:ok, _} = Repo.insert_message(Map.put(ancient, "_id", "ancient-" <> channel_id))
+      ancient = Map.put(ancient, "_id", "ancient-" <> channel_id)
+      recent = one_message(channel_id, "user-b")
+      untouched = one_message(channel_id, "user-c")
+
+      edit(recent, channel_id, ~U[2026-09-28 13:00:02.000Z])
+      edit(ancient, channel_id, ~U[2026-09-28 13:00:05.000Z])
+
+      assert {:ok, docs} = Repo.list_changes(channel_id, ~U[2026-09-28 13:00:00.000Z], 10)
+
+      assert Enum.map(docs, & &1["_id"]) == [recent["_id"], ancient["_id"]]
+      refute untouched["_id"] in Enum.map(docs, & &1["_id"])
+    end
+
+    test "list_changes/3 includes the exact cursor instant and excludes earlier changes",
+         %{channel_id: channel_id} do
+      before_cursor = one_message(channel_id, "user-a")
+      at_cursor = one_message(channel_id, "user-b")
+
+      edit(before_cursor, channel_id, ~U[2026-09-28 13:00:00.999Z])
+      edit(at_cursor, channel_id, ~U[2026-09-28 13:00:01.000Z])
+
+      {:ok, docs} = Repo.list_changes(channel_id, ~U[2026-09-28 13:00:01.000Z], 10)
+
+      assert Enum.map(docs, & &1["_id"]) == [at_cursor["_id"]]
+    end
+
+    test "list_changes/3 never leaks changes of other channels and honors the limit",
+         %{channel_id: channel_id} do
+      other = one_message("other-" <> channel_id, "user-x")
+      edit(other, "other-" <> channel_id, ~U[2026-09-28 13:00:01.000Z])
+
+      for i <- 1..5 do
+        doc = one_message(channel_id, "user-a")
+        edit(doc, channel_id, DateTime.add(~U[2026-09-28 13:00:02.000Z], i, :second))
+      end
+
+      {:ok, docs} = Repo.list_changes(channel_id, ~U[2026-09-28 13:00:00.000Z], 3)
+
+      assert length(docs) == 3
+      assert Enum.all?(docs, &(&1["channel_id"] == channel_id))
+    end
+
+    test "list_changes/3 is empty when nothing was ever edited", %{channel_id: channel_id} do
+      one_message(channel_id, "user-a")
+
+      assert {:ok, []} = Repo.list_changes(channel_id, ~U[2000-01-01 00:00:00.000Z], 10)
+    end
+
+    test "ensure_indexes/0 creates a partial index so unedited messages are not indexed" do
+      assert :ok = Repo.ensure_indexes()
+
+      {:ok, %{"cursor" => %{"firstBatch" => indexes}}} =
+        Mongo.command(Messaging.Mongo, listIndexes: "messages")
+
+      assert %{"partialFilterExpression" => %{"changed_at" => %{"$exists" => true}}} =
+               Enum.find(indexes, &(&1["name"] == "messages_channel_changed_at"))
+    end
   end
 else
   defmodule Messaging.Chat.Repo.MongoTest do

@@ -10,6 +10,8 @@ defmodule Messaging.Chat.Repo do
               edited_at :: DateTime.t()
             ) :: {:ok, map() | nil} | {:error, term()}
   @callback get_message(id :: String.t()) :: map() | nil | {:error, term()}
+  @callback list_changes(channel_id :: String.t(), since :: DateTime.t(), limit :: pos_integer()) ::
+              {:ok, [map()]} | {:error, term()}
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}

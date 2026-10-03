@@ -493,6 +493,66 @@ defmodule Messaging.ChatTest do
     end
   end
 
+  describe "list_changes/2" do
+    defp changed_doc(id) do
+      %{
+        "_id" => id,
+        "channel_id" => @channel_id,
+        "server_id" => @server_id,
+        "user_id" => @user_id,
+        "content" => "editado #{id}",
+        "inserted_at" => ~U[2026-09-28 10:00:00Z],
+        "edited_at" => ~U[2026-09-28 12:01:00Z],
+        "changed_at" => ~U[2026-09-28 12:01:00Z]
+      }
+    end
+
+    test "asks the repo for changes a few seconds before the cursor, to absorb clock skew" do
+      expect(Messaging.Chat.RepoMock, :list_changes, fn @channel_id, from, limit ->
+        assert DateTime.compare(from, ~U[2026-09-28 11:59:55Z]) == :eq
+        assert limit == 201
+        {:ok, [changed_doc("a"), changed_doc("b")]}
+      end)
+
+      assert {:ok, [%Message{id: "a", edited_at: %DateTime{}}, %Message{id: "b"}]} =
+               Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+    end
+
+    test "exactly the maximum is returned, one more is too many" do
+      expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, 201 ->
+        {:ok, for(i <- 1..200, do: changed_doc("m-#{i}"))}
+      end)
+
+      assert {:ok, messages} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+      assert length(messages) == 200
+
+      expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, 201 ->
+        {:ok, for(i <- 1..201, do: changed_doc("m-#{i}"))}
+      end)
+
+      assert {:error, :too_many_changes} =
+               Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+    end
+
+    test "nothing changed is an empty list" do
+      expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit -> {:ok, []} end)
+
+      assert {:ok, []} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+    end
+
+    test "a repo failure is propagated" do
+      expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+    end
+
+    test "server_time/0 is an ISO 8601 UTC timestamp with millisecond precision" do
+      assert Chat.server_time() =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    end
+  end
+
   describe "channel read-model writes" do
     test "upsert_channel/1 delegates to the repo" do
       channel = %Messaging.Chat.ChannelCache{

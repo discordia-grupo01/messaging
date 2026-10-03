@@ -376,7 +376,7 @@ defmodule MessagingWeb.RoomChannelTest do
       socket = %Phoenix.Socket{assigns: %{channel_id: @channel_id}}
 
       assert {:stop, :catch_up_failed, ^socket} =
-               RoomChannel.handle_info({:after_join, "msg-0"}, socket)
+               RoomChannel.handle_info({:after_join, "msg-0", nil}, socket)
     end
   end
 
@@ -389,5 +389,127 @@ defmodule MessagingWeb.RoomChannelTest do
 
     assert {:error, %{error: %{code: "CHANNEL_NOT_TEXT"}}} =
              subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+  end
+
+  describe "change feed on reconnect" do
+    defp edited_doc(id, edited_at) do
+      %{
+        "_id" => id,
+        "channel_id" => @channel_id,
+        "server_id" => @server_id,
+        "user_id" => "user-b",
+        "content" => "texto de #{id}",
+        "inserted_at" => ~U[2026-09-28 10:00:00Z],
+        "edited_at" => edited_at,
+        "changed_at" => edited_at
+      }
+    end
+
+    defp join_since(since) do
+      subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id, %{
+        "changes_since" => since
+      })
+    end
+
+    test "every join replies with the server's clock so the client can use it as its cursor" do
+      {:ok, reply, _socket} =
+        subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+
+      assert %{"server_time" => server_time} = reply
+      assert {:ok, %DateTime{}, 0} = DateTime.from_iso8601(server_time)
+      assert String.ends_with?(server_time, "Z")
+    end
+
+    test "joining with changes_since pushes what was edited meanwhile, even very old messages" do
+      since = ~U[2026-09-28 12:00:00Z]
+
+      stub(Messaging.Chat.RepoMock, :list_changes, fn @channel_id, from, 201 ->
+        assert DateTime.compare(from, DateTime.add(since, -5, :second)) == :eq
+
+        {:ok,
+         [
+           edited_doc("old-msg", ~U[2026-09-28 12:01:00Z]),
+           edited_doc("other-msg", ~U[2026-09-28 12:02:00Z])
+         ]}
+      end)
+
+      assert {:ok, _reply, _socket} = join_since("2026-09-28T12:00:00Z")
+
+      assert_push "changed_messages", %{
+        "messages" => [
+          %{"id" => "old-msg", "edited" => true, "inserted_at" => "2026-09-28T10:00:00Z"},
+          %{"id" => "other-msg", "edited" => true}
+        ]
+      }
+    end
+
+    test "an empty batch is still pushed so the client knows it is up to date" do
+      stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit -> {:ok, []} end)
+
+      assert {:ok, _reply, _socket} = join_since("2026-09-28T12:00:00Z")
+      assert_push "changed_messages", %{"messages" => []}
+    end
+
+    test "joining without changes_since does not look for changes" do
+      assert {:ok, _reply, _socket} =
+               subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+
+      refute_push "changed_messages", _payload
+    end
+
+    test "too many changes asks the client to resync instead of sending a partial list" do
+      docs = for i <- 1..201, do: edited_doc("m-#{i}", ~U[2026-09-28 12:01:00Z])
+      stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit -> {:ok, docs} end)
+
+      assert {:ok, _reply, _socket} = join_since("2026-09-28T12:00:00Z")
+
+      assert_push "resync_required", %{}
+      refute_push "changed_messages", _payload
+    end
+
+    test "missed new messages and changes are both delivered, new messages first" do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "msg-0" ->
+        edited_doc("msg-0", ~U[2026-09-28 11:00:00Z])
+      end)
+
+      stub(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+        {:ok, [edited_doc("msg-1", ~U[2026-09-28 12:30:00Z]) |> Map.drop(["edited_at"])]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit ->
+        {:ok, [edited_doc("msg-0", ~U[2026-09-28 12:20:00Z])]}
+      end)
+
+      assert {:ok, _reply, _socket} =
+               subscribe_and_join(
+                 join_socket("user-a"),
+                 RoomChannel,
+                 "channel:" <> @channel_id,
+                 %{
+                   "last_message_id" => "msg-0",
+                   "changes_since" => "2026-09-28T12:00:00Z"
+                 }
+               )
+
+      assert_push "missed_messages", %{"messages" => [%{"id" => "msg-1"}]}
+      assert_push "changed_messages", %{"messages" => [%{"id" => "msg-0"}]}
+    end
+
+    test "a timestamp that does not parse is rejected at join" do
+      for bad <- ["ayer", "2026-13-45T99:00:00Z", "", 12_345, %{"$gt" => ""}, ["x"]] do
+        assert {:error, %{error: %{code: "INVALID_CURSOR"}}} = join_since(bad)
+      end
+    end
+
+    test "if the changes query fails the channel stops so the client rejoins" do
+      stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit ->
+        {:error, :timeout}
+      end)
+
+      socket = %Phoenix.Socket{assigns: %{channel_id: @channel_id}}
+
+      assert {:stop, :catch_up_failed, ^socket} =
+               RoomChannel.handle_info({:after_join, nil, ~U[2026-09-28 12:00:00Z]}, socket)
+    end
   end
 end
