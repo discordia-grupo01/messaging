@@ -78,6 +78,10 @@ defmodule Messaging.Chat do
   @spec delete_channel(String.t()) :: :ok | {:error, term()}
   def delete_channel(channel_id), do: repo().delete_channel(channel_id)
 
+  @spec delete_server_data(String.t(), [String.t()]) :: :ok | {:error, term()}
+  def delete_server_data(server_id, channel_ids) when is_list(channel_ids),
+    do: repo().delete_server_data(server_id, channel_ids)
+
   @spec mongo_ready?() :: boolean()
   def mongo_ready?, do: repo().ping() == :ok
 

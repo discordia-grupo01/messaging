@@ -134,6 +134,79 @@ if rabbitmq_url && mongo_url do
                0
     end
 
+    test "consuming servers.server_deleted purges the server's messages and channels", %{
+      chan: chan
+    } do
+      server_id = "srv-#{System.unique_integer([:positive])}"
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+      other_channel_id = "chan-#{System.unique_integer([:positive])}"
+      event_id = Messaging.UUID.generate()
+
+      for {srv, ch} <- [{server_id, channel_id}, {"srv-other", other_channel_id}] do
+        :ok =
+          Chat.upsert_channel(%Messaging.Chat.ChannelCache{
+            channel_id: ch,
+            server_id: srv,
+            name: "general",
+            kind: "text"
+          })
+
+        {:ok, _doc} =
+          Messaging.Chat.Repo.Mongo.insert_message(%{
+            "_id" => Messaging.UUID.generate_v7(),
+            "channel_id" => ch,
+            "server_id" => srv,
+            "user_id" => "user-1",
+            "content" => "hola",
+            "inserted_at" => DateTime.utc_now()
+          })
+      end
+
+      payload =
+        Jason.encode!(%{
+          "event_id" => event_id,
+          "occurred_at" => DateTime.to_iso8601(DateTime.utc_now()),
+          "server_id" => server_id,
+          "channel_ids" => [channel_id]
+        })
+
+      :ok =
+        AMQP.Basic.publish(chan, @exchange, "servers.server_deleted", payload, persistent: true)
+
+      assert wait_until(fn ->
+               match?({:error, :channel_not_found}, Chat.channel_exists?(channel_id))
+             end)
+
+      assert {:ok, [], nil} = Chat.list_messages(channel_id)
+      assert {:ok, _channel} = Chat.channel_exists?(other_channel_id)
+      assert {:ok, [_message], nil} = Chat.list_messages(other_channel_id)
+
+      assert wait_until(fn ->
+               match?(%{"status" => "processed"}, consumed_event(event_id))
+             end)
+    end
+
+    test "a server_deleted with a malformed channel list is discarded and changes nothing", %{
+      chan: chan
+    } do
+      event_id = Messaging.UUID.generate()
+
+      payload =
+        Jason.encode!(%{
+          "event_id" => event_id,
+          "occurred_at" => DateTime.to_iso8601(DateTime.utc_now()),
+          "server_id" => "srv-x",
+          "channel_ids" => [%{"$ne" => "x"}]
+        })
+
+      :ok =
+        AMQP.Basic.publish(chan, @exchange, "servers.server_deleted", payload, persistent: true)
+
+      assert wait_until(fn ->
+               match?(%{"status" => "discarded_invalid_payload"}, consumed_event(event_id))
+             end)
+    end
+
     defp consumed_event(event_id),
       do: Mongo.find_one(Messaging.Mongo, "consumed_events", %{"_id" => event_id})
 

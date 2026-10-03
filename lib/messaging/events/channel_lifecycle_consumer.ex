@@ -10,7 +10,8 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   @default_queue "messaging.channel_lifecycle"
   @routing_keys [
     ChannelEvent.routing_key_channel_created(),
-    ChannelEvent.routing_key_channel_deleted()
+    ChannelEvent.routing_key_channel_deleted(),
+    ChannelEvent.routing_key_server_deleted()
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -149,6 +150,14 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   defp apply_event(%ChannelEvent.ChannelDeleted{} = event) do
     :ok = Chat.delete_channel(event.channel_id)
     Logger.info("messaging: channel_deleted_applied channel_id=#{event.channel_id}")
+  end
+
+  defp apply_event(%ChannelEvent.ServerDeleted{} = event) do
+    :ok = Chat.delete_server_data(event.server_id, event.channel_ids)
+
+    Logger.info(
+      "messaging: server_deleted_applied server_id=#{event.server_id} channels=#{length(event.channel_ids)}"
+    )
   end
 
   defp connect(url, queue) do
