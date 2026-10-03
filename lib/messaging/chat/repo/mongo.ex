@@ -63,9 +63,9 @@ defmodule Messaging.Chat.Repo.Mongo do
 
   @impl true
   def delete_channel(channel_id) do
-    case Mongo.delete_one(@conn, @channels, %{"_id" => channel_id}) do
-      {:ok, _result} -> :ok
-      {:error, reason} -> {:error, reason}
+    with {:ok, _result} <- Mongo.delete_many(@conn, @messages, %{"channel_id" => channel_id}),
+         {:ok, _result} <- Mongo.delete_one(@conn, @channels, %{"_id" => channel_id}) do
+      :ok
     end
   end
 
