@@ -11,13 +11,20 @@ config :messaging,
   servers_base_url: System.get_env("SERVERS_BASE_URL", "http://localhost:8080")
 
 if config_env() == :prod do
+  allowed_origins =
+    System.get_env(
+      "CHECK_ORIGIN",
+      "https://discordia-g1.vercel.app,https://discordia-g1.duckdns.org"
+    )
+
   config :messaging, MessagingWeb.Endpoint,
     http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("PORT") || "4000")],
     secret_key_base: System.fetch_env!("SECRET_KEY_BASE"),
     check_origin:
-      "CHECK_ORIGIN"
-      |> System.get_env("https://discordia-g1.vercel.app")
-      |> String.split(",", trim: true),
+      if(allowed_origins == "false",
+        do: false,
+        else: String.split(allowed_origins, ",", trim: true)
+      ),
     server: true
 
   config :messaging,
