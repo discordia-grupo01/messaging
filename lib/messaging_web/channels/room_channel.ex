@@ -4,6 +4,7 @@ defmodule MessagingWeb.RoomChannel do
 
   alias Messaging.Chat
   alias Messaging.Chat.Message
+  alias Messaging.Events.Broadcaster
   alias MessagingWeb.ApiError
 
   @dialyzer {:nowarn_function, handle_info: 2}
@@ -56,7 +57,7 @@ defmodule MessagingWeb.RoomChannel do
 
     case Chat.send_message(params) do
       {:ok, message} ->
-        :ok = broadcaster().publish(Message.to_api(message))
+        :ok = Broadcaster.publish("new_message", Message.to_api(message))
         {:reply, :ok, socket}
 
       {:error, reason} ->
@@ -91,7 +92,4 @@ defmodule MessagingWeb.RoomChannel do
         error
     end
   end
-
-  defp broadcaster,
-    do: Application.get_env(:messaging, :broadcaster, Messaging.Events.BroadcastPublisher)
 end
