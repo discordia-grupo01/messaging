@@ -9,6 +9,11 @@ defmodule Messaging.Chat.Repo do
               content :: String.t(),
               edited_at :: DateTime.t()
             ) :: {:ok, map() | nil} | {:error, term()}
+  @callback delete_message(
+              id :: String.t(),
+              channel_id :: String.t(),
+              deleted_at :: DateTime.t()
+            ) :: {:ok, map() | nil} | {:error, term()}
   @callback get_message(id :: String.t()) :: map() | nil | {:error, term()}
   @callback list_changes(channel_id :: String.t(), since :: DateTime.t(), limit :: pos_integer()) ::
               {:ok, [map()]} | {:error, term()}
