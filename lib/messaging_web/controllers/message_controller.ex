@@ -125,6 +125,48 @@ defmodule MessagingWeb.MessageController do
     end
   end
 
+  operation :delete,
+    summary: "Eliminar un mensaje",
+    description:
+      "Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el servidor (los " <>
+        "administradores lo tienen implícito). Quien elimina tiene que poder ver el canal " <>
+        "(`VIEW_CHANNELS`). El mensaje deja de aparecer en el historial y su contenido se borra; " <>
+        "se emite en tiempo real a los miembros con el canal abierto como evento " <>
+        "`message_deleted`, y los clientes desconectados lo reciben al reconectar en " <>
+        "`changed_messages.deleted_ids`. Eliminar un mensaje ya eliminado responde 404.",
+    parameters: [
+      channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
+      message_id: [in: :path, type: :string, required: true, description: "UUID del mensaje"]
+    ],
+    responses: [
+      no_content: "Mensaje eliminado",
+      unauthorized:
+        {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
+         Schemas.ErrorResponse},
+      forbidden:
+        {"No es el autor ni tiene MANAGE_MESSAGES, o no puede ver el canal", "application/json",
+         Schemas.ErrorResponse},
+      not_found:
+        {"El canal o el mensaje no existen (o ya fue eliminado)", "application/json",
+         Schemas.ErrorResponse}
+    ]
+
+  def delete(conn, %{"channel_id" => channel_id, "message_id" => message_id}) do
+    case Chat.delete_message(%{
+           channel_id: channel_id,
+           message_id: message_id,
+           user_id: conn.assigns.user_id,
+           raw_jwt: conn.assigns.raw_jwt
+         }) do
+      {:ok, message} ->
+        publish_deletion(message)
+        send_resp(conn, 204, "")
+
+      {:error, reason} ->
+        conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
+    end
+  end
+
   defp fetch_content(%{"content" => content}) when is_binary(content), do: {:ok, content}
   defp fetch_content(_params), do: {:error, :invalid_payload}
 
@@ -136,6 +178,18 @@ defmodule MessagingWeb.MessageController do
       {:error, reason} ->
         Logger.warning(
           "messaging: message_updated_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        )
+    end
+  end
+
+  defp publish_deletion(message) do
+    case Broadcaster.publish("message_deleted", Message.to_deleted_api(message)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "messaging: message_deleted_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
         )
     end
   end

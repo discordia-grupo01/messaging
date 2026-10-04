@@ -65,10 +65,14 @@ dominio para otros servicios.
     [Historial y reconexión](#historial-y-reconexión)).
   - `handle_in("edit_message", %{"id" => "<id>", "content" => "..."})` -- edita un
     mensaje propio (ver [Editar mensajes](#editar-mensajes)).
+  - `handle_in("delete_message", %{"id" => "<id>"})` -- elimina un mensaje propio, o
+    ajeno con `MANAGE_MESSAGES` (ver [Eliminar mensajes](#eliminar-mensajes)).
   - `handle_in("new_message", %{"content" => "..."})` -- requiere
     `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
 - `PATCH /v1/channels/:channel_id/messages/:message_id` con `{"content": "..."}` --
   edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
+- `DELETE /v1/channels/:channel_id/messages/:message_id` -- elimina un mensaje (ver
+  [Eliminar mensajes](#eliminar-mensajes)).
 - `GET /v1/channels/:channel_id/messages?limit=&before=<id>&after=<id>` --
   historial paginado por cursor, cada página en orden cronológico. Requiere
   `VIEW_CHANNELS`.
@@ -170,6 +174,43 @@ Garantías y casos borde:
   en vivo) y después pedir el historial, deduplicando por `id`, para no perder
   lo enviado entre ambos pasos.
 
+## Eliminar mensajes
+Un mensaje se elimina por REST (`DELETE /v1/channels/:channel_id/messages/:message_id`,
+responde `204` sin cuerpo) o por el socket (`delete_message` con `{"id"}`): las dos
+entradas usan la misma función de dominio (`Messaging.Chat.delete_message/1`).
+
+- **Quién puede.** El **autor** del mensaje, o un miembro con el permiso `MANAGE_MESSAGES`
+  del servidor (los administradores y el dueño lo tienen implícito; se agregó al catálogo
+  de `servers` y no viene en el conjunto por defecto de un rol nuevo). Cualquier otro
+  recibe `403 MESSAGE_DELETE_DENIED`.
+- **Orden de las comprobaciones.** Canal (404 si no existe o no es de texto) → el usuario
+  tiene que poder ver el canal (`VIEW_CHANNELS`, si no `403 FORBIDDEN`) → el mensaje existe
+  en ese canal y no está borrado (si no `404 MESSAGE_NOT_FOUND`) → autoría o
+  `MANAGE_MESSAGES`. Como el autor se resuelve sin consultar nada más, borrar lo propio
+  cuesta una sola consulta a `servers`; la de moderación se hace solo cuando el que borra
+  no es el autor. Quien dejó el servidor ya no puede ver el canal, así que tampoco puede
+  borrar sus mensajes viejos.
+- **Qué se guarda.** Es un borrado lógico: el documento queda como marcador
+  (`deleted_at`, `changed_at`) y el `content` se vacía, así que el texto **no** se conserva.
+  Se mantienen el id, el autor y `inserted_at` a propósito: un cliente cuyo último
+  mensaje fue borrado sigue pudiendo usarlo como cursor (`last_message_id`/`after`/`before`)
+  sin recibir `INVALID_CURSOR`.
+- **Deja de mostrarse.** El historial por REST y `missed_messages` filtran los borrados;
+  el marcador no vuelve en ninguna lista. Editar un mensaje borrado da `404`, y la escritura
+  filtra por `deleted_at` para que ni una carrera lo resucite.
+- **Borrar dos veces.** La segunda vez responde `404 MESSAGE_NOT_FOUND`: para la API el
+  mensaje ya no existe.
+- **Tiempo real.** Se emite a quien tenga el canal abierto el evento `message_deleted` con
+  `{"id", "channel_id", "server_id", "deleted_at"}`, sin el contenido ni el autor. Viaja por
+  el mismo fanout de RabbitMQ que `new_message` y `message_updated`. Si el broadcast fallara,
+  el borrado queda guardado y se responde igual `204`/`ok`; solo se pierde el aviso en vivo.
+- **Clientes desconectados.** Reciben los ids borrados en `changed_messages.deleted_ids`
+  al reconectar (ver más abajo).
+- **Marcadores.** Nadie los limpia: cada uno ocupa unos 200 bytes y no tiene texto. Si algún
+  día hiciera falta, un TTL sobre `deleted_at` los purgaría solo, pero un cliente que vuelva
+  después de ese plazo no se enteraría de los borrados viejos (habría que pedirle recargar
+  el historial).
+
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
 `Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los
@@ -179,20 +220,23 @@ rechaza la conexión (`cacerts: :undefined`). La imagen de Docker instala
 
 ## Cambios mientras estabas desconectado
 `missed_messages` trae solo mensajes **nuevos**. Para que un cliente que volvió se entere
-también de los mensajes que **cambiaron** (editados; el mismo mecanismo va a llevar los
-borrados) hay un segundo cursor, basado en el reloj del servidor:
+también de los mensajes que **cambiaron** (editados y borrados) hay un segundo cursor,
+basado en el reloj del servidor:
 
 1. Cada `join` responde `{"server_time": "<ISO 8601 UTC, ms>"}`. El cliente lo guarda
    como cursor. Si además recibió `message_updated` en vivo, puede avanzarlo al
    `edited_at` más nuevo que vio (opcional: solo evita reenvíos).
 2. Al reconectar manda en el `join` `{"last_message_id": ..., "changes_since": "<cursor>"}`.
-3. El servidor empuja `"changed_messages"` con `{"messages": [...]}`: los mensajes de ese
-   canal que cambiaron desde el cursor, **sin importar qué tan viejos sean**, del cambio más
-   viejo al más nuevo, ya con el texto vigente y `edited: true`. Va después de
+3. El servidor empuja `"changed_messages"` con `{"messages": [...], "deleted_ids": [...]}`:
+   en `messages`, los mensajes de ese canal que se editaron desde el cursor, **sin importar
+   qué tan viejos sean**, del cambio más viejo al más nuevo, ya con el texto vigente y
+   `edited: true`; en `deleted_ids`, los ids de los que se borraron (el cliente los quita de
+   su lista; un id que no tenía es inocuo). Un mensaje editado y después borrado aparece solo
+   en `deleted_ids`. Va después de
    `missed_messages` y se empuja siempre (aun vacío) cuando se manda `changes_since`, para
    que el cliente sepa que está al día. Un mensaje nuevo que además fue editado aparece en
    los dos: el cliente aplica por `id`, y el último evento gana.
-4. Si hubo más de **200** cambios, no se manda una lista parcial: se empuja
+4. Si hubo más de **200** cambios (ediciones y borrados juntos), no se manda una lista parcial: se empuja
    `"resync_required"` y el cliente recarga el historial por REST.
 
 Detalles:
@@ -203,13 +247,10 @@ Detalles:
   funcionando igual (solo ignora el `server_time` de la respuesta del `join`).
 - **Cursor inválido.** Si `changes_since` no es un ISO 8601 válido, el `join` falla con
   `INVALID_CURSOR`.
-- **Cómo se guarda.** Cada edición escribe también `changed_at`, el cursor interno. Hay un
-  índice **parcial** `(channel_id, changed_at)` que solo incluye mensajes con `changed_at`,
-  así que los mensajes que nunca cambiaron no ocupan lugar en él. `Messaging.Chat.IndexSetup`
-  lo crea al arrancar.
-- **Para "Eliminar mensaje".** Basta con que el borrado marque `changed_at` (y conserve un
-  marcador de borrado en vez de eliminar el documento): el mismo cursor, la misma consulta
-  y el mismo evento `changed_messages` lo llevan a los clientes desconectados.
+- **Cómo se guarda.** Cada edición o borrado escribe también `changed_at`, el cursor interno.
+  Hay un índice **parcial** `(channel_id, changed_at)` que solo incluye mensajes con
+  `changed_at`, así que los mensajes que nunca cambiaron no ocupan lugar en él.
+  `Messaging.Chat.IndexSetup` lo crea al arrancar.
 
 ## Setup local
 

@@ -331,6 +331,105 @@ if mongo_url do
       assert {:ok, []} = Repo.list_changes(channel_id, ~U[2000-01-01 00:00:00.000Z], 10)
     end
 
+    test "delete_message/3 erases the content, stamps deleted_at and changed_at, and keeps the tombstone",
+         %{channel_id: channel_id} do
+      doc = one_message(channel_id, "user-a")
+      at = ~U[2026-09-28 13:00:00.500Z]
+
+      assert {:ok, tombstone} = Repo.delete_message(doc["_id"], channel_id, at)
+
+      assert tombstone["content"] == ""
+      assert tombstone["deleted_at"] == at
+      assert tombstone["changed_at"] == at
+      assert tombstone["inserted_at"] == doc["inserted_at"]
+      assert tombstone["user_id"] == "user-a"
+      assert %{"deleted_at" => ^at, "content" => ""} = Repo.get_message(doc["_id"])
+    end
+
+    test "delete_message/3 is a no-op (nil) for another channel, a missing id or an already deleted message",
+         %{channel_id: channel_id} do
+      doc = one_message(channel_id, "user-a")
+      at = ~U[2026-09-28 13:00:00.000Z]
+
+      assert {:ok, nil} = Repo.delete_message(doc["_id"], "other-channel", at)
+      assert {:ok, nil} = Repo.delete_message("does-not-exist", channel_id, at)
+      assert %{"content" => "original"} = Repo.get_message(doc["_id"])
+
+      assert {:ok, %{}} = Repo.delete_message(doc["_id"], channel_id, at)
+      later = ~U[2026-09-28 14:00:00.000Z]
+      assert {:ok, nil} = Repo.delete_message(doc["_id"], channel_id, later)
+      assert %{"deleted_at" => ^at} = Repo.get_message(doc["_id"])
+    end
+
+    test "a deleted message disappears from the history in both directions",
+         %{channel_id: channel_id} do
+      [first, second, third] = for _ <- 1..3, do: one_message(channel_id, "user-a")
+      {:ok, _} = Repo.delete_message(second["_id"], channel_id, ~U[2026-09-28 13:00:00.000Z])
+
+      {:ok, latest, nil} = Chat.list_messages(channel_id)
+      assert Enum.map(latest, & &1.id) == [first["_id"], third["_id"]]
+
+      {:ok, forward, nil} = Chat.list_messages(channel_id, after: first["_id"])
+      assert Enum.map(forward, & &1.id) == [third["_id"]]
+
+      {:ok, backward, nil} = Chat.list_messages(channel_id, before: third["_id"])
+      assert Enum.map(backward, & &1.id) == [first["_id"]]
+    end
+
+    test "a deleted message still works as a cursor, so a client whose last message was deleted can catch up",
+         %{channel_id: channel_id} do
+      [first, second, third] = for _ <- 1..3, do: one_message(channel_id, "user-a")
+      {:ok, _} = Repo.delete_message(second["_id"], channel_id, ~U[2026-09-28 13:00:00.000Z])
+
+      assert {:ok, forward, nil} = Chat.list_messages(channel_id, after: second["_id"])
+      assert Enum.map(forward, & &1.id) == [third["_id"]]
+      assert first["_id"] != second["_id"]
+    end
+
+    test "update_message/5 cannot resurrect or edit a deleted message", %{channel_id: channel_id} do
+      doc = one_message(channel_id, "user-a")
+      {:ok, _} = Repo.delete_message(doc["_id"], channel_id, ~U[2026-09-28 13:00:00.000Z])
+
+      assert {:ok, nil} =
+               Repo.update_message(
+                 doc["_id"],
+                 channel_id,
+                 "user-a",
+                 "revivido",
+                 ~U[2026-09-28 14:00:00.000Z]
+               )
+
+      assert %{"content" => ""} = Repo.get_message(doc["_id"])
+    end
+
+    test "list_changes/3 returns deletions together with edits, and Chat splits them",
+         %{channel_id: channel_id} do
+      edited = one_message(channel_id, "user-a")
+      deleted = one_message(channel_id, "user-b")
+      untouched = one_message(channel_id, "user-c")
+
+      edit(edited, channel_id, ~U[2026-09-28 13:00:02.000Z])
+      {:ok, _} = Repo.delete_message(deleted["_id"], channel_id, ~U[2026-09-28 13:00:03.000Z])
+
+      assert {:ok, [changed], [deleted_id]} =
+               Chat.list_changes(channel_id, ~U[2026-09-28 13:00:05.000Z])
+
+      assert changed.id == edited["_id"]
+      assert deleted_id == deleted["_id"]
+      refute untouched["_id"] in [changed.id, deleted_id]
+    end
+
+    test "a message edited and then deleted shows up only as deleted", %{channel_id: channel_id} do
+      doc = one_message(channel_id, "user-a")
+      edit(doc, channel_id, ~U[2026-09-28 13:00:02.000Z])
+      {:ok, _} = Repo.delete_message(doc["_id"], channel_id, ~U[2026-09-28 13:00:03.000Z])
+
+      assert {:ok, [], [deleted_id]} =
+               Chat.list_changes(channel_id, ~U[2026-09-28 13:00:05.000Z])
+
+      assert deleted_id == doc["_id"]
+    end
+
     test "ensure_indexes/0 creates a partial index so unedited messages are not indexed" do
       assert :ok = Repo.ensure_indexes()
 

@@ -349,4 +349,122 @@ defmodule MessagingWeb.MessageControllerTest do
       assert json_response(conn, 404)["error"]["code"] == "CHANNEL_NOT_FOUND"
     end
   end
+
+  describe "DELETE /v1/channels/:channel_id/messages/:message_id" do
+    @delete_path "/v1/channels/#{@channel_id}/messages/msg-1"
+
+    defp allow_delete(doc, user_id \\ "user-1") do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+                                                                          ^user_id,
+                                                                          _jwt ->
+        {:ok, true}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+    end
+
+    defp expect_tombstone do
+      expect(Messaging.Chat.RepoMock, :delete_message, fn "msg-1", @channel_id, deleted_at ->
+        {:ok, Map.merge(stored(), %{"content" => "", "deleted_at" => deleted_at})}
+      end)
+    end
+
+    test "requires Authorization", %{conn: conn} do
+      conn = delete(conn, @delete_path)
+      assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
+    end
+
+    test "CA1: the author deletes their message and gets 204 with no body", %{conn: conn} do
+      allow_delete(stored())
+      expect_tombstone()
+
+      conn = conn |> authed() |> delete(@delete_path)
+
+      assert response(conn, 204) == ""
+    end
+
+    test "CA1: the deletion is broadcast in real time without the content", %{conn: conn} do
+      allow_delete(stored())
+      expect_tombstone()
+      MessagingWeb.Endpoint.subscribe("channel:" <> @channel_id)
+
+      conn |> authed() |> delete(@delete_path) |> response(204)
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "message_deleted",
+        payload: %{"id" => "msg-1", "channel_id" => @channel_id, "deleted_at" => _at} = payload
+      }
+
+      refute Map.has_key?(payload, "content")
+    end
+
+    test "CA2: a member with MANAGE_MESSAGES deletes someone else's message", %{conn: conn} do
+      allow_delete(stored(), "moderator")
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @server_id,
+                                                                             "moderator",
+                                                                             _jwt ->
+        {:ok, true}
+      end)
+
+      expect_tombstone()
+
+      conn = conn |> authed("moderator") |> delete(@delete_path)
+
+      assert response(conn, 204) == ""
+    end
+
+    test "CA3: someone who is neither the author nor a moderator gets 403 and nothing is broadcast",
+         %{conn: conn} do
+      allow_delete(stored(), "intruder")
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+        {:ok, false}
+      end)
+
+      MessagingWeb.Endpoint.subscribe("channel:" <> @channel_id)
+
+      conn = conn |> authed("intruder") |> delete(@delete_path)
+
+      assert json_response(conn, 403)["error"]["code"] == "MESSAGE_DELETE_DENIED"
+      refute_receive %Phoenix.Socket.Broadcast{}, 100
+    end
+
+    test "403 when the caller cannot view the channel", %{conn: conn} do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+        {:ok, false}
+      end)
+
+      conn = conn |> authed() |> delete(@delete_path)
+
+      assert json_response(conn, 403)["error"]["code"] == "FORBIDDEN"
+    end
+
+    test "404 for a message that does not exist, is in another channel, or was already deleted",
+         %{conn: conn} do
+      allow_delete(nil)
+      conn1 = conn |> authed() |> delete(@delete_path)
+      assert json_response(conn1, 404)["error"]["code"] == "MESSAGE_NOT_FOUND"
+
+      allow_delete(stored(%{"channel_id" => "other-channel"}))
+      conn2 = conn |> authed() |> delete(@delete_path)
+      assert json_response(conn2, 404)["error"]["code"] == "MESSAGE_NOT_FOUND"
+
+      allow_delete(stored(%{"content" => "", "deleted_at" => ~U[2026-09-28 12:05:00Z]}))
+      conn3 = conn |> authed() |> delete(@delete_path)
+      assert json_response(conn3, 404)["error"]["code"] == "MESSAGE_NOT_FOUND"
+    end
+
+    test "404 for a channel that does not exist", %{conn: conn} do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn "missing" -> nil end)
+
+      conn = conn |> authed() |> delete("/v1/channels/missing/messages/msg-1")
+
+      assert json_response(conn, 404)["error"]["code"] == "CHANNEL_NOT_FOUND"
+    end
+  end
 end

@@ -88,7 +88,26 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
-  def handle_in(event, _payload, socket) when event in ["new_message", "edit_message"] do
+  def handle_in("delete_message", %{"id" => message_id}, socket) do
+    params = %{
+      channel_id: socket.assigns.channel_id,
+      message_id: message_id,
+      user_id: socket.assigns.user_id,
+      raw_jwt: socket.assigns.raw_jwt
+    }
+
+    case Chat.delete_message(params) do
+      {:ok, message} ->
+        publish_deletion(message)
+        {:reply, :ok, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, ApiError.payload(reason)}, socket}
+    end
+  end
+
+  def handle_in(event, _payload, socket)
+      when event in ["new_message", "edit_message", "delete_message"] do
     {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
   end
 
@@ -100,6 +119,18 @@ defmodule MessagingWeb.RoomChannel do
       {:error, reason} ->
         Logger.warning(
           "messaging: message_updated_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        )
+    end
+  end
+
+  defp publish_deletion(message) do
+    case Broadcaster.publish("message_deleted", Message.to_deleted_api(message)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "messaging: message_deleted_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
         )
     end
   end
@@ -123,8 +154,12 @@ defmodule MessagingWeb.RoomChannel do
 
   defp push_changes(socket, since) do
     case Chat.list_changes(socket.assigns.channel_id, since) do
-      {:ok, messages} ->
-        push(socket, "changed_messages", %{"messages" => Enum.map(messages, &Message.to_api/1)})
+      {:ok, messages, deleted_ids} ->
+        push(socket, "changed_messages", %{
+          "messages" => Enum.map(messages, &Message.to_api/1),
+          "deleted_ids" => deleted_ids
+        })
+
         :ok
 
       {:error, :too_many_changes} ->

@@ -5,7 +5,7 @@ defmodule Messaging.Events.BroadcastConsumer do
   alias Messaging.Events.Backoff
 
   @exchange "messaging.broadcast"
-  @events ["new_message", "message_updated"]
+  @events ["new_message", "message_updated", "message_deleted"]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 

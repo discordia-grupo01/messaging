@@ -277,6 +277,12 @@ defmodule Messaging.ChatTest do
       assert {:error, :message_not_found} = Chat.edit_message(edit_params())
     end
 
+    test "a deleted message cannot be edited" do
+      allow_edit(stored_doc(%{"content" => "", "deleted_at" => ~U[2026-09-28 12:05:00Z]}))
+
+      assert {:error, :message_not_found} = Chat.edit_message(edit_params())
+    end
+
     test "an id that is not a string never reaches the repository" do
       bad_ids = [%{"$ne" => "x"}, nil, 123, ["msg-1"]]
       calls = length(bad_ids)
@@ -343,6 +349,168 @@ defmodule Messaging.ChatTest do
       end)
 
       assert {:error, :timeout} = Chat.edit_message(edit_params())
+    end
+  end
+
+  describe "delete_message/1" do
+    @moderator_id "moderator-1"
+
+    defp delete_params(overrides \\ %{}) do
+      Map.merge(
+        %{channel_id: @channel_id, message_id: "msg-1", user_id: @user_id, raw_jwt: @raw_jwt},
+        overrides
+      )
+    end
+
+    defp allow_view(user_id) do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+                                                                          ^user_id,
+                                                                          @raw_jwt ->
+        {:ok, true}
+      end)
+    end
+
+    defp allow_delete_lookup(doc, user_id \\ @user_id) do
+      allow_view(user_id)
+      expect(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+    end
+
+    defp expect_tombstone do
+      expect(Messaging.Chat.RepoMock, :delete_message, fn "msg-1", @channel_id, deleted_at ->
+        assert {_micro, 3} = deleted_at.microsecond
+
+        {:ok,
+         stored_doc(%{"content" => "", "deleted_at" => deleted_at, "changed_at" => deleted_at})}
+      end)
+    end
+
+    test "CA1: the author deletes their own message without needing any moderation permission" do
+      allow_delete_lookup(stored_doc())
+      expect_tombstone()
+
+      assert {:ok, %Message{id: "msg-1", content: "", deleted_at: %DateTime{}}} =
+               Chat.delete_message(delete_params())
+    end
+
+    test "CA2: a member with MANAGE_MESSAGES deletes someone else's message" do
+      allow_delete_lookup(stored_doc(), @moderator_id)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @server_id,
+                                                                             @moderator_id,
+                                                                             @raw_jwt ->
+        {:ok, true}
+      end)
+
+      expect_tombstone()
+
+      assert {:ok, %Message{user_id: @user_id, deleted_at: %DateTime{}}} =
+               Chat.delete_message(delete_params(%{user_id: @moderator_id}))
+    end
+
+    test "CA3: someone who is neither the author nor a moderator is not allowed" do
+      allow_delete_lookup(stored_doc(), "intruder")
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _, "intruder", _ ->
+        {:ok, false}
+      end)
+
+      assert {:error, :message_delete_denied} =
+               Chat.delete_message(delete_params(%{user_id: "intruder"}))
+    end
+
+    test "the author is never asked for MANAGE_MESSAGES" do
+      allow_delete_lookup(stored_doc())
+      expect_tombstone()
+
+      assert {:ok, %Message{}} = Chat.delete_message(delete_params())
+    end
+
+    test "someone who cannot view the channel (an author who left included) is rejected before the message is read" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _, _, _ ->
+        {:ok, false}
+      end)
+
+      assert {:error, :forbidden} = Chat.delete_message(delete_params())
+    end
+
+    test "a message that does not exist, is in another channel, or is already deleted is not found" do
+      allow_delete_lookup(nil)
+      assert {:error, :message_not_found} = Chat.delete_message(delete_params())
+
+      allow_delete_lookup(stored_doc(%{"channel_id" => "other-channel"}))
+      assert {:error, :message_not_found} = Chat.delete_message(delete_params())
+
+      allow_delete_lookup(
+        stored_doc(%{"content" => "", "deleted_at" => ~U[2026-09-28 12:05:00Z]})
+      )
+
+      assert {:error, :message_not_found} = Chat.delete_message(delete_params())
+    end
+
+    test "an id that is not a string never reaches the repository" do
+      bad_ids = [%{"$ne" => "x"}, nil, 123, ["msg-1"]]
+      calls = length(bad_ids)
+
+      expect(Messaging.Chat.RepoMock, :get_channel, calls, fn @channel_id ->
+        text_channel_doc()
+      end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, calls, fn _, _, _ ->
+        {:ok, true}
+      end)
+
+      for bad <- bad_ids do
+        assert {:error, :message_not_found} =
+                 Chat.delete_message(delete_params(%{message_id: bad}))
+      end
+    end
+
+    test "an unknown channel and a voice channel are rejected" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> nil end)
+      assert {:error, :channel_not_found} = Chat.delete_message(delete_params())
+
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id ->
+        %{"_id" => @channel_id, "server_id" => @server_id, "name" => "voz", "kind" => "voice"}
+      end)
+
+      assert {:error, :channel_not_text} = Chat.delete_message(delete_params())
+    end
+
+    test "a failing permissions check is propagated, for the view and the moderation lookups" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _, _, _ ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.delete_message(delete_params())
+
+      allow_delete_lookup(stored_doc(), "intruder")
+
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _, _, _ ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.delete_message(delete_params(%{user_id: "intruder"}))
+    end
+
+    test "the message being deleted by someone else between the read and the write is not found" do
+      allow_delete_lookup(stored_doc())
+      expect(Messaging.Chat.RepoMock, :delete_message, fn _id, _cid, _at -> {:ok, nil} end)
+
+      assert {:error, :message_not_found} = Chat.delete_message(delete_params())
+    end
+
+    test "a repository failure on delete is propagated" do
+      allow_delete_lookup(stored_doc())
+
+      expect(Messaging.Chat.RepoMock, :delete_message, fn _id, _cid, _at -> {:error, :timeout} end)
+
+      assert {:error, :timeout} = Chat.delete_message(delete_params())
     end
   end
 
@@ -514,7 +682,20 @@ defmodule Messaging.ChatTest do
         {:ok, [changed_doc("a"), changed_doc("b")]}
       end)
 
-      assert {:ok, [%Message{id: "a", edited_at: %DateTime{}}, %Message{id: "b"}]} =
+      assert {:ok, [%Message{id: "a", edited_at: %DateTime{}}, %Message{id: "b"}], []} =
+               Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+    end
+
+    test "deleted messages come back as ids, apart from the edited ones" do
+      tombstone =
+        changed_doc("gone")
+        |> Map.merge(%{"content" => "", "deleted_at" => ~U[2026-09-28 12:02:00Z]})
+
+      expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit ->
+        {:ok, [changed_doc("a"), tombstone, changed_doc("b")]}
+      end)
+
+      assert {:ok, [%Message{id: "a"}, %Message{id: "b"}], ["gone"]} =
                Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
     end
 
@@ -523,7 +704,7 @@ defmodule Messaging.ChatTest do
         {:ok, for(i <- 1..200, do: changed_doc("m-#{i}"))}
       end)
 
-      assert {:ok, messages} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+      assert {:ok, messages, []} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
       assert length(messages) == 200
 
       expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, 201 ->
@@ -537,7 +718,7 @@ defmodule Messaging.ChatTest do
     test "nothing changed is an empty list" do
       expect(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit -> {:ok, []} end)
 
-      assert {:ok, []} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
+      assert {:ok, [], []} = Chat.list_changes(@channel_id, ~U[2026-09-28 12:00:00Z])
     end
 
     test "a repo failure is propagated" do

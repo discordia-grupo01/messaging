@@ -1,6 +1,15 @@
 defmodule Messaging.Chat.Message do
   @enforce_keys [:id, :channel_id, :server_id, :user_id, :content, :inserted_at]
-  defstruct [:id, :channel_id, :server_id, :user_id, :content, :inserted_at, :edited_at]
+  defstruct [
+    :id,
+    :channel_id,
+    :server_id,
+    :user_id,
+    :content,
+    :inserted_at,
+    :edited_at,
+    :deleted_at
+  ]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -9,7 +18,8 @@ defmodule Messaging.Chat.Message do
           user_id: String.t(),
           content: String.t(),
           inserted_at: DateTime.t(),
-          edited_at: DateTime.t() | nil
+          edited_at: DateTime.t() | nil,
+          deleted_at: DateTime.t() | nil
         }
 
   def from_doc(
@@ -29,7 +39,8 @@ defmodule Messaging.Chat.Message do
       user_id: user_id,
       content: content,
       inserted_at: inserted_at,
-      edited_at: Map.get(doc, "edited_at")
+      edited_at: Map.get(doc, "edited_at"),
+      deleted_at: Map.get(doc, "deleted_at")
     }
   end
 
@@ -43,6 +54,15 @@ defmodule Messaging.Chat.Message do
       "inserted_at" => iso8601_z(message.inserted_at),
       "edited" => message.edited_at != nil,
       "edited_at" => message.edited_at && iso8601_z(message.edited_at)
+    }
+  end
+
+  def to_deleted_api(%__MODULE__{} = message) do
+    %{
+      "id" => message.id,
+      "channel_id" => message.channel_id,
+      "server_id" => message.server_id,
+      "deleted_at" => iso8601_z(message.deleted_at)
     }
   end
 

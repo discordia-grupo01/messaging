@@ -59,4 +59,26 @@ defmodule Messaging.Chat.PermissionsClient.HttpTest do
 
     assert {:ok, false} = Http.can_view_channel?("srv-1", "user-1", "a-jwt")
   end
+
+  test "can_manage_messages?/3 is true only when MANAGE_MESSAGES is in the permissions list" do
+    Req.Test.stub(Http, fn conn ->
+      Req.Test.json(conn, %{"permissions" => ["MANAGE_MESSAGES", "VIEW_CHANNELS"]})
+    end)
+
+    assert {:ok, true} = Http.can_manage_messages?("srv-1", "user-1", "a-jwt")
+  end
+
+  test "can_manage_messages?/3 is false with the default permissions" do
+    Req.Test.stub(Http, fn conn ->
+      Req.Test.json(conn, %{"permissions" => ["SEND_MESSAGES", "VIEW_CHANNELS"]})
+    end)
+
+    assert {:ok, false} = Http.can_manage_messages?("srv-1", "user-1", "a-jwt")
+  end
+
+  test "can_manage_messages?/3 is false for a user that is not a member (404)" do
+    Req.Test.stub(Http, fn conn -> Plug.Conn.send_resp(conn, 404, "") end)
+
+    assert {:ok, false} = Http.can_manage_messages?("srv-1", "user-1", "a-jwt")
+  end
 end

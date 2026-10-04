@@ -29,7 +29,7 @@ defmodule Messaging.Chat.Repo.Mongo do
     error -> {:error, error}
   end
 
-  defp page_query(channel_id, nil, nil), do: {%{"channel_id" => channel_id}, -1}
+  defp page_query(channel_id, nil, nil), do: {live(%{"channel_id" => channel_id}), -1}
 
   defp page_query(channel_id, {%DateTime{} = at, id}, nil),
     do: {keyset(channel_id, "$lt", at, id), -1}
@@ -38,21 +38,37 @@ defmodule Messaging.Chat.Repo.Mongo do
     do: {keyset(channel_id, "$gt", at, id), 1}
 
   defp keyset(channel_id, op, at, id) do
-    %{
+    live(%{
       "channel_id" => channel_id,
       "$or" => [
         %{"inserted_at" => %{op => at}},
         %{"inserted_at" => at, "_id" => %{op => id}}
       ]
-    }
+    })
   end
+
+  defp live(filter), do: Map.put(filter, "deleted_at", nil)
 
   @impl true
   def update_message(id, channel_id, user_id, content, edited_at) do
-    filter = %{"_id" => id, "channel_id" => channel_id, "user_id" => user_id}
+    filter = live(%{"_id" => id, "channel_id" => channel_id, "user_id" => user_id})
 
     update = %{
       "$set" => %{"content" => content, "edited_at" => edited_at, "changed_at" => edited_at}
+    }
+
+    case Mongo.find_one_and_update(@conn, @messages, filter, update, return_document: :after) do
+      {:ok, %Mongo.FindAndModifyResult{value: doc}} -> {:ok, doc}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def delete_message(id, channel_id, deleted_at) do
+    filter = live(%{"_id" => id, "channel_id" => channel_id})
+
+    update = %{
+      "$set" => %{"content" => "", "deleted_at" => deleted_at, "changed_at" => deleted_at}
     }
 
     case Mongo.find_one_and_update(@conn, @messages, filter, update, return_document: :after) do

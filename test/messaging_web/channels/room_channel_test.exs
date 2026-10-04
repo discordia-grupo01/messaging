@@ -274,6 +274,143 @@ defmodule MessagingWeb.RoomChannelTest do
     end
   end
 
+  describe "delete_message" do
+    defp stub_deletable(doc \\ stored_message()) do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+
+      stub(Messaging.Chat.RepoMock, :delete_message, fn "msg-1", _cid, deleted_at ->
+        {:ok, Map.merge(doc, %{"content" => "", "deleted_at" => deleted_at})}
+      end)
+    end
+
+    test "CA1: the author's deletion reaches every member with the channel open" do
+      stub_deletable()
+      author = join_as("user-a")
+      _reader = join_as("user-b")
+
+      ref = push(author, "delete_message", %{"id" => "msg-1"})
+
+      assert_reply ref, :ok
+
+      for _member <- 1..2 do
+        assert_push "message_deleted", %{
+          "id" => "msg-1",
+          "channel_id" => @channel_id,
+          "server_id" => @server_id,
+          "deleted_at" => deleted_at
+        }
+
+        assert is_binary(deleted_at)
+      end
+    end
+
+    test "the deletion event never carries the content of the message" do
+      stub_deletable()
+      author = join_as("user-a")
+
+      ref = push(author, "delete_message", %{"id" => "msg-1"})
+      assert_reply ref, :ok
+
+      assert_push "message_deleted", payload
+      refute Map.has_key?(payload, "content")
+      refute Map.has_key?(payload, "user_id")
+    end
+
+    test "CA2: a member with MANAGE_MESSAGES deletes someone else's message" do
+      stub_deletable()
+
+      stub(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+        {:ok, true}
+      end)
+
+      moderator = join_as("moderator")
+
+      ref = push(moderator, "delete_message", %{"id" => "msg-1"})
+
+      assert_reply ref, :ok
+      assert_push "message_deleted", %{"id" => "msg-1"}
+    end
+
+    test "CA3: someone without authorship or moderation is rejected and nobody sees a change" do
+      stub_deletable()
+
+      stub(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+        {:ok, false}
+      end)
+
+      intruder = join_as("user-b")
+
+      ref = push(intruder, "delete_message", %{"id" => "msg-1"})
+
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_DELETE_DENIED"}}
+      refute_push "message_deleted", _payload
+    end
+
+    test "a message that does not exist or was already deleted" do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "ghost" -> nil end)
+      author = join_as("user-a")
+
+      ref = push(author, "delete_message", %{"id" => "ghost"})
+
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_NOT_FOUND"}}
+
+      stub(Messaging.Chat.RepoMock, :get_message, fn "gone" ->
+        stored_message(%{
+          "_id" => "gone",
+          "content" => "",
+          "deleted_at" => ~U[2026-09-28 12:05:00Z]
+        })
+      end)
+
+      ref = push(author, "delete_message", %{"id" => "gone"})
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_NOT_FOUND"}}
+      refute_push "message_deleted", _payload
+    end
+
+    test "losing VIEW_CHANNELS after joining blocks the deletion, even for the author" do
+      stub_deletable()
+      author = join_as("user-a")
+
+      stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+        {:ok, false}
+      end)
+
+      ref = push(author, "delete_message", %{"id" => "msg-1"})
+
+      assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+      refute_push "message_deleted", _payload
+    end
+
+    test "malformed payloads get an error reply instead of crashing the channel" do
+      author = join_as("user-a")
+
+      for payload <- [%{}, %{"mensaje" => "msg-1"}] do
+        ref = push(author, "delete_message", payload)
+        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      end
+    end
+
+    test "a message id that is not a string cannot be used to query the database" do
+      author = join_as("user-a")
+
+      ref = push(author, "delete_message", %{"id" => %{"$ne" => "x"}})
+
+      assert_reply ref, :error, %{error: %{code: "MESSAGE_NOT_FOUND"}}
+    end
+
+    test "if the realtime broadcast fails the deletion is still saved and acknowledged" do
+      stub_deletable()
+      previous = Application.get_env(:messaging, :broadcaster)
+      Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+      on_exit(fn -> Application.put_env(:messaging, :broadcaster, previous) end)
+      author = join_as("user-a")
+
+      ref = push(author, "delete_message", %{"id" => "msg-1"})
+
+      assert_reply ref, :ok
+    end
+  end
+
   describe "reconnection catch-up" do
     defp doc(id, at),
       do: %{
@@ -443,11 +580,28 @@ defmodule MessagingWeb.RoomChannelTest do
       }
     end
 
+    test "messages deleted while disconnected arrive as ids, apart from the edited ones" do
+      tombstone =
+        edited_doc("gone", ~U[2026-09-28 12:03:00Z])
+        |> Map.merge(%{"content" => "", "deleted_at" => ~U[2026-09-28 12:03:00Z]})
+
+      stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit ->
+        {:ok, [edited_doc("kept", ~U[2026-09-28 12:01:00Z]), tombstone]}
+      end)
+
+      assert {:ok, _reply, _socket} = join_since("2026-09-28T12:00:00Z")
+
+      assert_push "changed_messages", %{
+        "messages" => [%{"id" => "kept", "edited" => true}],
+        "deleted_ids" => ["gone"]
+      }
+    end
+
     test "an empty batch is still pushed so the client knows it is up to date" do
       stub(Messaging.Chat.RepoMock, :list_changes, fn _cid, _from, _limit -> {:ok, []} end)
 
       assert {:ok, _reply, _socket} = join_since("2026-09-28T12:00:00Z")
-      assert_push "changed_messages", %{"messages" => []}
+      assert_push "changed_messages", %{"messages" => [], "deleted_ids" => []}
     end
 
     test "joining without changes_since does not look for changes" do
