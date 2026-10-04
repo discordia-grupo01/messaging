@@ -137,12 +137,13 @@ if rabbitmq_url && mongo_url do
     test "consuming servers.server_deleted purges the server's messages and channels", %{
       chan: chan
     } do
-      server_id = "srv-#{System.unique_integer([:positive])}"
-      channel_id = "chan-#{System.unique_integer([:positive])}"
-      other_channel_id = "chan-#{System.unique_integer([:positive])}"
+      server_id = "srv-#{Messaging.UUID.generate()}"
+      channel_id = "chan-#{Messaging.UUID.generate()}"
+      other_server_id = "srv-#{Messaging.UUID.generate()}"
+      other_channel_id = "chan-#{Messaging.UUID.generate()}"
       event_id = Messaging.UUID.generate()
 
-      for {srv, ch} <- [{server_id, channel_id}, {"srv-other", other_channel_id}] do
+      for {srv, ch} <- [{server_id, channel_id}, {other_server_id, other_channel_id}] do
         :ok =
           Chat.upsert_channel(%Messaging.Chat.ChannelCache{
             channel_id: ch,

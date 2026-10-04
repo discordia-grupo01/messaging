@@ -19,6 +19,9 @@ defmodule MessagingWeb.ApiErrorTest do
     assert ApiError.http_status(:empty_content) == 400
     assert ApiError.http_status(:message_too_long) == 400
     assert ApiError.http_status(:ticket_unavailable) == 503
+    assert ApiError.http_status(:not_message_author) == 403
+    assert ApiError.http_status(:message_not_found) == 404
+    assert ApiError.http_status(:invalid_payload) == 400
   end
 
   test "describe/1 covers every reason with a non-empty code and message" do
@@ -29,7 +32,10 @@ defmodule MessagingWeb.ApiErrorTest do
           :channel_not_found,
           :channel_not_text,
           :invalid_cursor,
-          :ticket_unavailable
+          :ticket_unavailable,
+          :message_not_found,
+          :not_message_author,
+          :invalid_payload
         ] do
       assert {code, message} = ApiError.describe(reason)
       assert code != ""

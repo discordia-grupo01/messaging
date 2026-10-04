@@ -20,6 +20,7 @@ defmodule MessagingWeb.Router do
     pipe_through [:api, :authenticated]
 
     get "/channels/:channel_id/messages", MessageController, :index
+    patch "/channels/:channel_id/messages/:message_id", MessageController, :update
     post "/socket-tickets", SocketTicketController, :create
   end
 end

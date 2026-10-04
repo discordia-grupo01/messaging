@@ -5,11 +5,13 @@ defmodule Messaging.Events.BroadcastConsumer do
   alias Messaging.Events.Backoff
 
   @exchange "messaging.broadcast"
+  @events ["new_message", "message_updated"]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
     url = Keyword.fetch!(opts, :url)
     send(self(), :connect)
     {:ok, %{url: url, backoff: Backoff.initial(), conn: nil, chan: nil}}
@@ -40,6 +42,9 @@ defmodule Messaging.Events.BroadcastConsumer do
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
   end
 
+  @impl GenServer
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+
   @impl true
   def handle_info({:basic_consume_ok, _meta}, state), do: {:noreply, state}
 
@@ -56,15 +61,25 @@ defmodule Messaging.Events.BroadcastConsumer do
     {:noreply, state}
   end
 
-  defp deliver_locally(payload) do
-    case Jason.decode(payload) do
-      {:ok, %{"channel_id" => channel_id} = message} ->
-        MessagingWeb.Endpoint.broadcast!("channel:" <> channel_id, "new_message", message)
-
+  defp deliver_locally(body) do
+    with {:ok, decoded} <- Jason.decode(body),
+         {:ok, event, %{"channel_id" => channel_id} = payload} <- unwrap(decoded) do
+      MessagingWeb.Endpoint.broadcast!("channel:" <> channel_id, event, payload)
+    else
       {:error, reason} ->
         Logger.warning("messaging: broadcast_consumer bad_message reason=#{inspect(reason)}")
+
+      _other ->
+        Logger.warning("messaging: broadcast_consumer bad_message reason=:invalid_payload")
     end
   end
+
+  defp unwrap(%{"event" => event, "payload" => payload}) when event in @events,
+    do: {:ok, event, payload}
+
+  defp unwrap(%{"event" => _unknown}), do: {:error, :unknown_event}
+  defp unwrap(%{"channel_id" => _id} = legacy_message), do: {:ok, "new_message", legacy_message}
+  defp unwrap(_other), do: {:error, :invalid_payload}
 
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),
@@ -77,4 +92,17 @@ defmodule Messaging.Events.BroadcastConsumer do
       {:ok, conn, chan}
     end
   end
+
+  @impl true
+  def terminate(_reason, %{conn: conn}) when not is_nil(conn) do
+    try do
+      AMQP.Connection.close(conn)
+    catch
+      :exit, _ -> :ok
+    end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 end

@@ -48,7 +48,36 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def update_message(id, channel_id, user_id, content, edited_at) do
+    filter = %{"_id" => id, "channel_id" => channel_id, "user_id" => user_id}
+
+    update = %{
+      "$set" => %{"content" => content, "edited_at" => edited_at, "changed_at" => edited_at}
+    }
+
+    case Mongo.find_one_and_update(@conn, @messages, filter, update, return_document: :after) do
+      {:ok, %Mongo.FindAndModifyResult{value: doc}} -> {:ok, doc}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
   def get_message(id), do: Mongo.find_one(@conn, @messages, %{"_id" => id})
+
+  @impl true
+  def list_changes(channel_id, %DateTime{} = since, limit) do
+    filter = %{"channel_id" => channel_id, "changed_at" => %{"$gte" => since}}
+
+    case Mongo.find(@conn, @messages, filter,
+           sort: [changed_at: 1, _id: 1],
+           limit: limit
+         ) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
 
   @impl true
   def get_channel(channel_id), do: Mongo.find_one(@conn, @channels, %{"_id" => channel_id})
@@ -102,7 +131,12 @@ defmodule Messaging.Chat.Repo.Mongo do
   @impl true
   def ensure_indexes do
     indexes = [
-      [name: "messages_channel_inserted_at_id", key: [channel_id: 1, inserted_at: -1, _id: -1]]
+      [name: "messages_channel_inserted_at_id", key: [channel_id: 1, inserted_at: -1, _id: -1]],
+      [
+        name: "messages_channel_changed_at",
+        key: [channel_id: 1, changed_at: 1],
+        partialFilterExpression: %{"changed_at" => %{"$exists" => true}}
+      ]
     ]
 
     Mongo.create_indexes(@conn, @messages, indexes)

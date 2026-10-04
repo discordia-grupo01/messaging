@@ -11,23 +11,24 @@ defmodule Messaging.Events.BroadcastPublisher do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl Messaging.Events.Broadcaster
-  def publish(payload), do: GenServer.call(__MODULE__, {:publish, payload})
+  def publish(event, payload), do: GenServer.call(__MODULE__, {:publish, event, payload})
 
   @impl GenServer
   def init(opts) do
+    Process.flag(:trap_exit, true)
     url = Keyword.fetch!(opts, :url)
     send(self(), :connect)
     {:ok, %{url: url, backoff: Backoff.initial(), conn: nil, chan: nil}}
   end
 
   @impl GenServer
-  def handle_call({:publish, _payload}, _from, %{chan: nil} = state) do
+  def handle_call({:publish, _event, _payload}, _from, %{chan: nil} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:publish, payload}, _from, state) do
-    result =
-      AMQP.Basic.publish(state.chan, @exchange, "", Jason.encode!(payload), persistent: true)
+  def handle_call({:publish, event, payload}, _from, state) do
+    body = Jason.encode!(%{"event" => event, "payload" => payload})
+    result = AMQP.Basic.publish(state.chan, @exchange, "", body, persistent: true)
 
     {:reply, result, state}
   end
@@ -56,6 +57,22 @@ defmodule Messaging.Events.BroadcastPublisher do
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
   end
+
+  @impl GenServer
+  def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, %{conn: conn}) when not is_nil(conn) do
+    try do
+      AMQP.Connection.close(conn)
+    catch
+      :exit, _ -> :ok
+    end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
 
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),
