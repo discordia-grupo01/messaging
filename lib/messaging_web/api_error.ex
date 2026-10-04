@@ -9,6 +9,7 @@ defmodule MessagingWeb.ApiError do
           | :ticket_unavailable
           | :message_not_found
           | :not_message_author
+          | :message_delete_denied
           | :invalid_payload
 
   @spec describe(reason()) :: {String.t(), String.t()}
@@ -37,6 +38,11 @@ defmodule MessagingWeb.ApiError do
   def describe(:not_message_author),
     do: {"NOT_MESSAGE_AUTHOR", "Solo el autor de un mensaje puede editarlo."}
 
+  def describe(:message_delete_denied),
+    do:
+      {"MESSAGE_DELETE_DENIED",
+       "Solo el autor del mensaje o un miembro con permiso de gestión de mensajes puede eliminarlo."}
+
   def describe(:invalid_payload),
     do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
 
@@ -49,6 +55,7 @@ defmodule MessagingWeb.ApiError do
   @spec http_status(reason()) :: 400 | 403 | 404 | 503
   def http_status(:forbidden), do: 403
   def http_status(:not_message_author), do: 403
+  def http_status(:message_delete_denied), do: 403
   def http_status(:message_not_found), do: 404
   def http_status(:channel_not_found), do: 404
   def http_status(:ticket_unavailable), do: 503

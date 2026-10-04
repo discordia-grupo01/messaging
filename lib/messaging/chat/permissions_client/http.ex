@@ -8,6 +8,10 @@ defmodule Messaging.Chat.PermissionsClient.Http do
     do: has_permission?(server_id, user_id, raw_jwt, "SEND_MESSAGES")
 
   @impl true
+  def can_manage_messages?(server_id, user_id, raw_jwt),
+    do: has_permission?(server_id, user_id, raw_jwt, "MANAGE_MESSAGES")
+
+  @impl true
   def can_view_channel?(server_id, user_id, raw_jwt),
     do: has_permission?(server_id, user_id, raw_jwt, "VIEW_CHANNELS")
 
