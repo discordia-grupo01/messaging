@@ -260,6 +260,51 @@ paths:
       tags:
         - messages
   /v1/channels/{channel_id}/messages/{message_id}:
+    delete:
+      callbacks: {}
+      description: Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el servidor (los administradores lo tienen implícito). Quien elimina tiene que poder ver el canal (`VIEW_CHANNELS`). El mensaje deja de aparecer en el historial y su contenido se borra; se emite en tiempo real a los miembros con el canal abierto como evento `message_deleted`, y los clientes desconectados lo reciben al reconectar en `changed_messages.deleted_ids`. Eliminar un mensaje ya eliminado responde 404.
+      operationId: MessagingWeb.MessageController.delete
+      parameters:
+        - description: UUID del canal
+          in: path
+          name: channel_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: UUID del mensaje
+          in: path
+          name: message_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '204':
+          description: Mensaje eliminado
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No es el autor ni tiene MANAGE_MESSAGES, o no puede ver el canal
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal o el mensaje no existen (o ya fue eliminado)
+      summary: Eliminar un mensaje
+      tags:
+        - messages
     patch:
       callbacks: {}
       description: Solo el autor puede editarlo y tiene que seguir pudiendo escribir en el canal (`SEND_MESSAGES`). El contenido nuevo pasa las mismas reglas que al enviar (se recorta, no puede quedar vacío ni superar los 2000 caracteres). Si queda igual al actual no se marca como editado ni se emite nada. Al editar, el mensaje completo se emite en tiempo real a los miembros con el canal abierto como evento `message_updated`.
