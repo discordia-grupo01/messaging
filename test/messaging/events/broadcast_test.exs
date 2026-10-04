@@ -50,6 +50,23 @@ if rabbitmq_url do
                      5_000
     end
 
+    test "a deletion is delivered as message_deleted" do
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "channel:" <> channel_id)
+
+      payload = %{
+        "id" => Messaging.UUID.generate(),
+        "channel_id" => channel_id,
+        "server_id" => "srv-1",
+        "deleted_at" => DateTime.to_iso8601(DateTime.utc_now())
+      }
+
+      assert :ok = BroadcastPublisher.publish("message_deleted", payload)
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "message_deleted", payload: ^payload},
+                     5_000
+    end
+
     test "a bare message from an older publisher is still delivered as new_message" do
       channel_id = "chan-#{System.unique_integer([:positive])}"
       Phoenix.PubSub.subscribe(Messaging.PubSub, "channel:" <> channel_id)
