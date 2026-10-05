@@ -140,8 +140,8 @@ defmodule Messaging.Chat do
 
   @spec can_view_channel?(ChannelCache.t(), String.t(), String.t()) ::
           {:ok, boolean()} | {:error, term()}
-  def can_view_channel?(%ChannelCache{server_id: server_id}, user_id, raw_jwt),
-    do: permissions_client().can_view_channel?(server_id, user_id, raw_jwt)
+  def can_view_channel?(%ChannelCache{channel_id: channel_id}, user_id, raw_jwt),
+    do: permissions_client().can_view_channel?(channel_id, user_id, raw_jwt)
 
   @spec upsert_channel(ChannelCache.t()) :: :ok | {:error, term()}
   def upsert_channel(%ChannelCache{} = channel) do
@@ -185,8 +185,8 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp check_permission(%ChannelCache{server_id: server_id}, user_id, raw_jwt) do
-    permissions_client().can_send_messages?(server_id, user_id, raw_jwt)
+  defp check_permission(%ChannelCache{channel_id: channel_id}, user_id, raw_jwt) do
+    permissions_client().can_send_messages?(channel_id, user_id, raw_jwt)
   end
 
   defp persist_message(%ChannelCache{} = channel, user_id, content) do
@@ -246,8 +246,8 @@ defmodule Messaging.Chat do
 
   defp authorize_delete(_channel, %Message{user_id: user_id}, user_id, _raw_jwt), do: :ok
 
-  defp authorize_delete(%ChannelCache{server_id: server_id}, %Message{}, user_id, raw_jwt) do
-    case permissions_client().can_manage_messages?(server_id, user_id, raw_jwt) do
+  defp authorize_delete(%ChannelCache{channel_id: channel_id}, %Message{}, user_id, raw_jwt) do
+    case permissions_client().can_manage_messages?(channel_id, user_id, raw_jwt) do
       {:ok, true} -> :ok
       {:ok, false} -> {:error, :message_delete_denied}
       {:error, _reason} = error -> error

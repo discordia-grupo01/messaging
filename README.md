@@ -24,10 +24,16 @@ pérdida, CA3 orden cronológico).
   `servers.channel_deleted` (`Messaging.Events.ChannelLifecycleConsumer`). Se
   guardan también los canales de voz: así escribir en uno responde
   `CHANNEL_NOT_TEXT` en vez de un engañoso "el canal no existe".
-- **Chequeo de permisos (`SEND_MESSAGES`)**: llamada HTTP síncrona a
-  `servers` (`Messaging.Chat.PermissionsClient`) en el momento de unirse al
-  canal y en cada envío -- no se cachea porque un rol puede revocarse en
-  cualquier momento.
+- **Chequeo de permisos (`VIEW_CHANNELS` / `SEND_MESSAGES` / `MANAGE_MESSAGES`)**:
+  llamada HTTP síncrona a `servers` (`Messaging.Chat.PermissionsClient`) en el
+  momento de unirse al canal, en cada envío y al editar o borrar -- no se cachea
+  porque un rol o un override puede cambiar en cualquier momento. Se consultan
+  los permisos **efectivos en el canal**
+  (`GET /v1/channels/{channel_id}/members/{user_id}/permissions`), que ya
+  incluyen los overrides por canal de `servers` (#57): un rol al que le
+  denegaron `VIEW_CHANNELS` en `#staff` no puede abrirlo ni leer su historial,
+  aunque lo tenga a nivel servidor. `401`/`403`/`404` de `servers` cuentan como
+  "sin permiso".
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
   `BroadcastConsumer`), separado de `discordia.events`. Ver
@@ -180,7 +186,7 @@ responde `204` sin cuerpo) o por el socket (`delete_message` con `{"id"}`): las 
 entradas usan la misma función de dominio (`Messaging.Chat.delete_message/1`).
 
 - **Quién puede.** El **autor** del mensaje, o un miembro con el permiso `MANAGE_MESSAGES`
-  del servidor (los administradores y el dueño lo tienen implícito; se agregó al catálogo
+  en el canal (el del servidor más los overrides del canal; los administradores y el dueño lo tienen implícito; se agregó al catálogo
   de `servers` y no viene en el conjunto por defecto de un rol nuevo). Cualquier otro
   recibe `403 MESSAGE_DELETE_DENIED`.
 - **Orden de las comprobaciones.** Canal (404 si no existe o no es de texto) → el usuario
@@ -372,7 +378,7 @@ lib/
 │   │   ├── repo.ex               # Behaviour de persistencia (Mongo o Mox en tests)
 │   │   ├── repo/mongo.ex         # Implementacion real (mongodb_driver)
 │   │   ├── index_setup.ex        # Crea el índice del historial al arrancar (con reintentos)
-│   │   ├── permissions_client.ex # Behaviour de permisos (SEND_MESSAGES / VIEW_CHANNELS)
+│   │   ├── permissions_client.ex # Behaviour de permisos por canal (VIEW / SEND / MANAGE_MESSAGES)
 │   │   └── permissions_client/http.ex  # Implementacion real (Req -> servers)
 │   ├── chat.ex                   # API publica del context (hace de "Service")
 │   └── events/                   # Consumo/publicacion de eventos (discordia.events y messaging.broadcast)

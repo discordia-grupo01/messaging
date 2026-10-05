@@ -128,7 +128,7 @@ defmodule MessagingWeb.MessageController do
   operation :delete,
     summary: "Eliminar un mensaje",
     description:
-      "Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el servidor (los " <>
+      "Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el canal (los " <>
         "administradores lo tienen implícito). Quien elimina tiene que poder ver el canal " <>
         "(`VIEW_CHANNELS`). El mensaje deja de aparecer en el historial y su contenido se borra; " <>
         "se emite en tiempo real a los miembros con el canal abierto como evento " <>
