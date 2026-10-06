@@ -39,6 +39,11 @@ defmodule MessagingWeb.ConversationControllerTest do
   end
 
   describe "GET /v1/conversations" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      :ok
+    end
+
     test "requires Authorization", %{conn: conn} do
       conn = get(conn, "/v1/conversations")
       assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
@@ -70,11 +75,35 @@ defmodule MessagingWeb.ConversationControllerTest do
                "id" => "dm-1",
                "partner_id" => @other,
                "unread" => true,
+               "blocked_by_me" => false,
                "last_message_at" => "2026-10-05T12:00:00Z",
                "last_message" => %{"content" => "hola", "server_id" => nil}
              } = first
 
       assert %{"id" => "dm-2", "unread" => false} = second
+    end
+
+    test "blocked_by_me is true only for the partners I blocked", %{conn: conn} do
+      expect(Messaging.Chat.RepoMock, :list_conversations, fn _uid, _limit ->
+        {:ok,
+         [
+           conversation_doc("dm-1", @other),
+           conversation_doc("dm-2", "33333333-3333-4333-8333-333333333333")
+         ]}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:ok, []} end)
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @me <> ":" <> @other, "blocked_id" => @other}]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/conversations")
+
+      assert %{"conversations" => [first, second]} = json_response(conn, 200)
+      assert %{"id" => "dm-1", "blocked_by_me" => true} = first
+      assert %{"id" => "dm-2", "blocked_by_me" => false} = second
+      refute Map.has_key?(first, "blocks_me")
     end
 
     test "an empty list when there is nothing", %{conn: conn} do

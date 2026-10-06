@@ -127,6 +127,10 @@ defmodule Messaging.Chat.ConversationTest do
       assert %{"partner_id" => @b, "unread" => false} = Conversation.to_api(conversation(%{}), @a)
 
       refute Map.has_key?(api, "participants")
+      assert %{"blocked_by_me" => false} = api
+
+      assert %{"blocked_by_me" => true} =
+               Conversation.to_api(conversation(%{blocked_by_me: true}), @b)
     end
 
     test "a deleted last message is a null last_message" do

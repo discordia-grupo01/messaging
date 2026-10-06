@@ -518,6 +518,11 @@ defmodule Messaging.ChatTest do
     @sender "user-1"
     @recipient "user-2"
 
+    setup do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      :ok
+    end
+
     defp dm_id, do: Conversation.id(@sender, @recipient)
 
     defp dm_doc(overrides \\ %{}) do
@@ -634,6 +639,98 @@ defmodule Messaging.ChatTest do
 
       assert {:ok, _channel, %Message{content: "con espacios"}} =
                Chat.send_direct_message(dm_params(%{content: "  con espacios \n"}))
+    end
+
+    test "CA3 of DM: a blocked sender's message is not delivered: nothing is stored or created" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @recipient <> ":" <> @sender}]}
+      end)
+
+      assert {:error, :dm_not_delivered} = Chat.send_direct_message(dm_params())
+    end
+
+    test "the sender who blocked the recipient cannot write to them either" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @sender <> ":" <> @recipient}]}
+      end)
+
+      assert {:error, :user_blocked} = Chat.send_direct_message(dm_params())
+    end
+
+    test "the block is checked before identify-service is asked about a brand-new conversation" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @recipient <> ":" <> @sender}]}
+      end)
+
+      assert {:error, :dm_not_delivered} = Chat.send_direct_message(dm_params())
+    end
+
+    test "if the block lookup fails the message is not sent" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:error, :timeout} end)
+
+      assert {:error, :timeout} = Chat.send_direct_message(dm_params())
+    end
+
+    test "when blocked, editing an old message in the conversation is refused too" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn _id -> dm_doc() end)
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @recipient <> ":" <> @sender}]}
+      end)
+
+      assert {:error, :forbidden} =
+               Chat.edit_message(edit_params(%{channel_id: dm_id(), user_id: @sender}))
+    end
+
+    test "when blocked, deleting an old message is refused too: the history is kept as it was" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn _id -> dm_doc() end)
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @recipient <> ":" <> @sender}]}
+      end)
+
+      assert {:error, :forbidden} =
+               Chat.delete_message(%{
+                 channel_id: dm_id(),
+                 message_id: "msg-1",
+                 user_id: @sender,
+                 raw_jwt: @raw_jwt
+               })
+    end
+
+    test "the one who blocked cannot delete either, until they unblock" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn _id -> dm_doc() end)
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @recipient <> ":" <> @sender}]}
+      end)
+
+      assert {:error, :forbidden} =
+               Chat.delete_message(%{
+                 channel_id: dm_id(),
+                 message_id: "msg-1",
+                 user_id: @recipient,
+                 raw_jwt: @raw_jwt
+               })
+    end
+
+    test "a failing block lookup stops the deletion instead of allowing it" do
+      expect(Messaging.Chat.RepoMock, :get_channel, fn _id -> dm_doc() end)
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:error, :timeout} end)
+
+      assert {:error, :timeout} =
+               Chat.delete_message(%{
+                 channel_id: dm_id(),
+                 message_id: "msg-1",
+                 user_id: @sender,
+                 raw_jwt: @raw_jwt
+               })
+    end
+
+    test "CA2: the history of a blocked conversation is still readable" do
+      expect(Messaging.Chat.RepoMock, :list_messages, fn _id, _opts -> {:ok, []} end)
+
+      assert {:ok, [], nil} = Chat.list_messages(dm_id())
     end
 
     test "you cannot message yourself, and nothing is read or written" do
@@ -807,6 +904,11 @@ defmodule Messaging.ChatTest do
   end
 
   describe "list_conversations/2" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      :ok
+    end
+
     defp conversation_doc(id, partner, last_id, at, extra \\ %{}) do
       Map.merge(
         %{
@@ -866,6 +968,30 @@ defmodule Messaging.ChatTest do
       expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:ok, []} end)
 
       assert {:ok, [%Conversation{last_message: nil}]} =
+               Chat.list_conversations(@user_id)
+    end
+
+    test "blocked_by_me says which partners I blocked, in a single extra query" do
+      expect(Messaging.Chat.RepoMock, :list_conversations, fn _uid, _limit ->
+        {:ok,
+         [
+           conversation_doc("dm-a", "user-a", "m-1", ~U[2026-10-05 10:00:00Z]),
+           conversation_doc("dm-b", "user-b", "m-2", ~U[2026-10-05 09:00:00Z])
+         ]}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:ok, []} end)
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn ids ->
+        assert Enum.sort(ids) == [@user_id <> ":user-a", @user_id <> ":user-b"]
+        {:ok, [%{"_id" => @user_id <> ":user-b", "blocked_id" => "user-b"}]}
+      end)
+
+      assert {:ok,
+              [
+                %Conversation{id: "dm-a", blocked_by_me: false},
+                %Conversation{id: "dm-b", blocked_by_me: true}
+              ]} =
                Chat.list_conversations(@user_id)
     end
 

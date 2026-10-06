@@ -6,6 +6,8 @@ defmodule Messaging.Chat.Access do
               {:ok, boolean()} | {:error, term()}
   @callback can_post?(ChannelCache.t(), user_id :: String.t(), raw_jwt :: String.t()) ::
               {:ok, boolean()} | {:error, term()}
+  @callback can_delete?(ChannelCache.t(), user_id :: String.t(), raw_jwt :: String.t()) ::
+              {:ok, boolean()} | {:error, term()}
   @callback can_moderate?(ChannelCache.t(), user_id :: String.t(), raw_jwt :: String.t()) ::
               {:ok, boolean()} | {:error, term()}
 
