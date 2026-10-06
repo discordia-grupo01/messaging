@@ -13,6 +13,7 @@ defmodule MessagingWeb.ApiError do
           | :cannot_message_self
           | :recipient_not_found
           | :users_unavailable
+          | :mentions_unavailable
           | :cannot_block_self
           | :user_not_found
           | :user_blocked
@@ -60,6 +61,11 @@ defmodule MessagingWeb.ApiError do
       {"USERS_UNAVAILABLE",
        "No se pudo verificar al destinatario, intentá de nuevo en un momento."}
 
+  def describe(:mentions_unavailable),
+    do:
+      {"MENTIONS_UNAVAILABLE",
+       "No se pudieron verificar las menciones del mensaje, intentá de nuevo en un momento."}
+
   def describe(:cannot_block_self),
     do: {"CANNOT_BLOCK_SELF", "No podés bloquearte a vos mismo."}
 
@@ -91,6 +97,7 @@ defmodule MessagingWeb.ApiError do
   def http_status(:user_blocked), do: 403
   def http_status(:dm_not_delivered), do: 403
   def http_status(:users_unavailable), do: 503
+  def http_status(:mentions_unavailable), do: 503
   def http_status(:ticket_unavailable), do: 503
   def http_status(_other), do: 400
 end

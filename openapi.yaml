@@ -146,6 +146,72 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.ErrorResponse
       x-validate:
+    Mention:
+      description: 'Una notificación destacada: un mensaje que te mencionó y todavía no leíste.'
+      properties:
+        author_id:
+          description: Quien te mencionó
+          type: string
+          x-struct:
+          x-validate:
+        channel_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        id:
+          description: '`<message_id>:<user_id>`'
+          type: string
+          x-struct:
+          x-validate:
+        inserted_at:
+          format: date-time
+          type: string
+          x-struct:
+          x-validate:
+        message:
+          allOf:
+            - $ref: '#/components/schemas/Message'
+          description: El mensaje; null si ya no está disponible
+          nullable: true
+          x-struct:
+          x-validate:
+        message_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        server_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - id
+        - message_id
+        - channel_id
+        - server_id
+        - author_id
+        - inserted_at
+        - message
+      title: Mention
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.Mention
+      x-validate:
+    MentionList:
+      properties:
+        mentions:
+          items:
+            $ref: '#/components/schemas/Mention'
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - mentions
+      title: MentionList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.MentionList
+      x-validate:
     Message:
       properties:
         channel_id:
@@ -180,6 +246,29 @@ components:
           type: string
           x-struct:
           x-validate:
+        mention_everyone:
+          description: true si el mensaje mencionó `@everyone` y el autor tiene MENTION_EVERYONE; si no, queda como texto
+          type: boolean
+          x-struct:
+          x-validate:
+        mention_roles:
+          description: Ids de los roles mencionados con `<@&id>`; solo cuentan si el autor tiene MENTION_EVERYONE
+          items:
+            type: string
+            x-struct:
+            x-validate:
+          type: array
+          x-struct:
+          x-validate:
+        mentions:
+          description: Ids de los usuarios mencionados con `<@id>` que son miembros del servidor (vacío en mensajes directos)
+          items:
+            type: string
+            x-struct:
+            x-validate:
+          type: array
+          x-struct:
+          x-validate:
         server_id:
           description: null en los mensajes directos (no pertenecen a ningún servidor)
           format: uuid
@@ -199,6 +288,9 @@ components:
         - content
         - inserted_at
         - edited
+        - mentions
+        - mention_roles
+        - mention_everyone
       title: Message
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.Message
@@ -401,6 +493,38 @@ paths:
       summary: Desbloquear a un usuario
       tags:
         - blocks
+  /v1/channels/{channel_id}/mentions/read:
+    post:
+      callbacks: {}
+      description: Marca como leídas todas tus menciones en ese canal (por ejemplo, al abrirlo). Las que lleguen después siguen sin leer. Es idempotente.
+      operationId: MessagingWeb.MentionController.read
+      parameters:
+        - description: UUID del canal
+          in: path
+          name: channel_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '204':
+          description: Menciones del canal marcadas como leídas
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal no existe
+      summary: Marcar como leídas mis menciones de un canal
+      tags:
+        - mentions
   /v1/channels/{channel_id}/messages:
     get:
       callbacks: {}
@@ -643,6 +767,36 @@ paths:
       summary: Marcar una conversación como leída
       tags:
         - conversations
+  /v1/mentions:
+    get:
+      callbacks: {}
+      description: 'Las notificaciones destacadas (historia #46) que todavía no leíste, la más reciente primero, cada una con su mensaje. Las mismas que llegan en vivo como evento `mention` en `user:<tu id>`; acá están para quien estaba desconectado. Se marcan como leídas por canal con `POST /v1/channels/{channel_id}/mentions/read`.'
+      operationId: MessagingWeb.MentionController.index
+      parameters:
+        - description: Cantidad máxima (default 50, máx 100)
+          in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MentionList'
+          description: Menciones sin leer
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+      summary: Mis menciones sin leer
+      tags:
+        - mentions
   /v1/socket-tickets:
     post:
       callbacks: {}

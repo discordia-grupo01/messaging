@@ -208,6 +208,53 @@ if rabbitmq_url && mongo_url do
              end)
     end
 
+    test "consuming servers.member_left drops that member's mentions in that server only", %{
+      chan: chan
+    } do
+      server_id = "srv-#{Messaging.UUID.generate()}"
+      other_server_id = "srv-#{Messaging.UUID.generate()}"
+      user_id = "user-#{System.unique_integer([:positive])}"
+      event_id = Messaging.UUID.generate()
+
+      for {id, sid} <- [{"m1", server_id}, {"m2", server_id}, {"m3", other_server_id}] do
+        {:ok, _} =
+          Mongo.insert_one(Messaging.Mongo, "mentions", %{
+            "_id" => "#{id}-#{event_id}:#{user_id}",
+            "user_id" => user_id,
+            "message_id" => "#{id}-#{event_id}",
+            "channel_id" => "chan-1",
+            "server_id" => sid,
+            "author_id" => "author-1",
+            "inserted_at" => DateTime.utc_now(),
+            "read_at" => nil
+          })
+      end
+
+      payload =
+        Jason.encode!(%{
+          "event_id" => event_id,
+          "occurred_at" => DateTime.to_iso8601(DateTime.utc_now()),
+          "server_id" => server_id,
+          "user_id" => user_id
+        })
+
+      :ok = AMQP.Basic.publish(chan, @exchange, "servers.member_left", payload, persistent: true)
+
+      assert wait_until(fn ->
+               match?(%{"status" => "processed"}, consumed_event(event_id))
+             end)
+
+      assert Mongo.count_documents!(Messaging.Mongo, "mentions", %{
+               "user_id" => user_id,
+               "server_id" => server_id
+             }) == 0
+
+      assert Mongo.count_documents!(Messaging.Mongo, "mentions", %{
+               "user_id" => user_id,
+               "server_id" => other_server_id
+             }) == 1
+    end
+
     defp consumed_event(event_id),
       do: Mongo.find_one(Messaging.Mongo, "consumed_events", %{"_id" => event_id})
 

@@ -32,9 +32,37 @@ defmodule MessagingWeb.Schemas do
           format: :"date-time",
           nullable: true,
           description: "Momento de la última edición (ISO 8601, UTC); null si nunca se editó"
+        },
+        mentions: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description:
+            "Ids de los usuarios mencionados con `<@id>` que son miembros del servidor (vacío en mensajes directos)"
+        },
+        mention_roles: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description:
+            "Ids de los roles mencionados con `<@&id>`; solo cuentan si el autor tiene MENTION_EVERYONE"
+        },
+        mention_everyone: %Schema{
+          type: :boolean,
+          description:
+            "true si el mensaje mencionó `@everyone` y el autor tiene MENTION_EVERYONE; si no, queda como texto"
         }
       },
-      required: [:id, :channel_id, :server_id, :user_id, :content, :inserted_at, :edited]
+      required: [
+        :id,
+        :channel_id,
+        :server_id,
+        :user_id,
+        :content,
+        :inserted_at,
+        :edited,
+        :mentions,
+        :mention_roles,
+        :mention_everyone
+      ]
     })
   end
 
@@ -145,6 +173,41 @@ defmodule MessagingWeb.Schemas do
         }
       },
       required: [:messages, :next_cursor]
+    })
+  end
+
+  defmodule Mention do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "Mention",
+      description: "Una notificación destacada: un mensaje que te mencionó y todavía no leíste.",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, description: "`<message_id>:<user_id>`"},
+        message_id: %Schema{type: :string, format: :uuid},
+        channel_id: %Schema{type: :string, format: :uuid},
+        server_id: %Schema{type: :string, format: :uuid},
+        author_id: %Schema{type: :string, description: "Quien te mencionó"},
+        inserted_at: %Schema{type: :string, format: :"date-time"},
+        message: %Schema{
+          allOf: [Message],
+          nullable: true,
+          description: "El mensaje; null si ya no está disponible"
+        }
+      },
+      required: [:id, :message_id, :channel_id, :server_id, :author_id, :inserted_at, :message]
+    })
+  end
+
+  defmodule MentionList do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MentionList",
+      type: :object,
+      properties: %{mentions: %Schema{type: :array, items: Mention}},
+      required: [:mentions]
     })
   end
 

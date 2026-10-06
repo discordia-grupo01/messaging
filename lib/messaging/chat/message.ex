@@ -8,7 +8,10 @@ defmodule Messaging.Chat.Message do
     :content,
     :inserted_at,
     :edited_at,
-    :deleted_at
+    :deleted_at,
+    mentions: [],
+    mention_roles: [],
+    mention_everyone: false
   ]
 
   @type t :: %__MODULE__{
@@ -19,7 +22,10 @@ defmodule Messaging.Chat.Message do
           content: String.t(),
           inserted_at: DateTime.t(),
           edited_at: DateTime.t() | nil,
-          deleted_at: DateTime.t() | nil
+          deleted_at: DateTime.t() | nil,
+          mentions: [String.t()],
+          mention_roles: [String.t()],
+          mention_everyone: boolean()
         }
 
   def from_doc(
@@ -40,9 +46,16 @@ defmodule Messaging.Chat.Message do
       content: content,
       inserted_at: inserted_at,
       edited_at: Map.get(doc, "edited_at"),
-      deleted_at: Map.get(doc, "deleted_at")
+      deleted_at: Map.get(doc, "deleted_at"),
+      mentions: Map.get(doc, "mentions") || [],
+      mention_roles: Map.get(doc, "mention_roles") || [],
+      mention_everyone: Map.get(doc, "mention_everyone") == true
     }
   end
+
+  @spec mentions?(t()) :: boolean()
+  def mentions?(%__MODULE__{mentions: [], mention_roles: [], mention_everyone: false}), do: false
+  def mentions?(%__MODULE__{}), do: true
 
   def to_api(%__MODULE__{} = message) do
     %{
@@ -53,7 +66,10 @@ defmodule Messaging.Chat.Message do
       "content" => message.content,
       "inserted_at" => iso8601_z(message.inserted_at),
       "edited" => message.edited_at != nil,
-      "edited_at" => message.edited_at && iso8601_z(message.edited_at)
+      "edited_at" => message.edited_at && iso8601_z(message.edited_at),
+      "mentions" => message.mentions,
+      "mention_roles" => message.mention_roles,
+      "mention_everyone" => message.mention_everyone
     }
   end
 

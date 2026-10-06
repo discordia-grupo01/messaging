@@ -181,7 +181,8 @@ defmodule Messaging.ChatTest do
                                                           @channel_id,
                                                           @user_id,
                                                           "texto corregido",
-                                                          %DateTime{} = edited_at ->
+                                                          %DateTime{} = edited_at,
+                                                          _mention_fields ->
         assert {_micro, 3} = edited_at.microsecond
         {:ok, stored_doc(%{"content" => "texto corregido", "edited_at" => edited_at})}
       end)
@@ -193,7 +194,12 @@ defmodule Messaging.ChatTest do
     test "the new content is trimmed like on send" do
       allow_edit()
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, "con espacios", _at ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          "con espacios",
+                                                          _at,
+                                                          _mention_fields ->
         {:ok, stored_doc(%{"content" => "con espacios", "edited_at" => DateTime.utc_now()})}
       end)
 
@@ -208,7 +214,8 @@ defmodule Messaging.ChatTest do
                                                           @channel_id,
                                                           @user_id,
                                                           _c,
-                                                          _t ->
+                                                          _t,
+                                                          _mention_fields ->
         {:ok, stored_doc(%{"content" => "texto corregido", "edited_at" => DateTime.utc_now()})}
       end)
 
@@ -252,7 +259,12 @@ defmodule Messaging.ChatTest do
       allow_edit()
       exact = String.duplicate("a", Chat.max_message_length())
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, ^exact, _at ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          ^exact,
+                                                          _at,
+                                                          _mention_fields ->
         {:ok, stored_doc(%{"content" => exact, "edited_at" => DateTime.utc_now()})}
       end)
 
@@ -334,7 +346,12 @@ defmodule Messaging.ChatTest do
     test "the message vanishing between the read and the write is reported as not found" do
       allow_edit()
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, _c, _t ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          _c,
+                                                          _t,
+                                                          _mention_fields ->
         {:ok, nil}
       end)
 
@@ -344,7 +361,12 @@ defmodule Messaging.ChatTest do
     test "a repository failure on update is propagated" do
       allow_edit()
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, _c, _t ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          _c,
+                                                          _t,
+                                                          _mention_fields ->
         {:error, :timeout}
       end)
 
@@ -580,8 +602,7 @@ defmodule Messaging.ChatTest do
       expect_message_stored()
 
       assert {:ok, %ChannelCache{channel_id: channel_id, kind: "dm", server_id: nil},
-              %Message{} = message} =
-               Chat.send_direct_message(dm_params())
+              %Message{} = message} = Chat.send_direct_message(dm_params())
 
       assert channel_id == dm_id()
 
@@ -837,7 +858,8 @@ defmodule Messaging.ChatTest do
                                                           _cid,
                                                           @user_id,
                                                           "corregido",
-                                                          at ->
+                                                          at,
+                                                          _mention_fields ->
         {:ok,
          stored_doc(%{
            "channel_id" => dm_id(),
@@ -967,8 +989,7 @@ defmodule Messaging.ChatTest do
 
       expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:ok, []} end)
 
-      assert {:ok, [%Conversation{last_message: nil}]} =
-               Chat.list_conversations(@user_id)
+      assert {:ok, [%Conversation{last_message: nil}]} = Chat.list_conversations(@user_id)
     end
 
     test "blocked_by_me says which partners I blocked, in a single extra query" do
@@ -991,8 +1012,7 @@ defmodule Messaging.ChatTest do
               [
                 %Conversation{id: "dm-a", blocked_by_me: false},
                 %Conversation{id: "dm-b", blocked_by_me: true}
-              ]} =
-               Chat.list_conversations(@user_id)
+              ]} = Chat.list_conversations(@user_id)
     end
 
     test "no conversations means no second query" do
