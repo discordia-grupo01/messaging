@@ -21,8 +21,7 @@ defmodule Messaging.Events.ChannelEventTest do
                 server_id: "srv-1",
                 name: "general",
                 kind: "text"
-              }} =
-               ChannelEvent.parse(ChannelEvent.routing_key_channel_created(), payload)
+              }} = ChannelEvent.parse(ChannelEvent.routing_key_channel_created(), payload)
     end
 
     test "rejects a payload missing a required field" do

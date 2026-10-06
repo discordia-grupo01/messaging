@@ -1,5 +1,4 @@
 defmodule Messaging.Chat.Mentions do
-
   @user_token ~r/<@([A-Za-z0-9_-]{1,64})>/
   @role_token ~r/<@&([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/
   @everyone_token ~r/(?<![\w@&<])@everyone(?![\w-])/

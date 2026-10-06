@@ -1,5 +1,4 @@
 defmodule Messaging.Chat.MentionsClient do
-
   alias Messaging.Chat.Mentions
 
   @callback resolve(

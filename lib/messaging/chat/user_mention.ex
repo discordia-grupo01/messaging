@@ -1,5 +1,4 @@
 defmodule Messaging.Chat.UserMention do
-
   alias Messaging.Chat.Message
 
   @enforce_keys [:id, :user_id, :message_id, :channel_id, :server_id, :author_id, :inserted_at]

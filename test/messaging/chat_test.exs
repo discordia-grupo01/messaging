@@ -602,8 +602,7 @@ defmodule Messaging.ChatTest do
       expect_message_stored()
 
       assert {:ok, %ChannelCache{channel_id: channel_id, kind: "dm", server_id: nil},
-              %Message{} = message} =
-               Chat.send_direct_message(dm_params())
+              %Message{} = message} = Chat.send_direct_message(dm_params())
 
       assert channel_id == dm_id()
 
@@ -990,8 +989,7 @@ defmodule Messaging.ChatTest do
 
       expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:ok, []} end)
 
-      assert {:ok, [%Conversation{last_message: nil}]} =
-               Chat.list_conversations(@user_id)
+      assert {:ok, [%Conversation{last_message: nil}]} = Chat.list_conversations(@user_id)
     end
 
     test "blocked_by_me says which partners I blocked, in a single extra query" do
@@ -1014,8 +1012,7 @@ defmodule Messaging.ChatTest do
               [
                 %Conversation{id: "dm-a", blocked_by_me: false},
                 %Conversation{id: "dm-b", blocked_by_me: true}
-              ]} =
-               Chat.list_conversations(@user_id)
+              ]} = Chat.list_conversations(@user_id)
     end
 
     test "no conversations means no second query" do

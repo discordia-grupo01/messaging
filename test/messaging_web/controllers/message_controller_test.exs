@@ -101,8 +101,7 @@ defmodule MessagingWeb.MessageControllerTest do
       {:ok, for(i <- [4, 3, 2], do: message_doc("msg-#{i}", ~U[2026-09-28 12:00:00Z]))}
     end)
 
-    conn =
-      conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=2&before=msg-5")
+    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=2&before=msg-5")
 
     assert %{"messages" => [%{"id" => "msg-3"}, %{"id" => "msg-4"}], "next_cursor" => "msg-3"} =
              json_response(conn, 200)

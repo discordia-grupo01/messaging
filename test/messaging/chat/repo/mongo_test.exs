@@ -252,8 +252,7 @@ if mongo_url do
       assert [
                %{id: id1, content: "corregido", edited_at: %DateTime{}},
                %{id: id2, edited_at: nil}
-             ] =
-               page
+             ] = page
 
       assert id1 == first["_id"] and id2 == second["_id"]
     end
@@ -442,8 +441,7 @@ if mongo_url do
       edit(doc, channel_id, ~U[2026-09-28 13:00:02.000Z])
       {:ok, _} = Repo.delete_message(doc["_id"], channel_id, ~U[2026-09-28 13:00:03.000Z])
 
-      assert {:ok, [], [deleted_id]} =
-               Chat.list_changes(channel_id, ~U[2026-09-28 13:00:05.000Z])
+      assert {:ok, [], [deleted_id]} = Chat.list_changes(channel_id, ~U[2026-09-28 13:00:05.000Z])
 
       assert deleted_id == doc["_id"]
     end
