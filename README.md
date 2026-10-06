@@ -30,11 +30,8 @@ pérdida, CA3 orden cronológico).
   cualquier momento.
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
-  `BroadcastConsumer`), separado de `discordia.events`. Ver
-  [`docs/adr/0001-messaging-realtime-propagation.md`](https://github.com/discordia-grupo01/docs/blob/main/adr/0001-messaging-realtime-propagation.md)
-  para la justificación completa (por qué RabbitMQ y no Redis Pub/Sub ni
-  Phoenix.PubSub+libcluster).
-
+  `BroadcastConsumer`), separado de `discordia.events`
+  
 ## Eventos que consume
 - `servers.channel_created` -- upsert en la caché local de canales.
 - `servers.channel_deleted` -- evicción de la caché local de canales.
@@ -76,6 +73,8 @@ dominio para otros servicios.
     (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
 - `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
   [Mensajes directos](#mensajes-directos-dm).
+- `POST /v1/blocks`, `DELETE /v1/blocks/:user_id` y `GET /v1/blocks` -- ver
+  [Bloquear y desbloquear usuarios](#bloquear-y-desbloquear-usuarios).
 - `PATCH /v1/channels/:channel_id/messages/:message_id` con `{"content": "..."}` --
   edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
 - `DELETE /v1/channels/:channel_id/messages/:message_id` -- elimina un mensaje (ver
@@ -280,10 +279,58 @@ participa recibe `404 CHANNEL_NOT_FOUND`, **igual que si la conversación no exi
 derivable de dos ids de usuario, un `403` revelaría que esas dos personas hablaron. Los mensajes de
 un DM llevan `server_id: null`.
 
-**Qué falta.** El bloqueo (CA3 de "Enviar mensaje directo") es su propia historia: hasta que exista,
-un DM se puede enviar siempre. Si falla solo la actualización del último mensaje de la conversación
-(la escritura que la ordena y la marca como no leída), el mensaje igual se entrega y se loguea un
+**Límite conocido.** Si falla solo la actualización del último mensaje de la conversación (la
+escritura que la ordena y la marca como no leída), el mensaje igual se entrega y se loguea un
 warning; el estado "no leído" se corrige con el siguiente mensaje.
+
+## Bloquear y desbloquear usuarios
+Los bloqueos son una relación entre dos usuarios que vive en `messaging` (colección `blocks`, un
+documento por par `bloqueador:bloqueado`, con índice por bloqueador). Están en `messaging` y no en
+`identify-service` para que cada DM los verifique con **una sola consulta local por `_id`**, sin una
+llamada más entre servicios que pueda caerse.
+
+- `POST /v1/blocks` con `{"user_id": "..."}` -- bloquea (`204`). Es idempotente. El id viaja en el
+  cuerpo y no en la URL. Un cuerpo sin `user_id` string da `400 INVALID_PAYLOAD`. Verifica que el usuario exista
+  (`404 USER_NOT_FOUND`; si `identify-service` no responde, `503 USERS_UNAVAILABLE`). No se puede
+  bloquear a uno mismo (`400 CANNOT_BLOCK_SELF`).
+- `DELETE /v1/blocks/:user_id` -- desbloquea (`204`). Es idempotente y **no** consulta a
+  `identify-service`: se puede desbloquear a alguien que ya no existe.
+- `GET /v1/blocks?limit=` -- a quién bloqueé, el más reciente primero (default 50, máx. 100). Cada
+  elemento trae solo `user_id` y `created_at`. **Nunca** se informa quién te bloqueó a vos.
+- `GET /v1/conversations` suma `blocked_by_me` en cada conversación, para que el cliente muestre
+  "desbloquear" sin otra consulta. No existe el campo inverso.
+
+**Efecto sobre los DM.** El bloqueo vale en las dos direcciones, para **enviar**:
+- Quien fue bloqueado recibe `403 DM_NOT_DELIVERED` ("No se pudo entregar el mensaje."). El mensaje
+  **no se guarda**, no se crea la conversación si era la primera vez, no se consulta a
+  `identify-service` y nadie recibe ningún evento.
+- Quien bloqueó recibe `403 USER_BLOCKED` si intenta escribirle a esa persona: tiene que
+  desbloquearla primero. Es información propia, así que se le dice.
+- Se comprueba en **cada** mensaje, no solo en el primero, así que aplica también a conversaciones que
+  ya existían. Si la consulta de bloqueos falla, el mensaje no se envía (nunca se interpreta un error
+  como "sin bloqueo").
+- **Editar y borrar** mensajes en un DM bloqueado también se rechaza (`403 FORBIDDEN`), para los dos. La
+  conversación queda **congelada**: editar es escribirle contenido nuevo a la otra persona, y borrar
+  cambia un historial que la historia pide conservar (además, quien fue bloqueado podría borrar lo que
+  escribió y destruir una prueba antes de que la otra persona lo denuncie).
+- **Se conserva todo lo previo.** El historial por REST, la lista de conversaciones y marcar como leído
+  siguen funcionando para los dos.
+- Al desbloquear, los dos vuelven a poder escribirse, editar y borrar.
+
+**Privacidad.** `DM_NOT_DELIVERED` no dice por qué. Hoy la única causa posible es el bloqueo, así que
+quien se fije puede deducirlo; es el mismo compromiso que hacen otras apps de mensajería. A cambio,
+el bloqueado nunca ve cuándo ni si el otro lo bloqueó, y no hay forma de listar quién te bloqueó.
+
+**Qué queda registrado.** La relación se guarda en la base (`blocks`: quién, a quién y cuándo), porque
+hace falta para aplicarla. En los logs, el código de `messaging` no escribe ninguna línea de bloqueo
+(solo avisos de fallo, con el motivo y sin ids). Pero el log HTTP del framework sí registra
+`DELETE /v1/blocks/<id>` al desbloquear (al bloquear, con `POST`, el id va en el cuerpo y solo
+aparece en nivel debug entre los parámetros). Ahí **no** figura quién bloqueó
+(sale del JWT, que no se loguea), así que no alcanza para saber quién bloqueó a quién, pero el id del
+bloqueado sí queda en esa línea. No revisé los logs de acceso de Kong.
+
+**Llamadas privadas.** La historia las menciona, pero todavía no existen. Cuando existan, la
+verificación es `Messaging.Chat.Blocks.check_contact/2`.
 
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
