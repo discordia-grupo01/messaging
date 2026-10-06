@@ -4,6 +4,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @conn Messaging.Mongo
   @messages "messages"
   @channels "channels"
+  @blocks "blocks"
 
   @impl true
   def insert_message(doc) do
@@ -163,6 +164,47 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def put_block(%{"_id" => id} = doc) do
+    update = %{"$setOnInsert" => Map.delete(doc, "_id")}
+
+    case Mongo.update_one(@conn, @blocks, %{"_id" => id}, update, upsert: true) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def delete_block(id) do
+    case Mongo.delete_one(@conn, @blocks, %{"_id" => id}) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def get_blocks(ids) do
+    case Mongo.find(@conn, @blocks, %{"_id" => %{"$in" => ids}}) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def list_blocks(blocker_id, limit) do
+    case Mongo.find(@conn, @blocks, %{"blocker_id" => blocker_id},
+           sort: [created_at: -1, _id: 1],
+           limit: limit
+         ) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
   def get_channel(channel_id), do: Mongo.find_one(@conn, @channels, %{"_id" => channel_id})
 
   @impl true
@@ -230,8 +272,11 @@ defmodule Messaging.Chat.Repo.Mongo do
       ]
     ]
 
-    with :ok <- Mongo.create_indexes(@conn, @messages, indexes) do
-      Mongo.create_indexes(@conn, @channels, channel_indexes)
+    block_indexes = [[name: "blocks_blocker_created_at", key: [blocker_id: 1, created_at: -1]]]
+
+    with :ok <- Mongo.create_indexes(@conn, @messages, indexes),
+         :ok <- Mongo.create_indexes(@conn, @channels, channel_indexes) do
+      Mongo.create_indexes(@conn, @blocks, block_indexes)
     end
   end
 end
