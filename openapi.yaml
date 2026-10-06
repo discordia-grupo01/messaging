@@ -600,7 +600,7 @@ paths:
   /v1/channels/{channel_id}/messages/{message_id}:
     delete:
       callbacks: {}
-      description: Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el servidor (los administradores lo tienen implícito). Quien elimina tiene que poder ver el canal (`VIEW_CHANNELS`). El mensaje deja de aparecer en el historial y su contenido se borra; se emite en tiempo real a los miembros con el canal abierto como evento `message_deleted`, y los clientes desconectados lo reciben al reconectar en `changed_messages.deleted_ids`. Eliminar un mensaje ya eliminado responde 404.
+      description: Lo puede eliminar su autor o un miembro con `MANAGE_MESSAGES` en el canal (los administradores lo tienen implícito). Quien elimina tiene que poder ver el canal (`VIEW_CHANNELS`). El mensaje deja de aparecer en el historial y su contenido se borra; se emite en tiempo real a los miembros con el canal abierto como evento `message_deleted`, y los clientes desconectados lo reciben al reconectar en `changed_messages.deleted_ids`. Eliminar un mensaje ya eliminado responde 404.
       operationId: MessagingWeb.MessageController.delete
       parameters:
         - description: UUID del canal

@@ -26,7 +26,7 @@ defmodule Messaging.ChatTest do
     test "persists and returns the message on success" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
                                                                            @user_id,
                                                                            @raw_jwt ->
         {:ok, true}
@@ -78,7 +78,7 @@ defmodule Messaging.ChatTest do
     test "rejects when the permissions check says no" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
                                                                            @user_id,
                                                                            @raw_jwt ->
         {:ok, false}
@@ -165,7 +165,7 @@ defmodule Messaging.ChatTest do
     defp allow_edit(doc \\ stored_doc()) do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
                                                                            @user_id,
                                                                            @raw_jwt ->
         {:ok, true}
@@ -387,7 +387,7 @@ defmodule Messaging.ChatTest do
     defp allow_view(user_id) do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
                                                                           ^user_id,
                                                                           @raw_jwt ->
         {:ok, true}
@@ -419,7 +419,7 @@ defmodule Messaging.ChatTest do
     test "CA2: a member with MANAGE_MESSAGES deletes someone else's message" do
       allow_delete_lookup(stored_doc(), @moderator_id)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @channel_id,
                                                                              @moderator_id,
                                                                              @raw_jwt ->
         {:ok, true}
@@ -1220,8 +1220,8 @@ defmodule Messaging.ChatTest do
   end
 
   describe "can_view_channel?/3" do
-    test "asks the permissions client about VIEW_CHANNELS for the channel's server" do
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+    test "asks the permissions client about VIEW_CHANNELS in that channel (overrides included)" do
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
                                                                           @user_id,
                                                                           @raw_jwt ->
         {:ok, true}

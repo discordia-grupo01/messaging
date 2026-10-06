@@ -25,7 +25,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
   defp allow_send do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+    expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
                                                                          @author,
                                                                          @raw_jwt ->
       {:ok, true}

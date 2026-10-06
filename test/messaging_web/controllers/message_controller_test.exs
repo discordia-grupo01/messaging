@@ -63,7 +63,9 @@ defmodule MessagingWeb.MessageControllerTest do
   defp allow_view(user_id \\ "user-1") do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id, ^user_id, _ ->
+    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
+                                                                        ^user_id,
+                                                                        _ ->
       {:ok, true}
     end)
   end
@@ -221,7 +223,7 @@ defmodule MessagingWeb.MessageControllerTest do
     defp allow_edit(doc \\ stored()) do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
                                                                            "user-1",
                                                                            _jwt ->
         {:ok, true}
@@ -361,7 +363,7 @@ defmodule MessagingWeb.MessageControllerTest do
     defp allow_delete(doc, user_id \\ "user-1") do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
                                                                           ^user_id,
                                                                           _jwt ->
         {:ok, true}
@@ -408,7 +410,7 @@ defmodule MessagingWeb.MessageControllerTest do
     test "CA2: a member with MANAGE_MESSAGES deletes someone else's message", %{conn: conn} do
       allow_delete(stored(), "moderator")
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @server_id,
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @channel_id,
                                                                              "moderator",
                                                                              _jwt ->
         {:ok, true}
