@@ -1,5 +1,6 @@
 defmodule Messaging.Chat.Blocks do
   alias Messaging.Chat.{Conversation, Repo, UsersClient}
+  alias Messaging.Log
 
   require Logger
 
@@ -19,14 +20,18 @@ defmodule Messaging.Chat.Blocks do
         "created_at" => DateTime.utc_now() |> DateTime.truncate(:millisecond)
       }
 
-      log_failure(repo().put_block(doc), "block_failed")
+      with :ok <- log_failure(repo().put_block(doc), "block_failed") do
+        Logger.info("block_created", user_id: blocker_id)
+      end
     end
   end
 
   @spec unblock(String.t(), term()) :: :ok | {:error, term()}
   def unblock(blocker_id, blocked_id) do
     with :ok <- validate_target(blocker_id, blocked_id) do
-      log_failure(repo().delete_block(id(blocker_id, blocked_id)), "unblock_failed")
+      with :ok <- log_failure(repo().delete_block(id(blocker_id, blocked_id)), "unblock_failed") do
+        Logger.info("block_removed", user_id: blocker_id)
+      end
     end
   end
 
@@ -83,7 +88,7 @@ defmodule Messaging.Chat.Blocks do
   defp log_failure(:ok, _event), do: :ok
 
   defp log_failure({:error, reason} = error, event) do
-    Logger.warning("messaging: #{event} reason=#{inspect(reason)}")
+    Logger.error(event, reason: Log.reason(reason))
     error
   end
 

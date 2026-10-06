@@ -1,6 +1,8 @@
 defmodule Messaging.Chat.UsersClient.Http do
   @behaviour Messaging.Chat.UsersClient
 
+  alias Messaging.Log
+
   require Logger
 
   @impl true
@@ -25,11 +27,11 @@ defmodule Messaging.Chat.UsersClient.Http do
         {:ok, false}
 
       {:ok, %Req.Response{status: status}} ->
-        Logger.warning("messaging: users_client unexpected_status status=#{status}")
+        Logger.error("users_client_unexpected_status", status: status)
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
-        Logger.warning("messaging: users_client request_failed reason=#{inspect(reason)}")
+        Logger.error("users_client_request_failed", reason: Log.reason(reason))
         {:error, reason}
     end
   end

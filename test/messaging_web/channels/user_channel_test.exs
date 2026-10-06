@@ -272,6 +272,65 @@ defmodule MessagingWeb.UserChannelTest do
     end
   end
 
+  describe "what ends up in the logs" do
+    import ExUnit.CaptureLog
+
+    setup do
+      previous = Logger.level()
+      Logger.configure(level: :debug)
+      on_exit(fn -> Logger.configure(level: previous) end)
+    end
+
+    test "a private message, its recipient and the ticket never reach the logs, even in debug" do
+      stub_new_conversation(@ana, @beto)
+      secret = "texto-privado-" <> Integer.to_string(System.unique_integer([:positive]))
+
+      log =
+        capture_log([level: :debug], fn ->
+          ana = join_own(@ana)
+          ref = push(ana, "send_dm", %{"to" => @beto, "content" => secret})
+          assert_reply ref, :ok
+          Process.sleep(50)
+        end)
+
+      refute log =~ secret
+      refute log =~ "\"to\":\"" <> @beto
+
+      entries = log |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert Enum.any?(
+               entries,
+               &match?(
+                 %{"message" => "channel_event", "event" => "send_dm", "level" => "debug"},
+                 &1
+               )
+             )
+
+      assert Enum.any?(entries, &match?(%{"message" => "socket_connected", "result" => "ok"}, &1))
+      refute Enum.any?(entries, &(&1["message"] =~ "Parameters"))
+    end
+
+    test "every line the application writes is valid JSON" do
+      stub_new_conversation(@ana, @beto)
+
+      log =
+        capture_log([level: :debug], fn ->
+          ana = join_own(@ana)
+          ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola"})
+          assert_reply ref, :ok
+          Process.sleep(50)
+        end)
+
+      lines = log |> String.split("\n", trim: true)
+      assert lines != []
+
+      for line <- lines,
+          do: assert(%{"level" => _, "service" => "messaging"} = Jason.decode!(line))
+
+      assert Enum.any?(lines, &(&1 =~ "message_sent"))
+    end
+  end
+
   describe "the conversation channel" do
     setup do
       id = dm_id(@ana, @beto)

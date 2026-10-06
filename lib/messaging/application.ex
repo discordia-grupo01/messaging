@@ -1,10 +1,18 @@
 defmodule Messaging.Application do
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
     mongo_url = Application.fetch_env!(:messaging, :mongo_url)
     Messaging.UUID.init()
+    Messaging.Log.Telemetry.attach()
+
+    Logger.info("service_started",
+      version: to_string(Application.spec(:messaging, :vsn)),
+      log_level: Logger.level()
+    )
 
     children =
       [

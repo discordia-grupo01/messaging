@@ -5,6 +5,24 @@ default_mongo_url =
     do: "mongodb://localhost:27017/messaging_test",
     else: "mongodb://localhost:27017/messaging_dev"
 
+log_level =
+  case config_env() do
+    :dev -> "debug"
+    :test -> "warning"
+    :prod -> "info"
+  end
+  |> then(&System.get_env("LOG_LEVEL", &1))
+  |> String.downcase()
+  |> case do
+    "debug" -> :debug
+    "info" -> :info
+    level when level in ["warn", "warning"] -> :warning
+    "error" -> :error
+    other -> raise "LOG_LEVEL must be one of debug, info, warning, error (got: #{inspect(other)})"
+  end
+
+config :logger, level: log_level
+
 config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672"),

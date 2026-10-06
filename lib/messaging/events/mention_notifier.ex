@@ -11,6 +11,7 @@ defmodule Messaging.Events.MentionNotifier do
 
   alias Messaging.Chat.Message
   alias Messaging.Events.Broadcaster
+  alias Messaging.Log
 
   @event "mention"
 
@@ -33,8 +34,10 @@ defmodule Messaging.Events.MentionNotifier do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: mention_broadcast_failed message_id=#{message_id} user_id=#{user_id} reason=#{inspect(reason)}"
+        Logger.warning("mention_broadcast_failed",
+          message_id: message_id,
+          user_id: user_id,
+          reason: Log.reason(reason)
         )
     end
   end

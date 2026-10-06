@@ -5,6 +5,7 @@ defmodule Messaging.Events.BroadcastPublisher do
   @behaviour Messaging.Events.Broadcaster
 
   alias Messaging.Events.Backoff
+  alias Messaging.Log
 
   @exchange "messaging.broadcast"
 
@@ -39,12 +40,13 @@ defmodule Messaging.Events.BroadcastPublisher do
     case connect(state.url) do
       {:ok, conn, chan} ->
         Process.monitor(conn.pid)
-        Logger.info("messaging: broadcast_publisher connected exchange=#{@exchange}")
+        Logger.info("broadcast_publisher_connected", exchange: @exchange)
         {:noreply, %{state | conn: conn, chan: chan, backoff: Backoff.initial()}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: broadcast_publisher connect_failed reason=#{inspect(reason)} retry_in_ms=#{state.backoff}"
+        Logger.warning("broadcast_publisher_connect_failed",
+          reason: Log.reason(reason),
+          retry_in_ms: state.backoff
         )
 
         Process.send_after(self(), :connect, state.backoff)
@@ -54,7 +56,7 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   @impl GenServer
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
-    Logger.warning("messaging: broadcast_publisher connection_down reason=#{inspect(reason)}")
+    Logger.warning("broadcast_publisher_connection_down", reason: Log.reason(reason))
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
   end

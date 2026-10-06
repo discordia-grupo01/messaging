@@ -6,4 +6,5 @@ config :messaging, MessagingWeb.Endpoint,
   debug_errors: true,
   check_origin: false
 
-config :logger, :console, format: "[$level] $message\n"
+config :logger, :console, format: "$time [$level] $message $metadata
+"

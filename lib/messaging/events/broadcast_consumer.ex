@@ -3,6 +3,7 @@ defmodule Messaging.Events.BroadcastConsumer do
   require Logger
 
   alias Messaging.Events.Backoff
+  alias Messaging.Log
 
   @exchange "messaging.broadcast"
   @events ["new_message", "message_updated", "message_deleted", "new_dm", "mention"]
@@ -23,12 +24,13 @@ defmodule Messaging.Events.BroadcastConsumer do
     case connect(state.url) do
       {:ok, conn, chan} ->
         Process.monitor(conn.pid)
-        Logger.info("messaging: broadcast_consumer connected exchange=#{@exchange}")
+        Logger.info("broadcast_consumer_connected", exchange: @exchange)
         {:noreply, %{state | conn: conn, chan: chan, backoff: Backoff.initial()}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: broadcast_consumer connect_failed reason=#{inspect(reason)} retry_in_ms=#{state.backoff}"
+        Logger.warning("broadcast_consumer_connect_failed",
+          reason: Log.reason(reason),
+          retry_in_ms: state.backoff
         )
 
         Process.send_after(self(), :connect, state.backoff)
@@ -38,7 +40,7 @@ defmodule Messaging.Events.BroadcastConsumer do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
-    Logger.warning("messaging: broadcast_consumer connection_down reason=#{inspect(reason)}")
+    Logger.warning("broadcast_consumer_connection_down", reason: Log.reason(reason))
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
   end
@@ -68,10 +70,10 @@ defmodule Messaging.Events.BroadcastConsumer do
       MessagingWeb.Endpoint.broadcast!(topic, event, payload)
     else
       {:error, reason} ->
-        Logger.warning("messaging: broadcast_consumer bad_message reason=#{inspect(reason)}")
+        Logger.warning("broadcast_consumer_bad_message", reason: Log.reason(reason))
 
       _other ->
-        Logger.warning("messaging: broadcast_consumer bad_message reason=:invalid_payload")
+        Logger.warning("broadcast_consumer_bad_message", reason: "invalid_payload")
     end
   end
 

@@ -7,6 +7,7 @@ defmodule MessagingWeb.MessageController do
   alias Messaging.Chat
   alias Messaging.Chat.Message
   alias Messaging.Events.Broadcaster
+  alias Messaging.Log
   alias MessagingWeb.ApiError
   alias MessagingWeb.Schemas
 
@@ -176,8 +177,9 @@ defmodule MessagingWeb.MessageController do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: message_updated_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        Logger.warning("message_updated_broadcast_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
         )
     end
   end
@@ -188,8 +190,9 @@ defmodule MessagingWeb.MessageController do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: message_deleted_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        Logger.warning("message_deleted_broadcast_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
         )
     end
   end

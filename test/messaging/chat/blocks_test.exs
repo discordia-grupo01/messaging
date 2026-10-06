@@ -1,5 +1,6 @@
 defmodule Messaging.Chat.BlocksTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
   import Mox
 
   alias Messaging.Chat.Blocks
@@ -52,6 +53,49 @@ defmodule Messaging.Chat.BlocksTest do
       expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> {:error, :timeout} end)
 
       assert {:error, :timeout} = Blocks.block(@me, @other, "jwt")
+    end
+  end
+
+  describe "traceability" do
+    setup do
+      previous = Logger.level()
+      Logger.configure(level: :debug)
+      on_exit(fn -> Logger.configure(level: previous) end)
+    end
+
+    test "blocking logs who did it, and never who was blocked" do
+      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> :ok end)
+
+      log = capture_log(fn -> assert :ok = Blocks.block(@me, @other, "jwt") end)
+
+      assert %{"message" => "block_created", "level" => "info", "user_id" => @me} =
+               log |> String.trim() |> Jason.decode!()
+
+      refute log =~ @other
+    end
+
+    test "unblocking logs who did it, and never who was unblocked" do
+      expect(Messaging.Chat.RepoMock, :delete_block, fn _id -> :ok end)
+
+      log = capture_log(fn -> assert :ok = Blocks.unblock(@me, @other) end)
+
+      assert %{"message" => "block_removed", "level" => "info", "user_id" => @me} =
+               log |> String.trim() |> Jason.decode!()
+
+      refute log =~ @other
+    end
+
+    test "a failed block is an error with the reason, again without the other user" do
+      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> {:error, :timeout} end)
+
+      log = capture_log(fn -> assert {:error, :timeout} = Blocks.block(@me, @other, "jwt") end)
+
+      assert %{"message" => "block_failed", "level" => "error", "reason" => ":timeout"} =
+               log |> String.trim() |> Jason.decode!()
+
+      refute log =~ @other
     end
   end
 

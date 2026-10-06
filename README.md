@@ -446,6 +446,37 @@ Detalles:
   `changed_at`, así que los mensajes que nunca cambiaron no ocupan lugar en él.
   `Messaging.Chat.IndexSetup` lo crea al arrancar.
 
+## Logs
+Los logs son **estructurados**: una línea de JSON por evento, en la salida estándar. Ejemplo (los campos varían según el evento):
+
+```json
+{"time":"2026-10-06T19:15:26.860Z","level":"info","service":"messaging","message":"message_sent","channel_id":"…","user_id":"…","message_id":"…"}
+```
+
+- **`message`** es el nombre del evento, en inglés y en `snake_case` (`message_sent`, `permissions_client_request_failed`, …). El resto de los campos son datos del evento. Los logs de pedidos HTTP y de sockets/canales **no** son texto de Phoenix: están desactivados (`config :phoenix, :logger, false`) y los reemplaza `Messaging.Log.Telemetry`, que emite eventos con campos propios (ver abajo).
+- **Eventos que salen del framework** (todos con campos, ninguno con texto libre):
+  - `http_request`: `method`, `route`, `status`, `duration_ms` y `user_id` (quien hizo el pedido, si está autenticado), más el `request_id` que comparten todas las líneas de ese pedido. **`route` es el patrón** (`/v1/blocks/:user_id`), nunca la ruta real: así no se escriben ids ni la query string (donde viaja, por ejemplo, el ticket del WebSocket). Un pedido sin ruta sale como `unmatched`, sin su path. Nivel `info`; `error` si el status es 5xx; `debug` para `/livez` y `/readyz`, que se consultan todo el tiempo.
+  - `http_error_rendered` (`error`): una excepción convertida en respuesta de error, con la causa sanitizada.
+  - `socket_connected` (`info`, o `warning` si falló): resultado y transporte. Nunca los parámetros (el ticket).
+  - `channel_joined` (`info`): `topic`, `user_id` y `result` (`ok` o `error` si se rechazó el acceso).
+  - `channel_event` (`debug`): el `event` recibido (`send_dm`, `edit_message`, …) y su duración. Nunca el contenido.
+  - `service_started` (`info`): versión y nivel de log con el que arrancó.
+- **Acciones trazables.** `message_sent`, `message_edited`, `message_deleted`, `conversation_created`, `block_created` y `block_removed`. Las dos últimas llevan solo el `user_id` de quien actúa: **nunca a quién se bloqueó**, porque esa relación es lo sensible.
+- **Nivel configurable** con la variable `LOG_LEVEL` (`debug`, `info`, `warning` o `error`). Por defecto: `info` en producción, `debug` en desarrollo y `warning` en tests. Un valor inválido hace fallar el arranque, con un mensaje claro.
+- **Qué significa cada nivel:**
+  - `error`: falla que impide ejecutar la funcionalidad (no se pudo guardar un mensaje, no se pudieron consultar los permisos, `catch_up_failed`, …).
+  - `warning`: condición anómala que no impide la funcionalidad básica (un aviso en vivo que no se pudo difundir, un evento descartado por inválido, un ticket rechazado, un broker al que hay que reconectarse).
+  - `info`: acción iniciada por una persona o por el sistema, trazable (`message_sent`, `message_edited`, `message_deleted`, `conversation_created`, `channel_joined`, `socket_ticket_issued`, eventos aplicados).
+  - `debug`: contexto técnico para diagnosticar (por ejemplo `permission_checked`, y las líneas del framework).
+- **Qué nunca se escribe.** El contenido de los mensajes, el destinatario de un DM, los tickets, los JWT ni las contraseñas, **en ningún nivel**. Tres capas, para que un error no alcance:
+  1. El código solo registra ids y datos técnicos, nunca contenido.
+  2. Phoenix solo muestra los parámetros de una lista permitida (`config :phoenix, :filter_parameters, {:keep, [...]}` en `config/config.exs`); todo lo demás sale como `[FILTERED]`. Cubre pedidos REST, eventos del canal y la conexión del socket.
+  3. El formateador reemplaza por `[FILTERED]` cualquier campo con un nombre sensible (`content`, `to`, `ticket`, `token`, `raw_jwt`, `authorization`, …).
+- **Los motivos de error se sanitizan** (`Messaging.Log.reason/1`): de una excepción solo se escribe su módulo y su causa corta. Antes, un `Jason.DecodeError` incluía el cuerpo completo del mensaje que no se pudo leer.
+- **Qué campos se escriben** lo define una lista en `config/config.exs` (`metadata: [...]`). Una clave nueva no aparece en los logs hasta que alguien la agrega a propósito, y Credo avisa si se usa una clave que falta en esa lista.
+- **Lo que sigue visible fuera de `messaging`:** el log de acceso de Kong escribe la ruta real de cada pedido (por ejemplo `DELETE /v1/blocks/<id>`, y la query string del WebSocket con el ticket) y la IP del cliente. Ver `planes/logs-y-datos-privados-en-messaging.md`.
+- **Reportes de caídas.** Si un proceso se cae, el reporte de Erlang incluye el último mensaje recibido. Phoenix le aplica el mismo filtro de parámetros (sale `"content" => "[FILTERED]"`) y no escribe el estado del proceso, que es donde estaría el JWT. Está cubierto por tests.
+
 ## Setup local
 
 Este repo es autocontenido: su propio `docker-compose.yml` trae Mongo y
