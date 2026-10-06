@@ -13,6 +13,10 @@ defmodule MessagingWeb.ApiError do
           | :cannot_message_self
           | :recipient_not_found
           | :users_unavailable
+          | :cannot_block_self
+          | :user_not_found
+          | :user_blocked
+          | :dm_not_delivered
           | :invalid_payload
 
   @spec describe(reason()) :: {String.t(), String.t()}
@@ -56,6 +60,17 @@ defmodule MessagingWeb.ApiError do
       {"USERS_UNAVAILABLE",
        "No se pudo verificar al destinatario, intentá de nuevo en un momento."}
 
+  def describe(:cannot_block_self),
+    do: {"CANNOT_BLOCK_SELF", "No podés bloquearte a vos mismo."}
+
+  def describe(:user_not_found), do: {"USER_NOT_FOUND", "El usuario no existe."}
+
+  def describe(:user_blocked),
+    do: {"USER_BLOCKED", "Bloqueaste a este usuario: desbloquealo para escribirle."}
+
+  def describe(:dm_not_delivered),
+    do: {"DM_NOT_DELIVERED", "No se pudo entregar el mensaje."}
+
   def describe(:invalid_payload),
     do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
 
@@ -72,6 +87,9 @@ defmodule MessagingWeb.ApiError do
   def http_status(:message_not_found), do: 404
   def http_status(:channel_not_found), do: 404
   def http_status(:recipient_not_found), do: 404
+  def http_status(:user_not_found), do: 404
+  def http_status(:user_blocked), do: 403
+  def http_status(:dm_not_delivered), do: 403
   def http_status(:users_unavailable), do: 503
   def http_status(:ticket_unavailable), do: 503
   def http_status(_other), do: 400

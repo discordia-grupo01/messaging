@@ -1,4 +1,7 @@
 defmodule Messaging.Chat.Repo do
+  @spec impl() :: module()
+  def impl, do: Application.get_env(:messaging, :chat_repo, Messaging.Chat.Repo.Mongo)
+
   @callback insert_message(doc :: map()) :: {:ok, map()} | {:error, term()}
   @callback list_messages(channel_id :: String.t(), opts :: keyword()) ::
               {:ok, [map()]} | {:error, term()}
@@ -29,6 +32,11 @@ defmodule Messaging.Chat.Repo do
               {:ok, [map()]} | {:error, term()}
   @callback mark_read(channel_id :: String.t(), user_id :: String.t(), at :: DateTime.t()) ::
               :ok | {:error, term()}
+  @callback put_block(doc :: map()) :: :ok | {:error, term()}
+  @callback delete_block(id :: String.t()) :: :ok | {:error, term()}
+  @callback get_blocks(ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}
+  @callback list_blocks(blocker_id :: String.t(), limit :: pos_integer()) ::
+              {:ok, [map()]} | {:error, term()}
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}

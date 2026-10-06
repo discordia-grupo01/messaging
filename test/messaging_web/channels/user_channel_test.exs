@@ -9,6 +9,11 @@ defmodule MessagingWeb.UserChannelTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  setup do
+    stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+    :ok
+  end
+
   @ana "11111111-1111-4111-8111-111111111111"
   @beto "22222222-2222-4222-8222-222222222222"
   @cami "33333333-3333-4333-8333-333333333333"
@@ -165,6 +170,51 @@ defmodule MessagingWeb.UserChannelTest do
       assert_reply ref, :ok
     end
 
+    test "CA3 of DM: a message to someone who blocked you is not delivered and nobody is notified" do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @beto <> ":" <> @ana}]}
+      end)
+
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> @beto)
+      ana = join_own(@ana)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola"})
+
+      assert_reply ref, :error, %{error: %{code: "DM_NOT_DELIVERED"} = error}
+      refute inspect(error) =~ "block"
+      refute_receive %Phoenix.Socket.Broadcast{event: "new_dm"}, 100
+      refute_push "new_dm", _payload
+    end
+
+    test "if you blocked them, you are told to unblock first" do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @ana <> ":" <> @beto}]}
+      end)
+
+      ana = join_own(@ana)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola"})
+
+      assert_reply ref, :error, %{error: %{code: "USER_BLOCKED"}}
+    end
+
+    test "CA3 of the block story: once unblocked, the message goes through again" do
+      stub_new_conversation(@ana, @beto)
+      ana = join_own(@ana)
+
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @beto <> ":" <> @ana}]}
+      end)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola"})
+      assert_reply ref, :error, %{error: %{code: "DM_NOT_DELIVERED"}}
+
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola de nuevo"})
+      assert_reply ref, :ok, %{"message" => %{"content" => "hola de nuevo"}}
+    end
+
     test "you cannot message yourself" do
       ana = join_own(@ana)
 
@@ -274,6 +324,33 @@ defmodule MessagingWeb.UserChannelTest do
       ref = push(ana, "delete_message", %{"id" => "msg-1"})
       assert_reply ref, :ok
       assert_push "message_deleted", %{"id" => "msg-1", "server_id" => nil}
+    end
+
+    test "CA2 of the block story: the conversation is frozen, nothing can be edited or deleted",
+         %{id: id} do
+      doc = %{
+        "_id" => "msg-1",
+        "channel_id" => id,
+        "server_id" => nil,
+        "user_id" => @ana,
+        "content" => "mio",
+        "inserted_at" => ~U[2026-10-05 10:00:00Z]
+      }
+
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
+        {:ok, [%{"_id" => @beto <> ":" <> @ana}]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
+
+      {:ok, _reply, ana} = subscribe_and_join(socket_for(@ana), RoomChannel, "channel:" <> id)
+
+      ref = push(ana, "edit_message", %{"id" => "msg-1", "content" => "cambiado"})
+      assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+
+      ref = push(ana, "delete_message", %{"id" => "msg-1"})
+      assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+      refute_push "message_deleted", _payload
     end
 
     test "the other participant cannot delete the author's message", %{id: id} do

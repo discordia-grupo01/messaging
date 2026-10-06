@@ -1,5 +1,5 @@
 defmodule Messaging.Chat do
-  alias Messaging.Chat.{Access, ChannelCache, Conversation, Message}
+  alias Messaging.Chat.{Access, Blocks, ChannelCache, Conversation, Message, UsersClient}
   alias Messaging.UUID
 
   require Logger
@@ -14,9 +14,6 @@ defmodule Messaging.Chat do
   def max_page_limit, do: @max_page_limit
 
   defp repo, do: Application.get_env(:messaging, :chat_repo, Messaging.Chat.Repo.Mongo)
-
-  defp users_client,
-    do: Application.get_env(:messaging, :users_client, Messaging.Chat.UsersClient.Http)
 
   @type send_message_params :: %{
           channel_id: String.t(),
@@ -83,7 +80,7 @@ defmodule Messaging.Chat do
         raw_jwt: raw_jwt
       }) do
     with {:ok, channel} <- fetch_channel(channel_id),
-         {:ok, true} <- can_view_channel?(channel, user_id, raw_jwt),
+         {:ok, true} <- Access.for_channel(channel).can_delete?(channel, user_id, raw_jwt),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- authorize_delete(channel, message, user_id, raw_jwt) do
       apply_delete(message, user_id)
@@ -110,6 +107,7 @@ defmodule Messaging.Chat do
       }) do
     with :ok <- validate_recipient(sender_id, recipient_id),
          {:ok, trimmed} <- validate_content(content),
+         :ok <- Blocks.check_contact(sender_id, recipient_id),
          {:ok, channel} <- ensure_conversation(sender_id, recipient_id, raw_jwt),
          {:ok, message} <- persist_message(channel, sender_id, trimmed) do
       record_last_message(channel, message)
@@ -123,12 +121,17 @@ defmodule Messaging.Chat do
     limit = opts |> Keyword.get(:limit) |> clamp_limit()
 
     with {:ok, docs} <- repo().list_conversations(user_id, limit),
-         {:ok, last_messages} <- fetch_last_messages(docs) do
+         {:ok, last_messages} <- fetch_last_messages(docs),
+         {:ok, blocked} <- Blocks.blocked_among(user_id, partner_ids(docs, user_id)) do
       {:ok,
        Enum.map(docs, fn doc ->
+         conversation = Conversation.from_doc(doc)
+
          %{
-           Conversation.from_doc(doc)
-           | last_message: Map.get(last_messages, doc["last_message_id"])
+           conversation
+           | last_message: Map.get(last_messages, doc["last_message_id"]),
+             blocked_by_me:
+               MapSet.member?(blocked, Conversation.partner_id(conversation, user_id))
          }
        end)}
     end
@@ -269,10 +272,10 @@ defmodule Messaging.Chat do
   end
 
   defp verify_recipient(recipient_id, raw_jwt) do
-    case users_client().user_exists?(recipient_id, raw_jwt) do
-      {:ok, true} -> :ok
-      {:ok, false} -> {:error, :recipient_not_found}
-      {:error, _reason} -> {:error, :users_unavailable}
+    case UsersClient.verify(recipient_id, raw_jwt) do
+      :ok -> :ok
+      {:error, :not_found} -> {:error, :recipient_not_found}
+      {:error, :unavailable} -> {:error, :users_unavailable}
     end
   end
 
@@ -286,6 +289,10 @@ defmodule Messaging.Chat do
           "messaging: conversation_update_failed conversation_id=#{channel_id} reason=#{inspect(reason)}"
         )
     end
+  end
+
+  defp partner_ids(docs, user_id) do
+    Enum.map(docs, &Conversation.partner_id(Conversation.from_doc(&1), user_id))
   end
 
   defp fetch_last_messages(docs) do

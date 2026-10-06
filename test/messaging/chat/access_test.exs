@@ -24,6 +24,11 @@ defmodule Messaging.Chat.AccessTest do
   end
 
   describe "Direct" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      :ok
+    end
+
     test "a participant can view and post" do
       assert {:ok, true} = Access.Direct.can_view?(dm(), "a", "jwt")
       assert {:ok, true} = Access.Direct.can_post?(dm(), "b", "jwt")
@@ -34,6 +39,33 @@ defmodule Messaging.Chat.AccessTest do
       assert {:error, :channel_not_found} = Access.Direct.can_post?(dm(), "intruder", "jwt")
     end
 
+    test "a block in either direction stops posting but not viewing" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "b:a"}]} end)
+      assert {:ok, false} = Access.Direct.can_post?(dm(), "a", "jwt")
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "a:b"}]} end)
+      assert {:ok, false} = Access.Direct.can_post?(dm(), "b", "jwt")
+
+      assert {:ok, true} = Access.Direct.can_view?(dm(), "a", "jwt")
+      assert {:ok, true} = Access.Direct.can_view?(dm(), "b", "jwt")
+    end
+
+    test "deleting follows the same rule as posting: a block freezes the conversation" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "b:a"}]} end)
+      assert {:ok, false} = Access.Direct.can_delete?(dm(), "a", "jwt")
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      assert {:ok, true} = Access.Direct.can_delete?(dm(), "a", "jwt")
+
+      assert {:error, :channel_not_found} = Access.Direct.can_delete?(dm(), "intruder", "jwt")
+    end
+
+    test "a failing block lookup is propagated, not read as 'allowed'" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:error, :timeout} end)
+
+      assert {:error, :timeout} = Access.Direct.can_post?(dm(), "a", "jwt")
+    end
+
     test "nobody moderates a direct conversation" do
       assert {:ok, false} = Access.Direct.can_moderate?(dm(), "a", "jwt")
     end
@@ -41,7 +73,9 @@ defmodule Messaging.Chat.AccessTest do
 
   describe "Server" do
     test "asks servers for each permission" do
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn "srv-1", "u", "jwt" ->
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, 2, fn "srv-1",
+                                                                             "u",
+                                                                             "jwt" ->
         {:ok, true}
       end)
 
@@ -56,6 +90,7 @@ defmodule Messaging.Chat.AccessTest do
       end)
 
       assert {:ok, true} = Access.Server.can_view?(text(), "u", "jwt")
+      assert {:ok, true} = Access.Server.can_delete?(text(), "u", "jwt")
       assert {:ok, false} = Access.Server.can_post?(text(), "u", "jwt")
       assert {:ok, true} = Access.Server.can_moderate?(text(), "u", "jwt")
     end

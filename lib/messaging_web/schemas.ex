@@ -67,6 +67,10 @@ defmodule MessagingWeb.Schemas do
           type: :boolean,
           description: "true si el último mensaje es del otro y todavía no lo marcaste como leído"
         },
+        blocked_by_me: %Schema{
+          type: :boolean,
+          description: "true si bloqueaste al otro participante (nunca se informa lo contrario)"
+        },
         last_message_at: %Schema{type: :string, format: :"date-time", nullable: true},
         last_message: %Schema{
           allOf: [Message],
@@ -74,7 +78,7 @@ defmodule MessagingWeb.Schemas do
           description: "null si el último mensaje fue eliminado"
         }
       },
-      required: [:id, :partner_id, :unread]
+      required: [:id, :partner_id, :unread, :blocked_by_me]
     })
   end
 
@@ -86,6 +90,42 @@ defmodule MessagingWeb.Schemas do
       type: :object,
       properties: %{conversations: %Schema{type: :array, items: Conversation}},
       required: [:conversations]
+    })
+  end
+
+  defmodule BlockRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "BlockRequest",
+      type: :object,
+      properties: %{
+        user_id: %Schema{type: :string, description: "Id del usuario a bloquear"}
+      },
+      required: [:user_id]
+    })
+  end
+
+  defmodule BlockList do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "BlockList",
+      type: :object,
+      properties: %{
+        blocks: %Schema{
+          type: :array,
+          items: %Schema{
+            type: :object,
+            properties: %{
+              user_id: %Schema{type: :string, description: "El usuario que bloqueaste"},
+              created_at: %Schema{type: :string, format: :"date-time"}
+            },
+            required: [:user_id, :created_at]
+          }
+        }
+      },
+      required: [:blocks]
     })
   end
 

@@ -12,7 +12,8 @@ defmodule Messaging.Chat.Conversation do
     :last_message_at,
     :last_message_user_id,
     :last_message,
-    last_read_at: %{}
+    last_read_at: %{},
+    blocked_by_me: false
   ]
 
   @type t :: %__MODULE__{
@@ -21,7 +22,8 @@ defmodule Messaging.Chat.Conversation do
           last_message_at: DateTime.t() | nil,
           last_message_user_id: String.t() | nil,
           last_message: Message.t() | nil,
-          last_read_at: %{optional(String.t()) => DateTime.t()}
+          last_read_at: %{optional(String.t()) => DateTime.t()},
+          blocked_by_me: boolean()
         }
 
   @spec id(String.t(), String.t()) :: String.t()
@@ -78,6 +80,7 @@ defmodule Messaging.Chat.Conversation do
       "id" => conversation.id,
       "partner_id" => partner_id(conversation, user_id),
       "unread" => unread?(conversation, user_id),
+      "blocked_by_me" => conversation.blocked_by_me,
       "last_message_at" =>
         conversation.last_message_at && Message.iso8601_z(conversation.last_message_at),
       "last_message" => conversation.last_message && Message.to_api(conversation.last_message)

@@ -5,7 +5,7 @@ if mongo_url do
     use ExUnit.Case, async: false
 
     alias Messaging.Chat
-    alias Messaging.Chat.Conversation
+    alias Messaging.Chat.{Blocks, Conversation}
     alias Messaging.Chat.Repo.Mongo, as: Repo
 
     setup do
@@ -275,6 +275,11 @@ if mongo_url do
         Mongo.command(Messaging.Mongo, listIndexes: "channels")
 
       assert Enum.any?(channel_indexes, &(&1["name"] == "dm_participants_last_message_at"))
+
+      {:ok, %{"cursor" => %{"firstBatch" => block_indexes}}} =
+        Mongo.command(Messaging.Mongo, listIndexes: "blocks")
+
+      assert Enum.any?(block_indexes, &(&1["name"] == "blocks_blocker_created_at"))
     end
 
     defp edit(doc, channel_id, at) do
@@ -593,6 +598,120 @@ if mongo_url do
       assert first.id != nil
       assert {:ok, history, nil} = Chat.list_messages(channel.channel_id)
       assert Enum.map(history, & &1.content) == ["hola", "otra"]
+    end
+
+    defp block_doc(blocker, blocked, at \\ ~U[2026-10-06 10:00:00.000Z]) do
+      %{
+        "_id" => blocker <> ":" <> blocked,
+        "blocker_id" => blocker,
+        "blocked_id" => blocked,
+        "created_at" => at
+      }
+    end
+
+    test "put_block/1 is idempotent and keeps the date of the first block" do
+      {a, b} = dm_users()
+      first = block_doc(a, b, ~U[2026-10-06 10:00:00.000Z])
+      again = block_doc(a, b, ~U[2026-10-06 11:00:00.000Z])
+
+      assert :ok = Repo.put_block(first)
+      assert :ok = Repo.put_block(again)
+
+      assert {:ok, [stored]} = Repo.get_blocks([first["_id"]])
+      assert stored["created_at"] == ~U[2026-10-06 10:00:00.000Z]
+    end
+
+    test "many blocks at once leave exactly one document" do
+      {a, b} = dm_users()
+      doc = block_doc(a, b)
+
+      1..20
+      |> Task.async_stream(fn _ -> Repo.put_block(doc) end, max_concurrency: 20)
+      |> Enum.each(fn {:ok, result} -> assert result == :ok end)
+
+      assert {:ok, [_one]} = Repo.get_blocks([doc["_id"]])
+    end
+
+    test "delete_block/1 removes the block, and is a no-op when there is none" do
+      {a, b} = dm_users()
+      :ok = Repo.put_block(block_doc(a, b))
+
+      assert :ok = Repo.delete_block(a <> ":" <> b)
+      assert {:ok, []} = Repo.get_blocks([a <> ":" <> b])
+      assert :ok = Repo.delete_block(a <> ":" <> b)
+    end
+
+    test "a block is directional: blocking is not blocking back" do
+      {a, b} = dm_users()
+      :ok = Repo.put_block(block_doc(a, b))
+
+      assert {:ok, [%{"_id" => id}]} = Repo.get_blocks([a <> ":" <> b, b <> ":" <> a])
+      assert id == a <> ":" <> b
+    end
+
+    test "list_blocks/2 returns only my blocks, newest first, honoring the limit" do
+      {a, b} = dm_users()
+      c = "c-" <> Messaging.UUID.generate()
+      d = "d-" <> Messaging.UUID.generate()
+
+      :ok = Repo.put_block(block_doc(a, b, ~U[2026-10-06 10:00:00.000Z]))
+      :ok = Repo.put_block(block_doc(a, c, ~U[2026-10-06 12:00:00.000Z]))
+      :ok = Repo.put_block(block_doc(a, d, ~U[2026-10-06 11:00:00.000Z]))
+      :ok = Repo.put_block(block_doc(b, a, ~U[2026-10-06 13:00:00.000Z]))
+
+      assert {:ok, docs} = Repo.list_blocks(a, 10)
+      assert Enum.map(docs, & &1["blocked_id"]) == [c, d, b]
+      assert {:ok, [only]} = Repo.list_blocks(a, 1)
+      assert only["blocked_id"] == c
+    end
+
+    test "the whole block flow with real data: CA1, CA2 and CA3 of both stories" do
+      {a, b} = dm_users()
+      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+
+      send = fn from, to, text ->
+        Chat.send_direct_message(%{
+          sender_id: from,
+          recipient_id: to,
+          content: text,
+          raw_jwt: "jwt"
+        })
+      end
+
+      assert {:ok, channel, _} = send.(a, b, "antes del bloqueo")
+      assert {:ok, _, _} = send.(b, a, "respuesta")
+
+      assert :ok = Blocks.block(b, a, "jwt")
+
+      assert {:error, :dm_not_delivered} = send.(a, b, "bloqueado")
+      assert {:error, :user_blocked} = send.(b, a, "yo la bloquee")
+
+      assert {:ok, history, nil} = Chat.list_messages(channel.channel_id)
+      assert Enum.map(history, & &1.content) == ["antes del bloqueo", "respuesta"]
+      assert {:ok, [%{blocked_by_me: true}]} = Chat.list_conversations(b)
+      assert {:ok, [%{blocked_by_me: false}]} = Chat.list_conversations(a)
+
+      assert :ok = Blocks.unblock(b, a)
+
+      assert {:ok, _, %{content: "ya desbloqueado"}} = send.(a, b, "ya desbloqueado")
+      assert {:ok, [%{blocked_by_me: false}]} = Chat.list_conversations(b)
+    end
+
+    test "a blocked first message creates no conversation and stores nothing" do
+      {a, b} = dm_users()
+      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      :ok = Repo.put_block(block_doc(b, a))
+
+      assert {:error, :dm_not_delivered} =
+               Chat.send_direct_message(%{
+                 sender_id: a,
+                 recipient_id: b,
+                 content: "hola",
+                 raw_jwt: "jwt"
+               })
+
+      assert Repo.get_channel(Conversation.id(a, b)) == nil
+      assert {:ok, []} = Repo.list_conversations(a, 10)
     end
 
     defp list_for(user_id) do
