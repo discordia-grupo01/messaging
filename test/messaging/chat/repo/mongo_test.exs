@@ -199,13 +199,13 @@ if mongo_url do
       doc
     end
 
-    test "update_message/5 changes only the content and edited_at, and returns the new document",
+    test "update_message/6 changes only the content and edited_at, and returns the new document",
          %{channel_id: channel_id} do
       doc = one_message(channel_id, "user-a")
       edited_at = ~U[2026-09-28 13:00:00.250Z]
 
       assert {:ok, updated} =
-               Repo.update_message(doc["_id"], channel_id, "user-a", "corregido", edited_at)
+               Repo.update_message(doc["_id"], channel_id, "user-a", "corregido", edited_at, %{})
 
       assert updated["content"] == "corregido"
       assert updated["edited_at"] == edited_at
@@ -214,14 +214,19 @@ if mongo_url do
       assert Repo.get_message(doc["_id"])["content"] == "corregido"
     end
 
-    test "update_message/5 is a no-op (nil) when the author or the channel do not match",
+    test "update_message/6 is a no-op (nil) when the author or the channel do not match",
          %{channel_id: channel_id} do
       doc = one_message(channel_id, "user-a")
       at = ~U[2026-09-28 13:00:00.000Z]
 
-      assert {:ok, nil} = Repo.update_message(doc["_id"], channel_id, "intruder", "robado", at)
-      assert {:ok, nil} = Repo.update_message(doc["_id"], "other-channel", "user-a", "robado", at)
-      assert {:ok, nil} = Repo.update_message("does-not-exist", channel_id, "user-a", "x", at)
+      assert {:ok, nil} =
+               Repo.update_message(doc["_id"], channel_id, "intruder", "robado", at, %{})
+
+      assert {:ok, nil} =
+               Repo.update_message(doc["_id"], "other-channel", "user-a", "robado", at, %{})
+
+      assert {:ok, nil} =
+               Repo.update_message("does-not-exist", channel_id, "user-a", "x", at, %{})
 
       assert %{"content" => "original"} = Repo.get_message(doc["_id"])
       refute Map.has_key?(Repo.get_message(doc["_id"]), "edited_at")
@@ -238,7 +243,8 @@ if mongo_url do
           channel_id,
           "user-a",
           "corregido",
-          ~U[2026-09-28 14:00:00.000Z]
+          ~U[2026-09-28 14:00:00.000Z],
+          %{}
         )
 
       {:ok, page, nil} = Chat.list_messages(channel_id)
@@ -252,12 +258,12 @@ if mongo_url do
       assert id1 == first["_id"] and id2 == second["_id"]
     end
 
-    test "update_message/5 also stamps changed_at, the cursor of the change feed",
+    test "update_message/6 also stamps changed_at, the cursor of the change feed",
          %{channel_id: channel_id} do
       doc = one_message(channel_id, "user-a")
       edited_at = ~U[2026-09-28 13:00:00.250Z]
 
-      {:ok, updated} = Repo.update_message(doc["_id"], channel_id, "user-a", "x", edited_at)
+      {:ok, updated} = Repo.update_message(doc["_id"], channel_id, "user-a", "x", edited_at, %{})
 
       assert updated["changed_at"] == edited_at
     end
@@ -283,7 +289,7 @@ if mongo_url do
     end
 
     defp edit(doc, channel_id, at) do
-      {:ok, _} = Repo.update_message(doc["_id"], channel_id, doc["user_id"], "editado", at)
+      {:ok, _} = Repo.update_message(doc["_id"], channel_id, doc["user_id"], "editado", at, %{})
     end
 
     test "list_changes/3 returns edited messages since the cursor oldest first, whatever their age",
@@ -397,7 +403,7 @@ if mongo_url do
       assert first["_id"] != second["_id"]
     end
 
-    test "update_message/5 cannot resurrect or edit a deleted message", %{channel_id: channel_id} do
+    test "update_message/6 cannot resurrect or edit a deleted message", %{channel_id: channel_id} do
       doc = one_message(channel_id, "user-a")
       {:ok, _} = Repo.delete_message(doc["_id"], channel_id, ~U[2026-09-28 13:00:00.000Z])
 
@@ -407,7 +413,8 @@ if mongo_url do
                  channel_id,
                  "user-a",
                  "revivido",
-                 ~U[2026-09-28 14:00:00.000Z]
+                 ~U[2026-09-28 14:00:00.000Z],
+                 %{}
                )
 
       assert %{"content" => ""} = Repo.get_message(doc["_id"])

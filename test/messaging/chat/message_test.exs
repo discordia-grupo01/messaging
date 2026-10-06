@@ -74,7 +74,10 @@ defmodule Messaging.Chat.MessageTest do
                "content" => "hola",
                "inserted_at" => "2026-09-28T12:00:00.123Z",
                "edited" => false,
-               "edited_at" => nil
+               "edited_at" => nil,
+               "mentions" => [],
+               "mention_roles" => [],
+               "mention_everyone" => false
              }
 
       refute String.contains?(api["inserted_at"], "+00:00")
