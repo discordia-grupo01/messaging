@@ -22,6 +22,16 @@ defmodule Messaging.UUID do
     format(<<ms::48, 7::4, seq::12, 2::2, rand::62>>)
   end
 
+  @spec v5(String.t(), String.t()) :: String.t()
+  def v5(namespace, name) do
+    <<a::48, _::4, b::12, _::2, c::62, _::binary>> =
+      :crypto.hash(:sha, to_binary(namespace) <> name)
+
+    format(<<a::48, 5::4, b::12, 2::2, c::62>>)
+  end
+
+  defp to_binary(uuid), do: uuid |> String.replace("-", "") |> Base.decode16!(case: :mixed)
+
   defp next_stamp do
     counter = :persistent_term.get(@counter_key)
     last = :atomics.get(counter, 1)
