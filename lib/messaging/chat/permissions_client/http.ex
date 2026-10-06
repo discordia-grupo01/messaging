@@ -1,6 +1,8 @@
 defmodule Messaging.Chat.PermissionsClient.Http do
   @behaviour Messaging.Chat.PermissionsClient
 
+  alias Messaging.Log
+
   require Logger
 
   @impl true
@@ -24,21 +26,32 @@ defmodule Messaging.Chat.PermissionsClient.Http do
 
     case Req.get(url, opts) do
       {:ok, %Req.Response{status: 200, body: %{"permissions" => permissions}}} ->
-        {:ok, permission in permissions}
+        allowed = permission in permissions
+
+        Logger.debug("permission_checked",
+          channel_id: channel_id,
+          user_id: user_id,
+          permission: permission,
+          allowed: allowed
+        )
+
+        {:ok, allowed}
 
       {:ok, %Req.Response{status: status}} when status in [401, 403, 404] ->
         {:ok, false}
 
       {:ok, %Req.Response{status: status}} ->
-        Logger.warning(
-          "messaging: permissions_client unexpected_status status=#{status} channel_id=#{channel_id}"
+        Logger.error("permissions_client_unexpected_status",
+          status: status,
+          channel_id: channel_id
         )
 
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: permissions_client request_failed reason=#{inspect(reason)} channel_id=#{channel_id}"
+        Logger.error("permissions_client_request_failed",
+          reason: Log.reason(reason),
+          channel_id: channel_id
         )
 
         {:error, reason}

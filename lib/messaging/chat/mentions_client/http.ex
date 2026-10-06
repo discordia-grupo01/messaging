@@ -4,6 +4,7 @@ defmodule Messaging.Chat.MentionsClient.Http do
   require Logger
 
   alias Messaging.Chat.Mentions
+  alias Messaging.Log
 
   @impl true
   def resolve(server_id, channel_id, query, raw_jwt) do
@@ -30,15 +31,14 @@ defmodule Messaging.Chat.MentionsClient.Http do
         decode(response, server_id)
 
       {:ok, %Req.Response{status: status}} ->
-        Logger.warning(
-          "messaging: mentions_client unexpected_status status=#{status} server_id=#{server_id}"
-        )
+        Logger.error("mentions_client_unexpected_status", status: status, server_id: server_id)
 
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: mentions_client request_failed reason=#{inspect(reason)} server_id=#{server_id}"
+        Logger.error("mentions_client_request_failed",
+          reason: Log.reason(reason),
+          server_id: server_id
         )
 
         {:error, reason}
@@ -66,7 +66,7 @@ defmodule Messaging.Chat.MentionsClient.Http do
   end
 
   defp decode(_other, server_id) do
-    Logger.warning("messaging: mentions_client invalid_body server_id=#{server_id}")
+    Logger.error("mentions_client_invalid_body", server_id: server_id)
     {:error, :invalid_body}
   end
 

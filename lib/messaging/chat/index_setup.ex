@@ -1,6 +1,8 @@
 defmodule Messaging.Chat.IndexSetup do
   use Task, restart: :transient
 
+  alias Messaging.Log
+
   require Logger
 
   @default_retry_ms 2_000
@@ -14,15 +16,15 @@ defmodule Messaging.Chat.IndexSetup do
   defp attempt(n, retry_ms) do
     case repo().ensure_indexes() do
       :ok ->
-        Logger.info("messaging: indexes_ready attempts=#{n}")
+        Logger.info("indexes_ready", attempts: n)
 
       {:error, reason} when n < @max_attempts ->
-        Logger.warning("messaging: indexes_retry attempt=#{n} reason=#{inspect(reason)}")
+        Logger.warning("indexes_retry", attempt: n, reason: Log.reason(reason))
         Process.sleep(retry_ms)
         attempt(n + 1, retry_ms)
 
       {:error, reason} ->
-        Logger.error("messaging: indexes_failed attempts=#{n} reason=#{inspect(reason)}")
+        Logger.error("indexes_failed", attempts: n, reason: Log.reason(reason))
     end
   end
 

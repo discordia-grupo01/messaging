@@ -33,6 +33,11 @@ defmodule Messaging.Chat.IndexSetupTest do
 
     log = capture_log(fn -> assert :ok = IndexSetup.run(retry_ms: 0) end)
 
-    assert log =~ "indexes_failed attempts=30"
+    entries = log |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+    assert Enum.any?(
+             entries,
+             &match?(%{"message" => "indexes_failed", "level" => "error", "attempts" => 30}, &1)
+           )
   end
 end

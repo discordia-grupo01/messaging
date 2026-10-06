@@ -12,6 +12,7 @@ defmodule Messaging.Chat do
   }
 
   alias Messaging.Events.MentionNotifier
+  alias Messaging.Log
   alias Messaging.UUID
 
   require Logger
@@ -302,9 +303,7 @@ defmodule Messaging.Chat do
 
     with :ok <- verify_recipient(recipient_id, raw_jwt),
          :ok <- repo().ensure_conversation(doc) do
-      Logger.info(
-        "messaging: conversation_created conversation_id=#{doc["_id"]} user_id=#{sender_id}"
-      )
+      Logger.info("conversation_created", conversation_id: doc["_id"], user_id: sender_id)
 
       {:ok, ChannelCache.from_doc(doc)}
     end
@@ -324,8 +323,9 @@ defmodule Messaging.Chat do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: conversation_update_failed conversation_id=#{channel_id} reason=#{inspect(reason)}"
+        Logger.warning("conversation_update_failed",
+          conversation_id: channel_id,
+          reason: Log.reason(reason)
         )
     end
   end
@@ -388,8 +388,9 @@ defmodule Messaging.Chat do
         MentionNotifier.notify(message, new_ids)
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: mentions_insert_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        Logger.warning("mentions_insert_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
         )
 
         MentionNotifier.notify(message, recipient_ids)
@@ -405,8 +406,9 @@ defmodule Messaging.Chat do
           :ok
 
         {:error, reason} ->
-          Logger.warning(
-            "messaging: mentions_delete_failed message_id=#{after_edit.id} reason=#{inspect(reason)}"
+          Logger.warning("mentions_delete_failed",
+            message_id: after_edit.id,
+            reason: Log.reason(reason)
           )
       end
     end
@@ -440,15 +442,18 @@ defmodule Messaging.Chat do
 
     case repo().insert_message(doc) do
       {:ok, _doc} ->
-        Logger.info(
-          "messaging: message_sent channel_id=#{message.channel_id} user_id=#{user_id} message_id=#{message.id}"
+        Logger.info("message_sent",
+          channel_id: message.channel_id,
+          user_id: user_id,
+          message_id: message.id
         )
 
         {:ok, message}
 
       {:error, reason} = error ->
-        Logger.warning(
-          "messaging: message_insert_failed channel_id=#{message.channel_id} reason=#{inspect(reason)}"
+        Logger.error("message_insert_failed",
+          channel_id: message.channel_id,
+          reason: Log.reason(reason)
         )
 
         error
@@ -499,16 +504,20 @@ defmodule Messaging.Chat do
         {:error, :message_not_found}
 
       {:ok, doc} ->
-        Logger.info(
-          "messaging: message_deleted channel_id=#{message.channel_id} actor_id=#{actor_id} author_id=#{message.user_id} message_id=#{message.id}"
+        Logger.info("message_deleted",
+          channel_id: message.channel_id,
+          actor_id: actor_id,
+          author_id: message.user_id,
+          message_id: message.id
         )
 
         forget_mentions(message)
         {:ok, Message.from_doc(doc)}
 
       {:error, reason} = error ->
-        Logger.warning(
-          "messaging: message_delete_failed channel_id=#{message.channel_id} reason=#{inspect(reason)}"
+        Logger.error("message_delete_failed",
+          channel_id: message.channel_id,
+          reason: Log.reason(reason)
         )
 
         error
@@ -523,8 +532,9 @@ defmodule Messaging.Chat do
           :ok
 
         {:error, reason} ->
-          Logger.warning(
-            "messaging: mentions_delete_failed message_id=#{message.id} reason=#{inspect(reason)}"
+          Logger.warning("mentions_delete_failed",
+            message_id: message.id,
+            reason: Log.reason(reason)
           )
       end
     end
@@ -554,8 +564,10 @@ defmodule Messaging.Chat do
         {:error, :message_not_found}
 
       {:ok, doc} ->
-        Logger.info(
-          "messaging: message_edited channel_id=#{message.channel_id} user_id=#{message.user_id} message_id=#{message.id}"
+        Logger.info("message_edited",
+          channel_id: message.channel_id,
+          user_id: message.user_id,
+          message_id: message.id
         )
 
         edited = Message.from_doc(doc)
@@ -563,8 +575,9 @@ defmodule Messaging.Chat do
         {:ok, edited, :updated}
 
       {:error, reason} = error ->
-        Logger.warning(
-          "messaging: message_update_failed channel_id=#{message.channel_id} reason=#{inspect(reason)}"
+        Logger.error("message_update_failed",
+          channel_id: message.channel_id,
+          reason: Log.reason(reason)
         )
 
         error

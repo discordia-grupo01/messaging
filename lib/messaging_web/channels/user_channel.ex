@@ -5,6 +5,7 @@ defmodule MessagingWeb.UserChannel do
   alias Messaging.Chat
   alias Messaging.Chat.{ChannelCache, Message}
   alias Messaging.Events.Broadcaster
+  alias Messaging.Log
   alias MessagingWeb.ApiError
 
   @impl true
@@ -64,8 +65,10 @@ defmodule MessagingWeb.UserChannel do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: dm_broadcast_failed event=#{event} message_id=#{message_id} reason=#{inspect(reason)}"
+        Logger.warning("dm_broadcast_failed",
+          broadcast_event: event,
+          message_id: message_id,
+          reason: Log.reason(reason)
         )
     end
   end

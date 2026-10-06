@@ -5,6 +5,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   alias Messaging.Chat
   alias Messaging.Chat.ChannelCache
   alias Messaging.Events.{Audit, Backoff, ChannelEvent}
+  alias Messaging.Log
 
   @exchange "discordia.events"
   @default_queue "messaging.channel_lifecycle"
@@ -31,12 +32,13 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
     case connect(state.url, state.queue) do
       {:ok, conn, chan} ->
         Process.monitor(conn.pid)
-        Logger.info("messaging: channel_lifecycle_consumer connected queue=#{state.queue}")
+        Logger.info("channel_lifecycle_consumer_connected", queue: state.queue)
         {:noreply, %{state | conn: conn, chan: chan, backoff: Backoff.initial()}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: channel_lifecycle_consumer connect_failed reason=#{inspect(reason)} retry_in_ms=#{state.backoff}"
+        Logger.warning("channel_lifecycle_consumer_connect_failed",
+          reason: Log.reason(reason),
+          retry_in_ms: state.backoff
         )
 
         Process.send_after(self(), :connect, state.backoff)
@@ -46,9 +48,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
-    Logger.warning(
-      "messaging: channel_lifecycle_consumer connection_down reason=#{inspect(reason)}"
-    )
+    Logger.warning("channel_lifecycle_consumer_connection_down", reason: Log.reason(reason))
 
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
@@ -105,8 +105,9 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
         })
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: channel_lifecycle_consumer bad_message reason=#{inspect(reason)} routing_key=#{meta.routing_key}"
+        Logger.warning("channel_lifecycle_consumer_bad_message",
+          reason: Log.reason(reason),
+          routing_key: meta.routing_key
         )
 
         Audit.record(%{
@@ -120,8 +121,9 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   end
 
   defp handle_malformed(payload, meta, reason) do
-    Logger.warning(
-      "messaging: channel_lifecycle_consumer bad_message reason=#{inspect(reason)} routing_key=#{meta.routing_key}"
+    Logger.warning("channel_lifecycle_consumer_bad_message",
+      reason: Log.reason(reason),
+      routing_key: meta.routing_key
     )
 
     Audit.record(%{
@@ -145,28 +147,27 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
         kind: event.kind
       })
 
-    Logger.info("messaging: channel_created_applied channel_id=#{event.channel_id}")
+    Logger.info("channel_created_applied", channel_id: event.channel_id)
   end
 
   defp apply_event(%ChannelEvent.ChannelDeleted{} = event) do
     :ok = Chat.delete_channel(event.channel_id)
-    Logger.info("messaging: channel_deleted_applied channel_id=#{event.channel_id}")
+    Logger.info("channel_deleted_applied", channel_id: event.channel_id)
   end
 
   defp apply_event(%ChannelEvent.ServerDeleted{} = event) do
     :ok = Chat.delete_server_data(event.server_id, event.channel_ids)
 
-    Logger.info(
-      "messaging: server_deleted_applied server_id=#{event.server_id} channels=#{length(event.channel_ids)}"
+    Logger.info("server_deleted_applied",
+      server_id: event.server_id,
+      channels: length(event.channel_ids)
     )
   end
 
   defp apply_event(%ChannelEvent.MemberLeft{} = event) do
     :ok = Chat.delete_member_mentions(event.server_id, event.user_id)
 
-    Logger.info(
-      "messaging: member_left_applied server_id=#{event.server_id} user_id=#{event.user_id}"
-    )
+    Logger.info("member_left_applied", server_id: event.server_id, user_id: event.user_id)
   end
 
   defp connect(url, queue) do

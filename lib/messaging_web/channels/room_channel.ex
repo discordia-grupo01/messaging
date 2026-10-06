@@ -5,6 +5,7 @@ defmodule MessagingWeb.RoomChannel do
   alias Messaging.Chat
   alias Messaging.Chat.Message
   alias Messaging.Events.Broadcaster
+  alias Messaging.Log
   alias MessagingWeb.ApiError
 
   @dialyzer {:nowarn_function, handle_info: 2}
@@ -21,7 +22,6 @@ defmodule MessagingWeb.RoomChannel do
          {:ok, true} <- Chat.can_view_channel?(channel, user_id, raw_jwt) do
       socket = assign(socket, channel_id: channel_id)
       send(self(), {:after_join, last_message_id, changes_since})
-      Logger.info("messaging: channel_joined channel_id=#{channel_id} user_id=#{user_id}")
       {:ok, %{"server_time" => Chat.server_time()}, socket}
     else
       {:ok, false} ->
@@ -39,8 +39,9 @@ defmodule MessagingWeb.RoomChannel do
       {:noreply, socket}
     else
       {:error, reason} ->
-        Logger.warning(
-          "messaging: catch_up_failed channel_id=#{socket.assigns.channel_id} reason=#{inspect(reason)}"
+        Logger.error("catch_up_failed",
+          channel_id: socket.assigns.channel_id,
+          reason: Log.reason(reason)
         )
 
         {:stop, :catch_up_failed, socket}
@@ -117,8 +118,9 @@ defmodule MessagingWeb.RoomChannel do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: message_updated_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        Logger.warning("message_updated_broadcast_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
         )
     end
   end
@@ -129,8 +131,9 @@ defmodule MessagingWeb.RoomChannel do
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: message_deleted_broadcast_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        Logger.warning("message_deleted_broadcast_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
         )
     end
   end
