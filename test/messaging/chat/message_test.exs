@@ -95,4 +95,20 @@ defmodule Messaging.Chat.MessageTest do
       assert decoded == Message.to_api(message)
     end
   end
+
+  describe "direct messages" do
+    test "to_api/1 exposes a null server_id" do
+      doc = %{
+        "_id" => "msg-1",
+        "channel_id" => "dm-1",
+        "server_id" => nil,
+        "user_id" => "user-1",
+        "content" => "hola",
+        "inserted_at" => ~U[2026-09-28 12:00:00Z]
+      }
+
+      assert %{"server_id" => nil, "channel_id" => "dm-1"} =
+               doc |> Message.from_doc() |> Message.to_api()
+    end
+  end
 end

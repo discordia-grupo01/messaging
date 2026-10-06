@@ -96,6 +96,73 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def get_messages(ids) do
+    filter = live(%{"_id" => %{"$in" => ids}})
+
+    case Mongo.find(@conn, @messages, filter) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def ensure_conversation(%{"_id" => id} = doc) do
+    update = %{"$setOnInsert" => Map.delete(doc, "_id")}
+
+    case Mongo.update_one(@conn, @channels, %{"_id" => id}, update, upsert: true) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def record_last_message(channel_id, message_id, user_id, at) do
+    filter = %{
+      "_id" => channel_id,
+      "kind" => "dm",
+      "$or" => [%{"last_message_at" => nil}, %{"last_message_at" => %{"$lte" => at}}]
+    }
+
+    update = %{
+      "$set" => %{
+        "last_message_id" => message_id,
+        "last_message_user_id" => user_id,
+        "last_message_at" => at
+      }
+    }
+
+    case Mongo.update_one(@conn, @channels, filter, update) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def list_conversations(user_id, limit) do
+    filter = %{"kind" => "dm", "participants" => user_id, "last_message_at" => %{"$ne" => nil}}
+
+    case Mongo.find(@conn, @channels, filter, sort: [last_message_at: -1], limit: limit) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def mark_read(channel_id, user_id, at) do
+    filter = %{"_id" => channel_id, "kind" => "dm", "participants" => user_id}
+    update = %{"$max" => %{"last_read_at.#{user_id}" => at}}
+
+    case Mongo.update_one(@conn, @channels, filter, update) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
   def get_channel(channel_id), do: Mongo.find_one(@conn, @channels, %{"_id" => channel_id})
 
   @impl true
@@ -155,6 +222,16 @@ defmodule Messaging.Chat.Repo.Mongo do
       ]
     ]
 
-    Mongo.create_indexes(@conn, @messages, indexes)
+    channel_indexes = [
+      [
+        name: "dm_participants_last_message_at",
+        key: [participants: 1, last_message_at: -1],
+        partialFilterExpression: %{"kind" => "dm"}
+      ]
+    ]
+
+    with :ok <- Mongo.create_indexes(@conn, @messages, indexes) do
+      Mongo.create_indexes(@conn, @channels, channel_indexes)
+    end
   end
 end
