@@ -2,8 +2,56 @@
 components:
   responses: {}
   schemas:
+    BlockList:
+      properties:
+        blocks:
+          items:
+            properties:
+              created_at:
+                format: date-time
+                type: string
+                x-struct:
+                x-validate:
+              user_id:
+                description: El usuario que bloqueaste
+                type: string
+                x-struct:
+                x-validate:
+            required:
+              - user_id
+              - created_at
+            type: object
+            x-struct:
+            x-validate:
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - blocks
+      title: BlockList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.BlockList
+      x-validate:
+    BlockRequest:
+      properties:
+        user_id:
+          description: Id del usuario a bloquear
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - user_id
+      title: BlockRequest
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.BlockRequest
+      x-validate:
     Conversation:
       properties:
+        blocked_by_me:
+          description: true si bloqueaste al otro participante (nunca se informa lo contrario)
+          type: boolean
+          x-struct:
+          x-validate:
         id:
           description: Id de la conversación (un canal)
           format: uuid
@@ -37,6 +85,7 @@ components:
         - id
         - partner_id
         - unread
+        - blocked_by_me
       title: Conversation
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.Conversation
@@ -242,6 +291,116 @@ paths:
       summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo)
       tags:
         - ops
+  /v1/blocks:
+    get:
+      callbacks: {}
+      description: Solo ves a quién bloqueaste vos, la más reciente primero. Nunca se informa quién te bloqueó a vos.
+      operationId: MessagingWeb.BlockController.index
+      parameters:
+        - description: Cantidad máxima (default 50, máx 100)
+          in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockList'
+          description: Usuarios bloqueados
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+      summary: Usuarios que bloqueé
+      tags:
+        - blocks
+    post:
+      callbacks: {}
+      description: 'Desde ese momento ninguno de los dos puede enviarle mensajes directos al otro, ni editar ni borrar los que ya envió: la persona bloqueada recibe `DM_NOT_DELIVERED` sin saber por qué, y quien bloqueó recibe `USER_BLOCKED`. El historial de la conversación se conserva para los dos. Es idempotente: bloquear a alguien ya bloqueado también responde 204. Se verifica que el usuario exista.'
+      operationId: MessagingWeb.BlockController.create
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockRequest'
+        description: Usuario a bloquear
+        required: false
+      responses:
+        '204':
+          description: Usuario bloqueado
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Intentó bloquearse a sí mismo, o el cuerpo está mal formado
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El usuario no existe
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo verificar al usuario
+      summary: Bloquear a un usuario
+      tags:
+        - blocks
+  /v1/blocks/{user_id}:
+    delete:
+      callbacks: {}
+      description: 'Esa persona vuelve a poder enviarle mensajes directos a quien la bloqueó (y al revés). Es idempotente: desbloquear a alguien que no estaba bloqueado también responde 204.'
+      operationId: MessagingWeb.BlockController.delete
+      parameters:
+        - description: Id del usuario a desbloquear
+          in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '204':
+          description: Usuario desbloqueado
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Intentó desbloquearse a sí mismo
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El id no es válido
+      summary: Desbloquear a un usuario
+      tags:
+        - blocks
   /v1/channels/{channel_id}/messages:
     get:
       callbacks: {}

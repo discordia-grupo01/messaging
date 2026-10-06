@@ -12,6 +12,10 @@ defmodule Messaging.Chat.Access.Server do
     do: client().can_send_messages?(server_id, user_id, raw_jwt)
 
   @impl true
+  def can_delete?(%ChannelCache{} = channel, user_id, raw_jwt),
+    do: can_view?(channel, user_id, raw_jwt)
+
+  @impl true
   def can_moderate?(%ChannelCache{server_id: server_id}, user_id, raw_jwt),
     do: client().can_manage_messages?(server_id, user_id, raw_jwt)
 
