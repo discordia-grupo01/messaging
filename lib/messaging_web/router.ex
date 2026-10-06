@@ -22,6 +22,8 @@ defmodule MessagingWeb.Router do
     get "/channels/:channel_id/messages", MessageController, :index
     patch "/channels/:channel_id/messages/:message_id", MessageController, :update
     delete "/channels/:channel_id/messages/:message_id", MessageController, :delete
+    get "/conversations", ConversationController, :index
+    post "/conversations/:id/read", ConversationController, :read
     post "/socket-tickets", SocketTicketController, :create
   end
 end

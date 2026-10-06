@@ -18,7 +18,7 @@ defmodule Messaging.Events.BroadcastPublisherUnitTest do
 
     assert {:reply, {:error, :not_connected}, ^state} =
              BroadcastPublisher.handle_call(
-               {:publish, "new_message", %{"channel_id" => "c1"}},
+               {:publish, "channel:c1", "new_message", %{"channel_id" => "c1"}},
                {self(), make_ref()},
                state
              )

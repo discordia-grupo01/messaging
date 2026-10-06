@@ -5,6 +5,7 @@ if mongo_url do
     use ExUnit.Case, async: false
 
     alias Messaging.Chat
+    alias Messaging.Chat.Conversation
     alias Messaging.Chat.Repo.Mongo, as: Repo
 
     setup do
@@ -269,6 +270,11 @@ if mongo_url do
         Mongo.command(Messaging.Mongo, listIndexes: "messages")
 
       assert Enum.any?(indexes, &(&1["name"] == "messages_channel_inserted_at_id"))
+
+      {:ok, %{"cursor" => %{"firstBatch" => channel_indexes}}} =
+        Mongo.command(Messaging.Mongo, listIndexes: "channels")
+
+      assert Enum.any?(channel_indexes, &(&1["name"] == "dm_participants_last_message_at"))
     end
 
     defp edit(doc, channel_id, at) do
@@ -428,6 +434,177 @@ if mongo_url do
                Chat.list_changes(channel_id, ~U[2026-09-28 13:00:05.000Z])
 
       assert deleted_id == doc["_id"]
+    end
+
+    defp dm_doc(user_a, user_b) do
+      Conversation.new_doc(user_a, user_b, ~U[2026-10-05 09:00:00.000Z])
+    end
+
+    defp dm_users do
+      suffix = Messaging.UUID.generate()
+      {"a-" <> suffix, "b-" <> suffix}
+    end
+
+    test "ensure_conversation/1 is idempotent and never overwrites what the conversation already has" do
+      {a, b} = dm_users()
+      doc = dm_doc(a, b)
+
+      assert :ok = Repo.ensure_conversation(doc)
+      assert :ok = Repo.record_last_message(doc["_id"], "m-1", a, ~U[2026-10-05 10:00:00.000Z])
+      assert :ok = Repo.ensure_conversation(doc)
+
+      stored = Repo.get_channel(doc["_id"])
+      assert stored["kind"] == "dm"
+      assert stored["participants"] == Enum.sort([a, b])
+      assert stored["last_message_id"] == "m-1"
+    end
+
+    test "many first messages at once create exactly one conversation" do
+      {a, b} = dm_users()
+      doc = dm_doc(a, b)
+
+      1..20
+      |> Task.async_stream(fn _ -> Repo.ensure_conversation(doc) end, max_concurrency: 20)
+      |> Enum.each(fn {:ok, result} -> assert result == :ok end)
+
+      {:ok, found} = Repo.list_conversations(a, 10)
+      assert found == []
+
+      :ok = Repo.record_last_message(doc["_id"], "m-1", a, ~U[2026-10-05 10:00:00.000Z])
+      assert {:ok, [%{"_id" => id}]} = Repo.list_conversations(a, 10)
+      assert id == doc["_id"]
+    end
+
+    test "record_last_message/4 keeps the newest, whatever order the writes finish in" do
+      {a, b} = dm_users()
+      doc = dm_doc(a, b)
+      :ok = Repo.ensure_conversation(doc)
+
+      :ok = Repo.record_last_message(doc["_id"], "m-2", b, ~U[2026-10-05 10:00:02.000Z])
+      :ok = Repo.record_last_message(doc["_id"], "m-1", a, ~U[2026-10-05 10:00:01.000Z])
+
+      stored = Repo.get_channel(doc["_id"])
+      assert stored["last_message_id"] == "m-2"
+      assert stored["last_message_user_id"] == b
+      assert stored["last_message_at"] == ~U[2026-10-05 10:00:02.000Z]
+    end
+
+    test "record_last_message/4 does nothing for something that is not a direct conversation",
+         %{channel_id: channel_id} do
+      :ok =
+        Repo.upsert_channel(%{
+          "_id" => channel_id,
+          "server_id" => "s",
+          "name" => "n",
+          "kind" => "text"
+        })
+
+      assert :ok = Repo.record_last_message(channel_id, "m-1", "u", ~U[2026-10-05 10:00:00.000Z])
+      refute Map.has_key?(Repo.get_channel(channel_id), "last_message_id")
+    end
+
+    test "list_conversations/2 returns only my conversations with messages, newest first" do
+      {a, b} = dm_users()
+      c = "c-" <> Messaging.UUID.generate()
+      with_b = dm_doc(a, b)
+      with_c = dm_doc(a, c)
+      empty = dm_doc(a, "d-" <> Messaging.UUID.generate())
+      other_people = dm_doc(b, c)
+
+      for doc <- [with_b, with_c, empty, other_people], do: :ok = Repo.ensure_conversation(doc)
+      :ok = Repo.record_last_message(with_b["_id"], "m-b", b, ~U[2026-10-05 10:00:00.000Z])
+      :ok = Repo.record_last_message(with_c["_id"], "m-c", c, ~U[2026-10-05 11:00:00.000Z])
+      :ok = Repo.record_last_message(other_people["_id"], "m-x", c, ~U[2026-10-05 12:00:00.000Z])
+
+      assert {:ok, docs} = Repo.list_conversations(a, 10)
+      assert Enum.map(docs, & &1["_id"]) == [with_c["_id"], with_b["_id"]]
+
+      assert {:ok, [only]} = Repo.list_conversations(a, 1)
+      assert only["_id"] == with_c["_id"]
+    end
+
+    test "list_conversations/2 never mixes in server channels" do
+      {a, _b} = dm_users()
+
+      assert {:ok, []} = Repo.list_conversations(a, 10)
+    end
+
+    test "mark_read/3 only moves forward, never back" do
+      {a, b} = dm_users()
+      doc = dm_doc(a, b)
+      :ok = Repo.ensure_conversation(doc)
+
+      :ok = Repo.mark_read(doc["_id"], b, ~U[2026-10-05 10:00:05.000Z])
+      :ok = Repo.mark_read(doc["_id"], b, ~U[2026-10-05 10:00:01.000Z])
+
+      assert %{"last_read_at" => %{^b => read}} = Repo.get_channel(doc["_id"])
+      assert read == ~U[2026-10-05 10:00:05.000Z]
+    end
+
+    test "mark_read/3 does nothing for someone who is not a participant" do
+      {a, b} = dm_users()
+      doc = dm_doc(a, b)
+      :ok = Repo.ensure_conversation(doc)
+
+      assert :ok = Repo.mark_read(doc["_id"], "intruder", ~U[2026-10-05 10:00:00.000Z])
+      refute Map.has_key?(Repo.get_channel(doc["_id"]), "last_read_at")
+    end
+
+    test "get_messages/1 returns live messages by id and skips deleted ones",
+         %{channel_id: channel_id} do
+      kept = one_message(channel_id, "user-a")
+      gone = one_message(channel_id, "user-a")
+      {:ok, _} = Repo.delete_message(gone["_id"], channel_id, ~U[2026-10-05 10:00:00.000Z])
+
+      assert {:ok, [found]} = Repo.get_messages([kept["_id"], gone["_id"], "ghost"])
+      assert found["_id"] == kept["_id"]
+    end
+
+    test "the whole flow: first message, unread for the recipient, read, unread again" do
+      {a, b} = dm_users()
+      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+
+      assert {:ok, channel, first} =
+               Chat.send_direct_message(%{
+                 sender_id: a,
+                 recipient_id: b,
+                 content: "hola",
+                 raw_jwt: "jwt"
+               })
+
+      assert {:ok, [%{unread: unread_for_b}]} = list_for(b)
+      assert unread_for_b
+      assert {:ok, [%{unread: false}]} = list_for(a)
+
+      assert :ok = Chat.mark_read(channel.channel_id, b)
+      assert {:ok, [%{unread: false}]} = list_for(b)
+
+      Process.sleep(5)
+
+      assert {:ok, _channel, _second} =
+               Chat.send_direct_message(%{
+                 sender_id: a,
+                 recipient_id: b,
+                 content: "otra",
+                 raw_jwt: "jwt"
+               })
+
+      assert {:ok, [%{unread: true, last_message: %{content: "otra"}}]} = list_for(b)
+      assert first.id != nil
+      assert {:ok, history, nil} = Chat.list_messages(channel.channel_id)
+      assert Enum.map(history, & &1.content) == ["hola", "otra"]
+    end
+
+    defp list_for(user_id) do
+      with {:ok, conversations} <- Chat.list_conversations(user_id) do
+        {:ok,
+         Enum.map(conversations, fn c ->
+           %{
+             unread: Conversation.unread?(c, user_id),
+             last_message: c.last_message
+           }
+         end)}
+      end
     end
 
     test "ensure_indexes/0 creates a partial index so unedited messages are not indexed" do

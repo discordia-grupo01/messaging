@@ -1,10 +1,3 @@
-defmodule Messaging.FailingBroadcaster do
-  @behaviour Messaging.Events.Broadcaster
-
-  @impl true
-  def publish(_event, _payload), do: {:error, :not_connected}
-end
-
 defmodule MessagingWeb.RoomChannelTest do
   use MessagingWeb.ChannelCase
   import Mox

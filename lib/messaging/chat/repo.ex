@@ -17,6 +17,18 @@ defmodule Messaging.Chat.Repo do
   @callback get_message(id :: String.t()) :: map() | nil | {:error, term()}
   @callback list_changes(channel_id :: String.t(), since :: DateTime.t(), limit :: pos_integer()) ::
               {:ok, [map()]} | {:error, term()}
+  @callback get_messages(ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}
+  @callback ensure_conversation(doc :: map()) :: :ok | {:error, term()}
+  @callback record_last_message(
+              channel_id :: String.t(),
+              message_id :: String.t(),
+              user_id :: String.t(),
+              at :: DateTime.t()
+            ) :: :ok | {:error, term()}
+  @callback list_conversations(user_id :: String.t(), limit :: pos_integer()) ::
+              {:ok, [map()]} | {:error, term()}
+  @callback mark_read(channel_id :: String.t(), user_id :: String.t(), at :: DateTime.t()) ::
+              :ok | {:error, term()}
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}

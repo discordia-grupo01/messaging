@@ -67,8 +67,15 @@ dominio para otros servicios.
     mensaje propio (ver [Editar mensajes](#editar-mensajes)).
   - `handle_in("delete_message", %{"id" => "<id>"})` -- elimina un mensaje propio, o
     ajeno con `MANAGE_MESSAGES` (ver [Eliminar mensajes](#eliminar-mensajes)).
+  - `handle_in("delete_message", ...)` y `handle_in("edit_message", ...)` valen también en una
+    conversación directa (ver [Mensajes directos](#mensajes-directos-dm)).
   - `handle_in("new_message", %{"content" => "..."})` -- requiere
     `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+- WS `/socket`, channel `"user:" <> user_id` (`MessagingWeb.UserChannel`, solo el propio usuario):
+  - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
+    (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
+- `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
+  [Mensajes directos](#mensajes-directos-dm).
 - `PATCH /v1/channels/:channel_id/messages/:message_id` con `{"content": "..."}` --
   edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
 - `DELETE /v1/channels/:channel_id/messages/:message_id` -- elimina un mensaje (ver
@@ -211,6 +218,73 @@ entradas usan la misma función de dominio (`Messaging.Chat.delete_message/1`).
   después de ese plazo no se enteraría de los borrados viejos (habría que pedirle recargar
   el historial).
 
+## Mensajes directos (DM)
+Una conversación directa es un **canal sin servidor** (`kind: "dm"`) que `messaging` crea y guarda
+él mismo en su colección `channels`; **no** nace de ningún evento de `servers`. Por eso el historial,
+la paginación, editar, borrar y el feed de cambios son los mismos que en un canal de servidor.
+Lo único que cambia es quién puede hacer qué (ver más abajo).
+
+**Enviar.** Por el socket, en la sala personal `user:<tu id>` (cada usuario se une solo a la suya;
+otra sala devuelve `FORBIDDEN`):
+
+```
+push "send_dm" {"to": "<id del destinatario>", "content": "hola"}
+reply ok {"conversation_id": "...", "message": {...}}
+```
+
+- **Se crea al primer mensaje.** No existe ningún endpoint para "abrir" una conversación: mientras
+  nadie escriba, no hay nada guardado. La primera vez se valida que el destinatario exista
+  (`GET /v1/users/{id}` de `identify-service`, con el JWT de quien envía; `404 RECIPIENT_NOT_FOUND` si
+  no existe) y se crea la conversación; los mensajes siguientes ya no consultan a `identify-service`.
+  Si `identify-service` no responde: `503 USERS_UNAVAILABLE`.
+- **Un solo canal entre dos personas.** El id de la conversación es un UUID v5 del par de usuarios
+  ordenado, así que da lo mismo quién escribe primero y dos primeros mensajes simultáneos caen en el
+  mismo documento (el alta es un upsert con `$setOnInsert`).
+- **Reglas del mensaje.** Mismas que al enviar a un canal (se recorta, no vacío, máx. 2000). No se
+  puede enviar a uno mismo (`400 CANNOT_MESSAGE_SELF`). El id del destinatario solo admite
+  `[A-Za-z0-9_-]` (hasta 64): lo demás da `RECIPIENT_NOT_FOUND` sin llegar a ningún servicio.
+- **`new_message` en una conversación se rechaza** (`CHANNEL_NOT_TEXT`): los DM se envían siempre
+  con `send_dm`, para que no haya dos puertas.
+
+**Recibir en tiempo real.** Cada envío emite:
+- `new_dm` a la sala personal de **los dos** participantes, con
+  `{"conversation_id", "partner_id", "message": {...}}` (`partner_id` es el *otro* participante
+  para cada destinatario, igual que en `GET /v1/conversations`). Es lo que permite que un DM
+  **nuevo** le aparezca a quien lo recibe sin recargar ni tener nada abierto: todavía no existía la
+  sala de esa conversación, así que no habría dónde avisarle. Al emisor le sirve para sus otras
+  pestañas.
+- `new_message` a la sala `channel:<conversation_id>` (para quien tiene la conversación abierta, igual
+  que en un canal). Un cliente unido a las dos salas recibe el mismo mensaje dos veces: se
+  deduplica por `message.id`.
+
+**Pendiente de lectura.** Si el destinatario no está conectado el mensaje queda guardado, y al volver
+lo ve como no leído. La conversación guarda el último mensaje (`last_message_at`,
+`last_message_user_id`) y, por participante, hasta dónde leyó (`last_read_at`). Está sin leer para
+alguien si el último mensaje es del otro y es posterior a lo que ya leyó. El emisor nunca tiene su
+propia conversación sin leer.
+
+**REST.**
+- `GET /v1/conversations?limit=` -- mis conversaciones (solo las que tienen al menos un mensaje), la
+  más reciente primero (default 50, máx. 100; todavía sin paginación). Cada una trae `id`,
+  `partner_id`, `unread`, `last_message_at` y `last_message` (`null` si ese mensaje se eliminó).
+  Solo ids: ningún dato del perfil del otro usuario (nombre, foto, email), que se pide a
+  `identify-service`.
+- `POST /v1/conversations/:id/read` -- marca como leído hasta el último mensaje que hoy tiene la
+  conversación (`204`). Un mensaje que llegue después sigue sin leer.
+- `GET /v1/channels/:id/messages` -- historial de la conversación (con el `id` de la conversación).
+
+**Autorización.** Se elige según el `kind` del canal (`Messaging.Chat.Access`): `Server` (consulta
+a `servers`) o `Direct`. En un DM puede ver y escribir quien participa, y **nadie modera**: editar y
+borrar son solo del autor (`NOT_MESSAGE_AUTHOR` / `MESSAGE_DELETE_DENIED`). Alguien que no
+participa recibe `404 CHANNEL_NOT_FOUND`, **igual que si la conversación no existiera**: como el id es
+derivable de dos ids de usuario, un `403` revelaría que esas dos personas hablaron. Los mensajes de
+un DM llevan `server_id: null`.
+
+**Qué falta.** El bloqueo (CA3 de "Enviar mensaje directo") es su propia historia: hasta que exista,
+un DM se puede enviar siempre. Si falla solo la actualización del último mensaje de la conversación
+(la escritura que la ordena y la marca como no leída), el mensaje igual se entrega y se loguea un
+warning; el estado "no leído" se corrige con el siguiente mensaje.
+
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
 `Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los
@@ -273,6 +347,10 @@ mix deps.get
 docker compose up -d mongo rabbitmq
 mix phx.server
 ```
+
+`IDENTIFY_BASE_URL` (default `http://localhost:8081`) apunta a `identify-service`: se usa solo
+para validar que el destinatario de un DM exista, la primera vez que se le escribe. En producción
+es obligatoria (como `SERVERS_BASE_URL`): sin ella la app no arranca.
 
 En ambos casos, `SERVERS_BASE_URL` (`.env`) tiene que apuntar a una instancia
 de `servers` corriendo (para el chequeo de permisos) -- por default asume

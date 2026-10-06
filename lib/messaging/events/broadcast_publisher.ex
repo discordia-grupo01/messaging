@@ -11,7 +11,8 @@ defmodule Messaging.Events.BroadcastPublisher do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl Messaging.Events.Broadcaster
-  def publish(event, payload), do: GenServer.call(__MODULE__, {:publish, event, payload})
+  def publish(topic, event, payload),
+    do: GenServer.call(__MODULE__, {:publish, topic, event, payload})
 
   @impl GenServer
   def init(opts) do
@@ -22,12 +23,12 @@ defmodule Messaging.Events.BroadcastPublisher do
   end
 
   @impl GenServer
-  def handle_call({:publish, _event, _payload}, _from, %{chan: nil} = state) do
+  def handle_call({:publish, _topic, _event, _payload}, _from, %{chan: nil} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:publish, event, payload}, _from, state) do
-    body = Jason.encode!(%{"event" => event, "payload" => payload})
+  def handle_call({:publish, topic, event, payload}, _from, state) do
+    body = Jason.encode!(%{"topic" => topic, "event" => event, "payload" => payload})
     result = AMQP.Basic.publish(state.chan, @exchange, "", body, persistent: true)
 
     {:reply, result, state}
