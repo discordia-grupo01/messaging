@@ -2,6 +2,59 @@
 components:
   responses: {}
   schemas:
+    Conversation:
+      properties:
+        id:
+          description: Id de la conversación (un canal)
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        last_message:
+          allOf:
+            - $ref: '#/components/schemas/Message'
+          description: null si el último mensaje fue eliminado
+          nullable: true
+          x-struct:
+          x-validate:
+        last_message_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-struct:
+          x-validate:
+        partner_id:
+          description: El otro participante
+          type: string
+          x-struct:
+          x-validate:
+        unread:
+          description: true si el último mensaje es del otro y todavía no lo marcaste como leído
+          type: boolean
+          x-struct:
+          x-validate:
+      required:
+        - id
+        - partner_id
+        - unread
+      title: Conversation
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.Conversation
+      x-validate:
+    ConversationList:
+      properties:
+        conversations:
+          items:
+            $ref: '#/components/schemas/Conversation'
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - conversations
+      title: ConversationList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.ConversationList
+      x-validate:
     EditMessageRequest:
       properties:
         content:
@@ -79,7 +132,9 @@ components:
           x-struct:
           x-validate:
         server_id:
+          description: null en los mensajes directos (no pertenecen a ningún servidor)
           format: uuid
+          nullable: true
           type: string
           x-struct:
           x-validate:
@@ -367,6 +422,68 @@ paths:
       summary: Editar un mensaje propio
       tags:
         - messages
+  /v1/conversations:
+    get:
+      callbacks: {}
+      description: Solo aparecen las conversaciones que ya tienen al menos un mensaje, la más reciente primero. `unread` es `true` si el último mensaje es del otro participante y todavía no lo marcaste como leído. `last_message` es `null` si ese mensaje fue eliminado. Para ver el historial de una conversación se usa `GET /v1/channels/{id}/messages` con el `id` de la conversación.
+      operationId: MessagingWeb.ConversationController.index
+      parameters:
+        - description: Cantidad máxima (default 50, máx 100)
+          in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationList'
+          description: Conversaciones del usuario
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+      summary: Mis conversaciones directas
+      tags:
+        - conversations
+  /v1/conversations/{id}/read:
+    post:
+      callbacks: {}
+      description: Marca como leído todo hasta el último mensaje que hoy tiene la conversación. Un mensaje que llegue después sigue sin leer. Si no existe o no sos participante, 404.
+      operationId: MessagingWeb.ConversationController.read
+      parameters:
+        - description: Id de la conversación
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '204':
+          description: Conversación marcada como leída
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: La conversación no existe o el usuario no participa
+      summary: Marcar una conversación como leída
+      tags:
+        - conversations
   /v1/socket-tickets:
     post:
       callbacks: {}

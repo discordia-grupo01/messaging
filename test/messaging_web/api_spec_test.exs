@@ -9,6 +9,8 @@ defmodule MessagingWeb.ApiSpecTest do
     assert Map.has_key?(spec.paths, "/readyz")
     assert Map.has_key?(spec.paths, "/v1/channels/{channel_id}/messages")
     assert Map.has_key?(spec.paths, "/v1/socket-tickets")
+    assert %{get: %OpenApiSpex.Operation{}} = spec.paths["/v1/conversations"]
+    assert %{post: %OpenApiSpex.Operation{}} = spec.paths["/v1/conversations/{id}/read"]
 
     assert %{patch: %OpenApiSpex.Operation{}, delete: %OpenApiSpex.Operation{}} =
              spec.paths["/v1/channels/{channel_id}/messages/{message_id}"]

@@ -10,7 +10,12 @@ defmodule MessagingWeb.Schemas do
       properties: %{
         id: %Schema{type: :string, format: :uuid},
         channel_id: %Schema{type: :string, format: :uuid},
-        server_id: %Schema{type: :string, format: :uuid},
+        server_id: %Schema{
+          type: :string,
+          format: :uuid,
+          nullable: true,
+          description: "null en los mensajes directos (no pertenecen a ningún servidor)"
+        },
         user_id: %Schema{type: :string},
         content: %Schema{type: :string},
         inserted_at: %Schema{
@@ -46,6 +51,41 @@ defmodule MessagingWeb.Schemas do
         }
       },
       required: [:content]
+    })
+  end
+
+  defmodule Conversation do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "Conversation",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid, description: "Id de la conversación (un canal)"},
+        partner_id: %Schema{type: :string, description: "El otro participante"},
+        unread: %Schema{
+          type: :boolean,
+          description: "true si el último mensaje es del otro y todavía no lo marcaste como leído"
+        },
+        last_message_at: %Schema{type: :string, format: :"date-time", nullable: true},
+        last_message: %Schema{
+          allOf: [Message],
+          nullable: true,
+          description: "null si el último mensaje fue eliminado"
+        }
+      },
+      required: [:id, :partner_id, :unread]
+    })
+  end
+
+  defmodule ConversationList do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "ConversationList",
+      type: :object,
+      properties: %{conversations: %Schema{type: :array, items: Conversation}},
+      required: [:conversations]
     })
   end
 
