@@ -21,5 +21,10 @@ defmodule MessagingWeb.ApiSpecTest do
 
     assert %{patch: %OpenApiSpex.Operation{}, delete: %OpenApiSpex.Operation{}} =
              spec.paths["/v1/channels/{channel_id}/messages/{message_id}"]
+
+    assert %{get: %OpenApiSpex.Operation{}} = spec.paths["/v1/mentions"]
+
+    assert %{post: %OpenApiSpex.Operation{}} =
+             spec.paths["/v1/channels/{channel_id}/mentions/read"]
   end
 end
