@@ -10,6 +10,9 @@ defmodule MessagingWeb.ApiError do
           | :message_not_found
           | :not_message_author
           | :message_delete_denied
+          | :cannot_message_self
+          | :recipient_not_found
+          | :users_unavailable
           | :invalid_payload
 
   @spec describe(reason()) :: {String.t(), String.t()}
@@ -43,6 +46,16 @@ defmodule MessagingWeb.ApiError do
       {"MESSAGE_DELETE_DENIED",
        "Solo el autor del mensaje o un miembro con permiso de gestión de mensajes puede eliminarlo."}
 
+  def describe(:cannot_message_self),
+    do: {"CANNOT_MESSAGE_SELF", "No podés enviarte mensajes directos a vos mismo."}
+
+  def describe(:recipient_not_found), do: {"RECIPIENT_NOT_FOUND", "El destinatario no existe."}
+
+  def describe(:users_unavailable),
+    do:
+      {"USERS_UNAVAILABLE",
+       "No se pudo verificar al destinatario, intentá de nuevo en un momento."}
+
   def describe(:invalid_payload),
     do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
 
@@ -58,6 +71,8 @@ defmodule MessagingWeb.ApiError do
   def http_status(:message_delete_denied), do: 403
   def http_status(:message_not_found), do: 404
   def http_status(:channel_not_found), do: 404
+  def http_status(:recipient_not_found), do: 404
+  def http_status(:users_unavailable), do: 503
   def http_status(:ticket_unavailable), do: 503
   def http_status(_other), do: 400
 end

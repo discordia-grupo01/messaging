@@ -21,6 +21,9 @@ defmodule MessagingWeb.ApiErrorTest do
     assert ApiError.http_status(:ticket_unavailable) == 503
     assert ApiError.http_status(:not_message_author) == 403
     assert ApiError.http_status(:message_delete_denied) == 403
+    assert ApiError.http_status(:recipient_not_found) == 404
+    assert ApiError.http_status(:users_unavailable) == 503
+    assert ApiError.http_status(:cannot_message_self) == 400
     assert ApiError.http_status(:message_not_found) == 404
     assert ApiError.http_status(:invalid_payload) == 400
   end
@@ -37,6 +40,9 @@ defmodule MessagingWeb.ApiErrorTest do
           :message_not_found,
           :not_message_author,
           :message_delete_denied,
+          :cannot_message_self,
+          :recipient_not_found,
+          :users_unavailable,
           :invalid_payload
         ] do
       assert {code, message} = ApiError.describe(reason)
