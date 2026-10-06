@@ -24,6 +24,10 @@ defmodule MessagingWeb.ApiErrorTest do
     assert ApiError.http_status(:recipient_not_found) == 404
     assert ApiError.http_status(:users_unavailable) == 503
     assert ApiError.http_status(:cannot_message_self) == 400
+    assert ApiError.http_status(:cannot_block_self) == 400
+    assert ApiError.http_status(:user_not_found) == 404
+    assert ApiError.http_status(:user_blocked) == 403
+    assert ApiError.http_status(:dm_not_delivered) == 403
     assert ApiError.http_status(:message_not_found) == 404
     assert ApiError.http_status(:invalid_payload) == 400
   end
@@ -41,6 +45,10 @@ defmodule MessagingWeb.ApiErrorTest do
           :not_message_author,
           :message_delete_denied,
           :cannot_message_self,
+          :cannot_block_self,
+          :user_not_found,
+          :user_blocked,
+          :dm_not_delivered,
           :recipient_not_found,
           :users_unavailable,
           :invalid_payload
