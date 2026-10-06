@@ -4,7 +4,8 @@ Servicio de **mensajería** de Discordia: mensajes de texto en canales, con
 entrega en tiempo real. Cubre las historias **"Enviar mensaje en un canal"**
 (CA1 envío exitoso, CA2 mensaje vacío, CA3 sin permisos, CA4 mensaje muy
 largo) e **"Historial y reconexión"** (CA1 carga paginada, CA2 reconexión sin
-pérdida, CA3 orden cronológico).
+pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
+**"Menciones"** (#46).
 
 ## Stack
 - Lenguaje: Elixir / Phoenix (Channels para WS, controllers para REST)
@@ -28,6 +29,10 @@ pérdida, CA3 orden cronológico).
   `servers` (`Messaging.Chat.PermissionsClient`) en el momento de unirse al
   canal y en cada envío -- no se cachea porque un rol puede revocarse en
   cualquier momento.
+- **Menciones**: si el mensaje tiene alguna, otra llamada síncrona a
+  `servers` (`Messaging.Chat.MentionsClient`,
+  `POST /v1/servers/:id/mentions/resolve`) decide cuáles valen y a quién
+  notificar. Los mensajes sin menciones no hacen esta llamada.
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
   `BroadcastConsumer`), separado de `discordia.events`
@@ -42,11 +47,16 @@ pérdida, CA3 orden cronológico).
   si se entrega dos veces, la segunda no encuentra nada que borrar. Un
   `channel_ids` que no sea una lista de strings se descarta
   (`discarded_invalid_payload` en `consumed_events`) sin tocar nada.
+- `servers.member_left` -- alguien dejó de ser miembro de un servidor (se fue,
+  lo expulsaron o lo banearon): se borran sus menciones de ese servidor, porque
+  `GET /v1/mentions` trae el mensaje y si no seguiría leyendo contenido de un
+  servidor que ya no ve. Mismo consumer y misma cola que los anteriores.
 
 Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)
-(`channels/events.go` + `channels/events.ex` y `servers/events.go` +
-`servers/events.ex`) y documentados en
+(`channels/events.go` + `channels/events.ex`, `servers/events.go` +
+`servers/events.ex` y `membership/events.go` + `membership/events.ex`) y
+documentados en
 [`docs/asyncapi/channels.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/channels.yaml).
 
 ## Eventos que publica
@@ -71,6 +81,9 @@ dominio para otros servicios.
 - WS `/socket`, channel `"user:" <> user_id` (`MessagingWeb.UserChannel`, solo el propio usuario):
   - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
     (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
+  - Recibe `mention` cuando alguien te menciona (ver [Menciones](#menciones)).
+- `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
+  [Menciones](#menciones).
 - `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
   [Mensajes directos](#mensajes-directos-dm).
 - `POST /v1/blocks`, `DELETE /v1/blocks/:user_id` y `GET /v1/blocks` -- ver
@@ -331,6 +344,60 @@ bloqueado sí queda en esa línea. No revisé los logs de acceso de Kong.
 
 **Llamadas privadas.** La historia las menciona, pero todavía no existen. Cuando existan, la
 verificación es `Messaging.Chat.Blocks.check_contact/2`.
+
+## Menciones
+Historia #46. Las menciones van **dentro del texto** como tokens, que arma el
+cliente al elegir a alguien del autocompletado:
+
+| Token | Menciona a |
+|---|---|
+| `<@USER_ID>` | un usuario |
+| `<@&ROLE_ID>` | un rol |
+| `@everyone` | todos los que pueden ver el canal |
+
+Un `@nombre` suelto es texto común: solo cuenta lo que tiene id. `@here` no
+existe. En mensajes directos los tokens quedan como texto.
+
+**Al enviar** (`new_message`), si el texto tiene algún token, `messaging` le
+pregunta a `servers` (`POST /v1/servers/:id/mentions/resolve`, con el JWT del
+autor) qué menciones valen. Las reglas viven en `servers`, que es dueño de
+miembros, roles y permisos:
+
+- **CA1:** un usuario mencionado cuenta si es miembro del servidor. No hace
+  falta ningún permiso.
+- **CA2 / CA3:** los roles y `@everyone` cuentan solo si el autor tiene
+  `MENTION_EVERYONE` (el dueño y los administradores lo tienen siempre).
+- **CA4:** sin ese permiso, `servers` los devuelve vacíos y el mensaje se envía
+  igual, con eso como **texto plano**. No es un error.
+- Se notifica a quienes pueden ver el canal (`VIEW_CHANNELS`), nunca al autor.
+
+El mensaje guarda lo que valió en `mentions`, `mention_roles` y
+`mention_everyone` (siempre presentes en la API; `[]`/`false` en mensajes
+viejos), así el cliente resalta "me mencionaron" sin más llamadas.
+
+Por cada destinatario:
+
+1. Se guarda una notificación en la colección `mentions`
+   (`_id = "<message_id>:<user_id>"`, así nunca se duplica).
+2. Se emite `mention` en su sala personal `user:<id>`:
+   ```json
+   { "server_id": "...", "channel_id": "...", "message": { /* Message */ } }
+   ```
+
+**Para quien estaba desconectado:** `GET /v1/mentions?limit=` devuelve las no
+leídas, la más nueva primero, con su mensaje. `POST
+/v1/channels/:channel_id/mentions/read` las marca como leídas (por ejemplo, al
+abrir el canal).
+
+**Editar** vuelve a chequear las menciones con los permisos actuales del
+autor: los que dejan de estar mencionados salen de su bandeja, y solo los
+nuevos reciben `mention` (corregir un typo no vuelve a pinguear a nadie).
+**Eliminar** un mensaje borra sus notificaciones. Borrar el canal o el
+servidor también.
+
+Si `servers` no responde, el envío (o la edición) falla con
+`MENTIONS_UNAVAILABLE` (503), igual que ya pasa con el chequeo de
+`SEND_MESSAGES`.
 
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
