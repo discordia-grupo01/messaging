@@ -73,9 +73,7 @@ defmodule Messaging.Chat.AccessTest do
 
   describe "Server" do
     test "asks servers for each permission in that channel" do
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, 2, fn "c-1",
-                                                                             "u",
-                                                                             "jwt" ->
+      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, 2, fn "c-1", "u", "jwt" ->
         {:ok, true}
       end)
 
@@ -83,9 +81,7 @@ defmodule Messaging.Chat.AccessTest do
         {:ok, false}
       end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn "c-1",
-                                                                             "u",
-                                                                             "jwt" ->
+      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn "c-1", "u", "jwt" ->
         {:ok, true}
       end)
 
