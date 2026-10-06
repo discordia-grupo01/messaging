@@ -243,7 +243,8 @@ defmodule MessagingWeb.MessageControllerTest do
                                                           @channel_id,
                                                           "user-1",
                                                           "corregido",
-                                                          edited_at ->
+                                                          edited_at,
+                                                          _mention_fields ->
         {:ok, stored(%{"content" => "corregido", "edited_at" => edited_at})}
       end)
 
@@ -264,7 +265,12 @@ defmodule MessagingWeb.MessageControllerTest do
       allow_edit()
       MessagingWeb.Endpoint.subscribe("channel:" <> @channel_id)
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, content, edited_at ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          content,
+                                                          edited_at,
+                                                          _mention_fields ->
         {:ok, stored(%{"content" => content, "edited_at" => edited_at})}
       end)
 

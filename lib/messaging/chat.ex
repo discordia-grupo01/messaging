@@ -1,5 +1,17 @@
 defmodule Messaging.Chat do
-  alias Messaging.Chat.{Access, Blocks, ChannelCache, Conversation, Message, UsersClient}
+  alias Messaging.Chat.{
+    Access,
+    Blocks,
+    ChannelCache,
+    Conversation,
+    Mentions,
+    MentionsClient,
+    Message,
+    UserMention,
+    UsersClient
+  }
+
+  alias Messaging.Events.MentionNotifier
   alias Messaging.UUID
 
   require Logger
@@ -27,8 +39,11 @@ defmodule Messaging.Chat do
   def send_message(%{channel_id: channel_id, user_id: user_id, content: content, raw_jwt: raw_jwt}) do
     with {:ok, channel} <- fetch_text_channel(channel_id),
          {:ok, trimmed} <- validate_content(content),
-         {:ok, true} <- check_permission(channel, user_id, raw_jwt) do
-      persist_message(channel, user_id, trimmed)
+         {:ok, true} <- check_permission(channel, user_id, raw_jwt),
+         {:ok, mentions} <- resolve_mentions(channel, trimmed, raw_jwt),
+         {:ok, message} <- persist_message(channel, user_id, trimmed, mentions) do
+      record_mentions(message, mentions.recipient_ids)
+      {:ok, message}
     else
       {:ok, false} -> {:error, :forbidden}
       {:error, _reason} = error -> error
@@ -57,7 +72,7 @@ defmodule Messaging.Chat do
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- require_author(message, user_id),
          {:ok, trimmed} <- validate_content(content) do
-      apply_edit(message, trimmed)
+      apply_edit(channel, message, trimmed, raw_jwt)
     else
       {:ok, false} -> {:error, :forbidden}
       {:error, _reason} = error -> error
@@ -219,6 +234,30 @@ defmodule Messaging.Chat do
   def delete_server_data(server_id, channel_ids) when is_list(channel_ids),
     do: repo().delete_server_data(server_id, channel_ids)
 
+  @spec list_mentions(String.t(), keyword()) :: {:ok, [UserMention.t()]} | {:error, term()}
+  def list_mentions(user_id, opts \\ []) do
+    limit = opts |> Keyword.get(:limit) |> clamp_limit()
+
+    with {:ok, docs} <- repo().list_unread_mentions(user_id, limit),
+         mentions = Enum.map(docs, &UserMention.from_doc/1),
+         {:ok, messages} <- fetch_messages(Enum.map(mentions, & &1.message_id)) do
+      {:ok, Enum.map(mentions, &%{&1 | message: Map.get(messages, &1.message_id)})}
+    end
+  end
+
+  @doc "Marks as read every mention of the user in a channel (opening it)."
+  @spec mark_mentions_read(String.t(), String.t()) :: :ok | {:error, term()}
+  def mark_mentions_read(channel_id, user_id) do
+    with {:ok, _channel} <- fetch_channel(channel_id) do
+      now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      repo().mark_mentions_read(user_id, channel_id, now)
+    end
+  end
+
+  @spec delete_member_mentions(String.t(), String.t()) :: :ok | {:error, term()}
+  def delete_member_mentions(server_id, user_id),
+    do: repo().delete_member_mentions(server_id, user_id)
+
   @spec mongo_ready?() :: boolean()
   def mongo_ready?, do: repo().ping() == :ok
 
@@ -295,15 +334,14 @@ defmodule Messaging.Chat do
     Enum.map(docs, &Conversation.partner_id(Conversation.from_doc(&1), user_id))
   end
 
-  defp fetch_last_messages(docs) do
-    case for(%{"last_message_id" => id} when is_binary(id) <- docs, do: id) do
-      [] ->
-        {:ok, %{}}
+  defp fetch_last_messages(docs),
+    do: fetch_messages(for(%{"last_message_id" => id} when is_binary(id) <- docs, do: id))
 
-      ids ->
-        with {:ok, message_docs} <- repo().get_messages(ids) do
-          {:ok, Map.new(message_docs, &{&1["_id"], Message.from_doc(&1)})}
-        end
+  defp fetch_messages([]), do: {:ok, %{}}
+
+  defp fetch_messages(ids) do
+    with {:ok, message_docs} <- repo().get_messages(ids) do
+      {:ok, Map.new(message_docs, &{&1["_id"], Message.from_doc(&1)})}
     end
   end
 
@@ -327,24 +365,78 @@ defmodule Messaging.Chat do
   defp check_permission(%ChannelCache{} = channel, user_id, raw_jwt),
     do: Access.for_channel(channel).can_post?(channel, user_id, raw_jwt)
 
-  defp persist_message(%ChannelCache{} = channel, user_id, content) do
+  defp resolve_mentions(%ChannelCache{kind: "dm"}, _content, _raw_jwt), do: {:ok, Mentions.none()}
+
+  defp resolve_mentions(%ChannelCache{server_id: nil}, _content, _raw_jwt),
+    do: {:ok, Mentions.none()}
+
+  defp resolve_mentions(%ChannelCache{} = channel, content, raw_jwt) do
+    query = Mentions.parse(content)
+
+    if Mentions.any?(query),
+      do: MentionsClient.resolve(channel.server_id, channel.channel_id, query, raw_jwt),
+      else: {:ok, Mentions.none()}
+  end
+
+  defp record_mentions(%Message{}, []), do: :ok
+
+  defp record_mentions(%Message{} = message, recipient_ids) do
+    docs = Enum.map(recipient_ids, &UserMention.new_doc(message, &1))
+
+    case repo().insert_mentions(docs) do
+      {:ok, new_ids} ->
+        MentionNotifier.notify(message, new_ids)
+
+      {:error, reason} ->
+        Logger.warning(
+          "messaging: mentions_insert_failed message_id=#{message.id} reason=#{inspect(reason)}"
+        )
+
+        MentionNotifier.notify(message, recipient_ids)
+    end
+  end
+
+  # After an edit: forget the users the message no longer reaches, notify the
+  # ones it reaches for the first time.
+  defp sync_mentions(%Message{} = before, %Message{} = after_edit, recipient_ids) do
+    if Message.mentions?(before) do
+      case repo().delete_mentions(after_edit.id, recipient_ids) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "messaging: mentions_delete_failed message_id=#{after_edit.id} reason=#{inspect(reason)}"
+          )
+      end
+    end
+
+    record_mentions(after_edit, recipient_ids)
+  end
+
+  defp persist_message(%ChannelCache{} = channel, user_id, content, mentions \\ Mentions.none()) do
     message = %Message{
       id: UUID.generate_v7(),
       channel_id: channel.channel_id,
       server_id: channel.server_id,
       user_id: user_id,
       content: content,
-      inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond),
+      mentions: mentions.user_ids,
+      mention_roles: mentions.role_ids,
+      mention_everyone: mentions.everyone
     }
 
-    doc = %{
-      "_id" => message.id,
-      "channel_id" => message.channel_id,
-      "server_id" => message.server_id,
-      "user_id" => message.user_id,
-      "content" => message.content,
-      "inserted_at" => message.inserted_at
-    }
+    doc =
+      %{
+        "_id" => message.id,
+        "channel_id" => message.channel_id,
+        "server_id" => message.server_id,
+        "user_id" => message.user_id,
+        "content" => message.content,
+        "inserted_at" => message.inserted_at
+      }
+      |> with_mention_fields(message, mentions)
 
     case repo().insert_message(doc) do
       {:ok, _doc} ->
@@ -361,6 +453,13 @@ defmodule Messaging.Chat do
 
         error
     end
+  end
+
+  # Only messages with mentions carry the fields, so the rest stay as before.
+  defp with_mention_fields(doc, message, mentions) do
+    if Message.mentions?(message),
+      do: Map.merge(doc, Mentions.message_fields(mentions)),
+      else: doc
   end
 
   defp exclusive_cursors(nil, _after_id), do: :ok
@@ -404,6 +503,7 @@ defmodule Messaging.Chat do
           "messaging: message_deleted channel_id=#{message.channel_id} actor_id=#{actor_id} author_id=#{message.user_id} message_id=#{message.id}"
         )
 
+        forget_mentions(message)
         {:ok, Message.from_doc(doc)}
 
       {:error, reason} = error ->
@@ -415,9 +515,31 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp apply_edit(%Message{content: content} = message, content), do: {:ok, message, :unchanged}
+  # A deleted message must not keep notifications that point at it.
+  defp forget_mentions(%Message{} = message) do
+    if Message.mentions?(message) do
+      case repo().delete_mentions(message.id, []) do
+        :ok ->
+          :ok
 
-  defp apply_edit(%Message{} = message, new_content) do
+        {:error, reason} ->
+          Logger.warning(
+            "messaging: mentions_delete_failed message_id=#{message.id} reason=#{inspect(reason)}"
+          )
+      end
+    end
+  end
+
+  defp apply_edit(_channel, %Message{content: content} = message, content, _raw_jwt),
+    do: {:ok, message, :unchanged}
+
+  defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, raw_jwt) do
+    with {:ok, mentions} <- resolve_mentions(channel, new_content, raw_jwt) do
+      update_content(message, new_content, mentions)
+    end
+  end
+
+  defp update_content(%Message{} = message, new_content, mentions) do
     edited_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
     case repo().update_message(
@@ -425,7 +547,8 @@ defmodule Messaging.Chat do
            message.channel_id,
            message.user_id,
            new_content,
-           edited_at
+           edited_at,
+           Mentions.message_fields(mentions)
          ) do
       {:ok, nil} ->
         {:error, :message_not_found}
@@ -435,7 +558,9 @@ defmodule Messaging.Chat do
           "messaging: message_edited channel_id=#{message.channel_id} user_id=#{message.user_id} message_id=#{message.id}"
         )
 
-        {:ok, Message.from_doc(doc), :updated}
+        edited = Message.from_doc(doc)
+        sync_mentions(message, edited, mentions.recipient_ids)
+        {:ok, edited, :updated}
 
       {:error, reason} = error ->
         Logger.warning(

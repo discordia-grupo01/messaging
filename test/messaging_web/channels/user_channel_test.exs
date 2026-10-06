@@ -307,7 +307,12 @@ defmodule MessagingWeb.UserChannelTest do
 
       stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
 
-      stub(Messaging.Chat.RepoMock, :update_message, fn "msg-1", _cid, _uid, content, at ->
+      stub(Messaging.Chat.RepoMock, :update_message, fn "msg-1",
+                                                        _cid,
+                                                        _uid,
+                                                        content,
+                                                        at,
+                                                        _mention_fields ->
         {:ok, Map.merge(doc, %{"content" => content, "edited_at" => at})}
       end)
 
