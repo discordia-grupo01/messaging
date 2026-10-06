@@ -47,4 +47,20 @@ defmodule Messaging.UUIDTest do
 
     assert ms >= before_ms and ms <= after_ms + 1
   end
+
+  test "v5/2 matches the RFC 4122 reference value for the DNS namespace" do
+    assert UUID.v5("6ba7b810-9dad-11d1-80b4-00c04fd430c8", "python.org") ==
+             "886313e1-3b8a-5372-9b90-0c9aee199e5d"
+  end
+
+  test "v5/2 is deterministic, versioned 5 and sensitive to the name" do
+    namespace = "d15c0d1a-5e0f-4f6e-9a3c-6d6d5f0e7b21"
+
+    assert UUID.v5(namespace, "dm:aaa:bbb") == "d8e4a0ff-9837-5fa9-9610-89f24542fb40"
+    assert UUID.v5(namespace, "dm:aaa:bbb") == UUID.v5(namespace, "dm:aaa:bbb")
+    refute UUID.v5(namespace, "dm:aaa:bbb") == UUID.v5(namespace, "dm:aaa:bbc")
+
+    assert UUID.v5(namespace, "x") =~
+             ~r/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  end
 end

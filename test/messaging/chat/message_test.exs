@@ -74,7 +74,10 @@ defmodule Messaging.Chat.MessageTest do
                "content" => "hola",
                "inserted_at" => "2026-09-28T12:00:00.123Z",
                "edited" => false,
-               "edited_at" => nil
+               "edited_at" => nil,
+               "mentions" => [],
+               "mention_roles" => [],
+               "mention_everyone" => false
              }
 
       refute String.contains?(api["inserted_at"], "+00:00")
@@ -93,6 +96,22 @@ defmodule Messaging.Chat.MessageTest do
       encoded = message |> Message.to_api() |> Jason.encode!()
       assert {:ok, decoded} = Jason.decode(encoded)
       assert decoded == Message.to_api(message)
+    end
+  end
+
+  describe "direct messages" do
+    test "to_api/1 exposes a null server_id" do
+      doc = %{
+        "_id" => "msg-1",
+        "channel_id" => "dm-1",
+        "server_id" => nil,
+        "user_id" => "user-1",
+        "content" => "hola",
+        "inserted_at" => ~U[2026-09-28 12:00:00Z]
+      }
+
+      assert %{"server_id" => nil, "channel_id" => "dm-1"} =
+               doc |> Message.from_doc() |> Message.to_api()
     end
   end
 end

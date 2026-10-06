@@ -4,7 +4,8 @@ Servicio de **mensajería** de Discordia: mensajes de texto en canales, con
 entrega en tiempo real. Cubre las historias **"Enviar mensaje en un canal"**
 (CA1 envío exitoso, CA2 mensaje vacío, CA3 sin permisos, CA4 mensaje muy
 largo) e **"Historial y reconexión"** (CA1 carga paginada, CA2 reconexión sin
-pérdida, CA3 orden cronológico).
+pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
+**"Menciones"** (#46).
 
 ## Stack
 - Lenguaje: Elixir / Phoenix (Channels para WS, controllers para REST)
@@ -34,13 +35,14 @@ pérdida, CA3 orden cronológico).
   denegaron `VIEW_CHANNELS` en `#staff` no puede abrirlo ni leer su historial,
   aunque lo tenga a nivel servidor. `401`/`403`/`404` de `servers` cuentan como
   "sin permiso".
+- **Menciones**: si el mensaje tiene alguna, otra llamada síncrona a
+  `servers` (`Messaging.Chat.MentionsClient`,
+  `POST /v1/servers/:id/mentions/resolve`) decide cuáles valen y a quién
+  notificar. Los mensajes sin menciones no hacen esta llamada.
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
-  `BroadcastConsumer`), separado de `discordia.events`. Ver
-  [`docs/adr/0001-messaging-realtime-propagation.md`](https://github.com/discordia-grupo01/docs/blob/main/adr/0001-messaging-realtime-propagation.md)
-  para la justificación completa (por qué RabbitMQ y no Redis Pub/Sub ni
-  Phoenix.PubSub+libcluster).
-
+  `BroadcastConsumer`), separado de `discordia.events`
+  
 ## Eventos que consume
 - `servers.channel_created` -- upsert en la caché local de canales.
 - `servers.channel_deleted` -- evicción de la caché local de canales.
@@ -51,11 +53,16 @@ pérdida, CA3 orden cronológico).
   si se entrega dos veces, la segunda no encuentra nada que borrar. Un
   `channel_ids` que no sea una lista de strings se descarta
   (`discarded_invalid_payload` en `consumed_events`) sin tocar nada.
+- `servers.member_left` -- alguien dejó de ser miembro de un servidor (se fue,
+  lo expulsaron o lo banearon): se borran sus menciones de ese servidor, porque
+  `GET /v1/mentions` trae el mensaje y si no seguiría leyendo contenido de un
+  servidor que ya no ve. Mismo consumer y misma cola que los anteriores.
 
 Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)
-(`channels/events.go` + `channels/events.ex` y `servers/events.go` +
-`servers/events.ex`) y documentados en
+(`channels/events.go` + `channels/events.ex`, `servers/events.go` +
+`servers/events.ex` y `membership/events.go` + `membership/events.ex`) y
+documentados en
 [`docs/asyncapi/channels.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/channels.yaml).
 
 ## Eventos que publica
@@ -73,8 +80,20 @@ dominio para otros servicios.
     mensaje propio (ver [Editar mensajes](#editar-mensajes)).
   - `handle_in("delete_message", %{"id" => "<id>"})` -- elimina un mensaje propio, o
     ajeno con `MANAGE_MESSAGES` (ver [Eliminar mensajes](#eliminar-mensajes)).
+  - `handle_in("delete_message", ...)` y `handle_in("edit_message", ...)` valen también en una
+    conversación directa (ver [Mensajes directos](#mensajes-directos-dm)).
   - `handle_in("new_message", %{"content" => "..."})` -- requiere
     `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+- WS `/socket`, channel `"user:" <> user_id` (`MessagingWeb.UserChannel`, solo el propio usuario):
+  - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
+    (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
+  - Recibe `mention` cuando alguien te menciona (ver [Menciones](#menciones)).
+- `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
+  [Menciones](#menciones).
+- `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
+  [Mensajes directos](#mensajes-directos-dm).
+- `POST /v1/blocks`, `DELETE /v1/blocks/:user_id` y `GET /v1/blocks` -- ver
+  [Bloquear y desbloquear usuarios](#bloquear-y-desbloquear-usuarios).
 - `PATCH /v1/channels/:channel_id/messages/:message_id` con `{"content": "..."}` --
   edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
 - `DELETE /v1/channels/:channel_id/messages/:message_id` -- elimina un mensaje (ver
@@ -217,6 +236,175 @@ entradas usan la misma función de dominio (`Messaging.Chat.delete_message/1`).
   después de ese plazo no se enteraría de los borrados viejos (habría que pedirle recargar
   el historial).
 
+## Mensajes directos (DM)
+Una conversación directa es un **canal sin servidor** (`kind: "dm"`) que `messaging` crea y guarda
+él mismo en su colección `channels`; **no** nace de ningún evento de `servers`. Por eso el historial,
+la paginación, editar, borrar y el feed de cambios son los mismos que en un canal de servidor.
+Lo único que cambia es quién puede hacer qué (ver más abajo).
+
+**Enviar.** Por el socket, en la sala personal `user:<tu id>` (cada usuario se une solo a la suya;
+otra sala devuelve `FORBIDDEN`):
+
+```
+push "send_dm" {"to": "<id del destinatario>", "content": "hola"}
+reply ok {"conversation_id": "...", "message": {...}}
+```
+
+- **Se crea al primer mensaje.** No existe ningún endpoint para "abrir" una conversación: mientras
+  nadie escriba, no hay nada guardado. La primera vez se valida que el destinatario exista
+  (`GET /v1/users/{id}` de `identify-service`, con el JWT de quien envía; `404 RECIPIENT_NOT_FOUND` si
+  no existe) y se crea la conversación; los mensajes siguientes ya no consultan a `identify-service`.
+  Si `identify-service` no responde: `503 USERS_UNAVAILABLE`.
+- **Un solo canal entre dos personas.** El id de la conversación es un UUID v5 del par de usuarios
+  ordenado, así que da lo mismo quién escribe primero y dos primeros mensajes simultáneos caen en el
+  mismo documento (el alta es un upsert con `$setOnInsert`).
+- **Reglas del mensaje.** Mismas que al enviar a un canal (se recorta, no vacío, máx. 2000). No se
+  puede enviar a uno mismo (`400 CANNOT_MESSAGE_SELF`). El id del destinatario solo admite
+  `[A-Za-z0-9_-]` (hasta 64): lo demás da `RECIPIENT_NOT_FOUND` sin llegar a ningún servicio.
+- **`new_message` en una conversación se rechaza** (`CHANNEL_NOT_TEXT`): los DM se envían siempre
+  con `send_dm`, para que no haya dos puertas.
+
+**Recibir en tiempo real.** Cada envío emite:
+- `new_dm` a la sala personal de **los dos** participantes, con
+  `{"conversation_id", "partner_id", "message": {...}}` (`partner_id` es el *otro* participante
+  para cada destinatario, igual que en `GET /v1/conversations`). Es lo que permite que un DM
+  **nuevo** le aparezca a quien lo recibe sin recargar ni tener nada abierto: todavía no existía la
+  sala de esa conversación, así que no habría dónde avisarle. Al emisor le sirve para sus otras
+  pestañas.
+- `new_message` a la sala `channel:<conversation_id>` (para quien tiene la conversación abierta, igual
+  que en un canal). Un cliente unido a las dos salas recibe el mismo mensaje dos veces: se
+  deduplica por `message.id`.
+
+**Pendiente de lectura.** Si el destinatario no está conectado el mensaje queda guardado, y al volver
+lo ve como no leído. La conversación guarda el último mensaje (`last_message_at`,
+`last_message_user_id`) y, por participante, hasta dónde leyó (`last_read_at`). Está sin leer para
+alguien si el último mensaje es del otro y es posterior a lo que ya leyó. El emisor nunca tiene su
+propia conversación sin leer.
+
+**REST.**
+- `GET /v1/conversations?limit=` -- mis conversaciones (solo las que tienen al menos un mensaje), la
+  más reciente primero (default 50, máx. 100; todavía sin paginación). Cada una trae `id`,
+  `partner_id`, `unread`, `last_message_at` y `last_message` (`null` si ese mensaje se eliminó).
+  Solo ids: ningún dato del perfil del otro usuario (nombre, foto, email), que se pide a
+  `identify-service`.
+- `POST /v1/conversations/:id/read` -- marca como leído hasta el último mensaje que hoy tiene la
+  conversación (`204`). Un mensaje que llegue después sigue sin leer.
+- `GET /v1/channels/:id/messages` -- historial de la conversación (con el `id` de la conversación).
+
+**Autorización.** Se elige según el `kind` del canal (`Messaging.Chat.Access`): `Server` (consulta
+a `servers`) o `Direct`. En un DM puede ver y escribir quien participa, y **nadie modera**: editar y
+borrar son solo del autor (`NOT_MESSAGE_AUTHOR` / `MESSAGE_DELETE_DENIED`). Alguien que no
+participa recibe `404 CHANNEL_NOT_FOUND`, **igual que si la conversación no existiera**: como el id es
+derivable de dos ids de usuario, un `403` revelaría que esas dos personas hablaron. Los mensajes de
+un DM llevan `server_id: null`.
+
+**Límite conocido.** Si falla solo la actualización del último mensaje de la conversación (la
+escritura que la ordena y la marca como no leída), el mensaje igual se entrega y se loguea un
+warning; el estado "no leído" se corrige con el siguiente mensaje.
+
+## Bloquear y desbloquear usuarios
+Los bloqueos son una relación entre dos usuarios que vive en `messaging` (colección `blocks`, un
+documento por par `bloqueador:bloqueado`, con índice por bloqueador). Están en `messaging` y no en
+`identify-service` para que cada DM los verifique con **una sola consulta local por `_id`**, sin una
+llamada más entre servicios que pueda caerse.
+
+- `POST /v1/blocks` con `{"user_id": "..."}` -- bloquea (`204`). Es idempotente. El id viaja en el
+  cuerpo y no en la URL. Un cuerpo sin `user_id` string da `400 INVALID_PAYLOAD`. Verifica que el usuario exista
+  (`404 USER_NOT_FOUND`; si `identify-service` no responde, `503 USERS_UNAVAILABLE`). No se puede
+  bloquear a uno mismo (`400 CANNOT_BLOCK_SELF`).
+- `DELETE /v1/blocks/:user_id` -- desbloquea (`204`). Es idempotente y **no** consulta a
+  `identify-service`: se puede desbloquear a alguien que ya no existe.
+- `GET /v1/blocks?limit=` -- a quién bloqueé, el más reciente primero (default 50, máx. 100). Cada
+  elemento trae solo `user_id` y `created_at`. **Nunca** se informa quién te bloqueó a vos.
+- `GET /v1/conversations` suma `blocked_by_me` en cada conversación, para que el cliente muestre
+  "desbloquear" sin otra consulta. No existe el campo inverso.
+
+**Efecto sobre los DM.** El bloqueo vale en las dos direcciones, para **enviar**:
+- Quien fue bloqueado recibe `403 DM_NOT_DELIVERED` ("No se pudo entregar el mensaje."). El mensaje
+  **no se guarda**, no se crea la conversación si era la primera vez, no se consulta a
+  `identify-service` y nadie recibe ningún evento.
+- Quien bloqueó recibe `403 USER_BLOCKED` si intenta escribirle a esa persona: tiene que
+  desbloquearla primero. Es información propia, así que se le dice.
+- Se comprueba en **cada** mensaje, no solo en el primero, así que aplica también a conversaciones que
+  ya existían. Si la consulta de bloqueos falla, el mensaje no se envía (nunca se interpreta un error
+  como "sin bloqueo").
+- **Editar y borrar** mensajes en un DM bloqueado también se rechaza (`403 FORBIDDEN`), para los dos. La
+  conversación queda **congelada**: editar es escribirle contenido nuevo a la otra persona, y borrar
+  cambia un historial que la historia pide conservar (además, quien fue bloqueado podría borrar lo que
+  escribió y destruir una prueba antes de que la otra persona lo denuncie).
+- **Se conserva todo lo previo.** El historial por REST, la lista de conversaciones y marcar como leído
+  siguen funcionando para los dos.
+- Al desbloquear, los dos vuelven a poder escribirse, editar y borrar.
+
+**Privacidad.** `DM_NOT_DELIVERED` no dice por qué. Hoy la única causa posible es el bloqueo, así que
+quien se fije puede deducirlo; es el mismo compromiso que hacen otras apps de mensajería. A cambio,
+el bloqueado nunca ve cuándo ni si el otro lo bloqueó, y no hay forma de listar quién te bloqueó.
+
+**Qué queda registrado.** La relación se guarda en la base (`blocks`: quién, a quién y cuándo), porque
+hace falta para aplicarla. En los logs, el código de `messaging` no escribe ninguna línea de bloqueo
+(solo avisos de fallo, con el motivo y sin ids). Pero el log HTTP del framework sí registra
+`DELETE /v1/blocks/<id>` al desbloquear (al bloquear, con `POST`, el id va en el cuerpo y solo
+aparece en nivel debug entre los parámetros). Ahí **no** figura quién bloqueó
+(sale del JWT, que no se loguea), así que no alcanza para saber quién bloqueó a quién, pero el id del
+bloqueado sí queda en esa línea. No revisé los logs de acceso de Kong.
+
+**Llamadas privadas.** La historia las menciona, pero todavía no existen. Cuando existan, la
+verificación es `Messaging.Chat.Blocks.check_contact/2`.
+
+## Menciones
+Historia #46. Las menciones van **dentro del texto** como tokens, que arma el
+cliente al elegir a alguien del autocompletado:
+
+| Token | Menciona a |
+|---|---|
+| `<@USER_ID>` | un usuario |
+| `<@&ROLE_ID>` | un rol |
+| `@everyone` | todos los que pueden ver el canal |
+
+Un `@nombre` suelto es texto común: solo cuenta lo que tiene id. `@here` no
+existe. En mensajes directos los tokens quedan como texto.
+
+**Al enviar** (`new_message`), si el texto tiene algún token, `messaging` le
+pregunta a `servers` (`POST /v1/servers/:id/mentions/resolve`, con el JWT del
+autor) qué menciones valen. Las reglas viven en `servers`, que es dueño de
+miembros, roles y permisos:
+
+- **CA1:** un usuario mencionado cuenta si es miembro del servidor. No hace
+  falta ningún permiso.
+- **CA2 / CA3:** los roles y `@everyone` cuentan solo si el autor tiene
+  `MENTION_EVERYONE` (el dueño y los administradores lo tienen siempre).
+- **CA4:** sin ese permiso, `servers` los devuelve vacíos y el mensaje se envía
+  igual, con eso como **texto plano**. No es un error.
+- Se notifica a quienes pueden ver el canal (`VIEW_CHANNELS`), nunca al autor.
+
+El mensaje guarda lo que valió en `mentions`, `mention_roles` y
+`mention_everyone` (siempre presentes en la API; `[]`/`false` en mensajes
+viejos), así el cliente resalta "me mencionaron" sin más llamadas.
+
+Por cada destinatario:
+
+1. Se guarda una notificación en la colección `mentions`
+   (`_id = "<message_id>:<user_id>"`, así nunca se duplica).
+2. Se emite `mention` en su sala personal `user:<id>`:
+   ```json
+   { "server_id": "...", "channel_id": "...", "message": { /* Message */ } }
+   ```
+
+**Para quien estaba desconectado:** `GET /v1/mentions?limit=` devuelve las no
+leídas, la más nueva primero, con su mensaje. `POST
+/v1/channels/:channel_id/mentions/read` las marca como leídas (por ejemplo, al
+abrir el canal).
+
+**Editar** vuelve a chequear las menciones con los permisos actuales del
+autor: los que dejan de estar mencionados salen de su bandeja, y solo los
+nuevos reciben `mention` (corregir un typo no vuelve a pinguear a nadie).
+**Eliminar** un mensaje borra sus notificaciones. Borrar el canal o el
+servidor también.
+
+Si `servers` no responde, el envío (o la edición) falla con
+`MENTIONS_UNAVAILABLE` (503), igual que ya pasa con el chequeo de
+`SEND_MESSAGES`.
+
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
 `Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los
@@ -279,6 +467,10 @@ mix deps.get
 docker compose up -d mongo rabbitmq
 mix phx.server
 ```
+
+`IDENTIFY_BASE_URL` (default `http://localhost:8081`) apunta a `identify-service`: se usa solo
+para validar que el destinatario de un DM exista, la primera vez que se le escribe. En producción
+es obligatoria (como `SERVERS_BASE_URL`): sin ella la app no arranca.
 
 En ambos casos, `SERVERS_BASE_URL` (`.env`) tiene que apuntar a una instancia
 de `servers` corriendo (para el chequeo de permisos) -- por default asume

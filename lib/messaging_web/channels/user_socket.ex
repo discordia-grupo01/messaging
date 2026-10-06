@@ -4,6 +4,7 @@ defmodule MessagingWeb.UserSocket do
   alias Messaging.Auth.SocketTicket
 
   channel "channel:*", MessagingWeb.RoomChannel
+  channel "user:*", MessagingWeb.UserChannel
 
   @impl true
   def connect(%{"ticket" => ticket}, socket, _connect_info) when is_binary(ticket) do

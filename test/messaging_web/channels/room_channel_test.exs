@@ -1,10 +1,3 @@
-defmodule Messaging.FailingBroadcaster do
-  @behaviour Messaging.Events.Broadcaster
-
-  @impl true
-  def publish(_event, _payload), do: {:error, :not_connected}
-end
-
 defmodule MessagingWeb.RoomChannelTest do
   use MessagingWeb.ChannelCase
   import Mox
@@ -142,7 +135,12 @@ defmodule MessagingWeb.RoomChannelTest do
     defp stub_stored(doc \\ stored_message()) do
       stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> doc end)
 
-      stub(Messaging.Chat.RepoMock, :update_message, fn "msg-1", _cid, _uid, content, edited_at ->
+      stub(Messaging.Chat.RepoMock, :update_message, fn "msg-1",
+                                                        _cid,
+                                                        _uid,
+                                                        content,
+                                                        edited_at,
+                                                        _mention_fields ->
         {:ok, Map.merge(doc, %{"content" => content, "edited_at" => edited_at})}
       end)
     end

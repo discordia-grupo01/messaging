@@ -5,7 +5,8 @@ defmodule Messaging.Events.BroadcastConsumer do
   alias Messaging.Events.Backoff
 
   @exchange "messaging.broadcast"
-  @events ["new_message", "message_updated", "message_deleted"]
+  @events ["new_message", "message_updated", "message_deleted", "new_dm", "mention"]
+  @topic_prefixes ["channel:", "user:"]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -63,8 +64,8 @@ defmodule Messaging.Events.BroadcastConsumer do
 
   defp deliver_locally(body) do
     with {:ok, decoded} <- Jason.decode(body),
-         {:ok, event, %{"channel_id" => channel_id} = payload} <- unwrap(decoded) do
-      MessagingWeb.Endpoint.broadcast!("channel:" <> channel_id, event, payload)
+         {:ok, event, topic, payload} <- unwrap(decoded) do
+      MessagingWeb.Endpoint.broadcast!(topic, event, payload)
     else
       {:error, reason} ->
         Logger.warning("messaging: broadcast_consumer bad_message reason=#{inspect(reason)}")
@@ -74,12 +75,28 @@ defmodule Messaging.Events.BroadcastConsumer do
     end
   end
 
-  defp unwrap(%{"event" => event, "payload" => payload}) when event in @events,
-    do: {:ok, event, payload}
+  defp unwrap(%{"event" => event, "payload" => payload} = decoded) when event in @events do
+    case topic_for(decoded, payload) do
+      {:ok, topic} -> {:ok, event, topic, payload}
+      :error -> {:error, :invalid_payload}
+    end
+  end
 
   defp unwrap(%{"event" => _unknown}), do: {:error, :unknown_event}
-  defp unwrap(%{"channel_id" => _id} = legacy_message), do: {:ok, "new_message", legacy_message}
+
+  defp unwrap(%{"channel_id" => channel_id} = legacy_message) when is_binary(channel_id),
+    do: {:ok, "new_message", "channel:" <> channel_id, legacy_message}
+
   defp unwrap(_other), do: {:error, :invalid_payload}
+
+  defp topic_for(%{"topic" => topic}, _payload) when is_binary(topic) do
+    if String.starts_with?(topic, @topic_prefixes), do: {:ok, topic}, else: :error
+  end
+
+  defp topic_for(_decoded, %{"channel_id" => channel_id}) when is_binary(channel_id),
+    do: {:ok, "channel:" <> channel_id}
+
+  defp topic_for(_decoded, _payload), do: :error
 
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),

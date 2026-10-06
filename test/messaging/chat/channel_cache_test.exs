@@ -29,4 +29,34 @@ defmodule Messaging.Chat.ChannelCacheTest do
              kind: "text"
            }
   end
+
+  test "messageable?/1 accepts text and dm channels but not voice" do
+    for {kind, expected} <- [{"text", true}, {"dm", true}, {"voice", false}] do
+      channel = %ChannelCache{channel_id: "c", server_id: nil, name: "", kind: kind}
+      assert ChannelCache.messageable?(channel) == expected
+    end
+  end
+
+  test "from_doc/1 reads a direct conversation without a server" do
+    doc = %{
+      "_id" => "dm-1",
+      "server_id" => nil,
+      "name" => "",
+      "kind" => "dm",
+      "participants" => ["user-a", "user-b"]
+    }
+
+    assert %ChannelCache{
+             channel_id: "dm-1",
+             server_id: nil,
+             kind: "dm",
+             participants: ["user-a", "user-b"]
+           } = ChannelCache.from_doc(doc)
+  end
+
+  test "from_doc/1 defaults the fields a server channel never had" do
+    doc = %{"_id" => "chan-1", "kind" => "text"}
+
+    assert %ChannelCache{server_id: nil, name: "", participants: []} = ChannelCache.from_doc(doc)
+  end
 end

@@ -103,8 +103,7 @@ defmodule MessagingWeb.MessageControllerTest do
       {:ok, for(i <- [4, 3, 2], do: message_doc("msg-#{i}", ~U[2026-09-28 12:00:00Z]))}
     end)
 
-    conn =
-      conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=2&before=msg-5")
+    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=2&before=msg-5")
 
     assert %{"messages" => [%{"id" => "msg-3"}, %{"id" => "msg-4"}], "next_cursor" => "msg-3"} =
              json_response(conn, 200)
@@ -245,7 +244,8 @@ defmodule MessagingWeb.MessageControllerTest do
                                                           @channel_id,
                                                           "user-1",
                                                           "corregido",
-                                                          edited_at ->
+                                                          edited_at,
+                                                          _mention_fields ->
         {:ok, stored(%{"content" => "corregido", "edited_at" => edited_at})}
       end)
 
@@ -266,7 +266,12 @@ defmodule MessagingWeb.MessageControllerTest do
       allow_edit()
       MessagingWeb.Endpoint.subscribe("channel:" <> @channel_id)
 
-      expect(Messaging.Chat.RepoMock, :update_message, fn _id, _cid, _uid, content, edited_at ->
+      expect(Messaging.Chat.RepoMock, :update_message, fn _id,
+                                                          _cid,
+                                                          _uid,
+                                                          content,
+                                                          edited_at,
+                                                          _mention_fields ->
         {:ok, stored(%{"content" => content, "edited_at" => edited_at})}
       end)
 

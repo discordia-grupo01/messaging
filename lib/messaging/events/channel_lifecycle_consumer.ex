@@ -11,7 +11,8 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   @routing_keys [
     ChannelEvent.routing_key_channel_created(),
     ChannelEvent.routing_key_channel_deleted(),
-    ChannelEvent.routing_key_server_deleted()
+    ChannelEvent.routing_key_server_deleted(),
+    ChannelEvent.routing_key_member_left()
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -157,6 +158,14 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
 
     Logger.info(
       "messaging: server_deleted_applied server_id=#{event.server_id} channels=#{length(event.channel_ids)}"
+    )
+  end
+
+  defp apply_event(%ChannelEvent.MemberLeft{} = event) do
+    :ok = Chat.delete_member_mentions(event.server_id, event.user_id)
+
+    Logger.info(
+      "messaging: member_left_applied server_id=#{event.server_id} user_id=#{event.user_id}"
     )
   end
 
