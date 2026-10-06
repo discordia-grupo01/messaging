@@ -93,6 +93,26 @@ if rabbitmq_url do
       refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> ^other}, 300
     end
 
+    test "a mention published by any instance reaches the mentioned user's local topic" do
+      user_id = "user-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> user_id)
+
+      payload = %{
+        "server_id" => "srv-1",
+        "channel_id" => "chan-1",
+        "message" => %{"id" => "msg-1", "content" => "<@#{user_id}> hola"}
+      }
+
+      assert :ok = BroadcastPublisher.publish("user:" <> user_id, "mention", payload)
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       topic: "user:" <> ^user_id,
+                       event: "mention",
+                       payload: ^payload
+                     },
+                     5_000
+    end
+
     test "a topic outside channel: and user: is dropped" do
       Phoenix.PubSub.subscribe(Messaging.PubSub, "admin:all")
 
