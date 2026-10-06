@@ -11,9 +11,11 @@ config :messaging, :ensure_indexes, false
 config :messaging, :chat_repo, Messaging.Chat.RepoMock
 config :messaging, :permissions_client, Messaging.Chat.PermissionsClientMock
 config :messaging, :users_client, Messaging.Chat.UsersClientMock
+config :messaging, :mentions_client, Messaging.Chat.MentionsClientMock
 config :messaging, :ticket_store, Messaging.Auth.TicketStoreMock
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
 config :messaging, :permissions_http_plug, {Req.Test, Messaging.Chat.PermissionsClient.Http}
 config :messaging, :users_http_plug, {Req.Test, Messaging.Chat.UsersClient.Http}
+config :messaging, :mentions_http_plug, {Req.Test, Messaging.Chat.MentionsClient.Http}
 
 config :logger, level: :warning
