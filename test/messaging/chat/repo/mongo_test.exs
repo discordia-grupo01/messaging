@@ -562,10 +562,7 @@ if mongo_url do
 
     test "the whole flow: first message, unread for the recipient, read, unread again" do
       {a, b} = dm_users()
-      Application.put_env(:messaging, :users_client, Messaging.Chat.UsersClientMock)
-      Mox.set_mox_global()
       Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
-      on_exit(fn -> Application.delete_env(:messaging, :users_client) end)
 
       assert {:ok, channel, first} =
                Chat.send_direct_message(%{
