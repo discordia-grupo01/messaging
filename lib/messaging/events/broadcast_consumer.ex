@@ -6,7 +6,14 @@ defmodule Messaging.Events.BroadcastConsumer do
   alias Messaging.Log
 
   @exchange "messaging.broadcast"
-  @events ["new_message", "message_updated", "message_deleted", "new_dm", "mention"]
+  @events [
+    "new_message",
+    "message_updated",
+    "message_deleted",
+    "new_dm",
+    "mention",
+    "access_revoked"
+  ]
   @topic_prefixes ["channel:", "user:"]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)

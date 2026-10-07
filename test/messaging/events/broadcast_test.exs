@@ -128,6 +128,17 @@ if rabbitmq_url do
       AMQP.Connection.close(conn)
     end
 
+    test "an access_revoked notice crosses instances through the fanout" do
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "channel:" <> channel_id)
+
+      payload = %{"channel_id" => channel_id, "reason" => "member_left", "user_id" => "user-1"}
+
+      assert :ok = BroadcastPublisher.publish("channel:" <> channel_id, "access_revoked", payload)
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "access_revoked", payload: ^payload}, 5_000
+    end
+
     test "a bare message from an older publisher is still delivered as new_message" do
       channel_id = "chan-#{System.unique_integer([:positive])}"
       Phoenix.PubSub.subscribe(Messaging.PubSub, "channel:" <> channel_id)
