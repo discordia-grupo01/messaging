@@ -2,7 +2,14 @@ defmodule Messaging.Events.ChannelEventTest do
   use ExUnit.Case, async: true
 
   alias Messaging.Events.ChannelEvent
-  alias Messaging.Events.ChannelEvent.{ChannelCreated, ChannelDeleted, MemberLeft, ServerDeleted}
+
+  alias Messaging.Events.ChannelEvent.{
+    ChannelCreated,
+    ChannelDeleted,
+    MemberJoined,
+    MemberLeft,
+    ServerDeleted
+  }
 
   describe "parse/2 for servers.channel_created" do
     test "parses a well-formed payload" do
@@ -58,7 +65,7 @@ defmodule Messaging.Events.ChannelEventTest do
   end
 
   test "parse/2 rejects an unknown routing key" do
-    assert {:error, :unknown_routing_key} = ChannelEvent.parse("servers.member_joined", %{})
+    assert {:error, :unknown_routing_key} = ChannelEvent.parse("servers.role_updated", %{})
   end
 
   describe "parse/2 for servers.server_deleted" do
@@ -147,6 +154,69 @@ defmodule Messaging.Events.ChannelEventTest do
 
       assert {:error, :invalid_payload} =
                ChannelEvent.parse(ChannelEvent.routing_key_member_left(), payload)
+    end
+  end
+
+  describe "parse/2 for servers.member_joined" do
+    @joined %{
+      "event_id" => "evt-1",
+      "occurred_at" => "2026-09-28T12:00:00Z",
+      "server_id" => "srv-1",
+      "user_id" => "user-1"
+    }
+
+    test "parses a well-formed payload" do
+      assert {:ok, %MemberJoined{server_id: "srv-1", user_id: "user-1"}} =
+               ChannelEvent.parse(ChannelEvent.routing_key_member_joined(), @joined)
+    end
+
+    test "rejects a payload without user_id or with ids that are not strings" do
+      for bad <- [Map.delete(@joined, "user_id"), Map.put(@joined, "user_id", %{"$ne" => 1})] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_member_joined(), bad)
+      end
+    end
+  end
+
+  describe "occurred_at" do
+    test "is parsed into a DateTime, so events can be ordered" do
+      payload = %{
+        "event_id" => "evt-1",
+        "occurred_at" => "2026-09-28T12:00:00.250Z",
+        "server_id" => "srv-1",
+        "user_id" => "user-1"
+      }
+
+      assert {:ok, %MemberLeft{occurred_at: at}} =
+               ChannelEvent.parse(ChannelEvent.routing_key_member_left(), payload)
+
+      assert at == ~U[2026-09-28 12:00:00.250Z]
+    end
+
+    test "a timestamp that does not parse makes the whole event invalid, for every event type" do
+      base = %{"event_id" => "e", "server_id" => "s", "user_id" => "u"}
+
+      cases = [
+        {ChannelEvent.routing_key_member_left(), base},
+        {ChannelEvent.routing_key_member_joined(), base},
+        {ChannelEvent.routing_key_channel_deleted(),
+         %{"event_id" => "e", "server_id" => "s", "channel_id" => "c"}},
+        {ChannelEvent.routing_key_server_deleted(),
+         %{"event_id" => "e", "server_id" => "s", "channel_ids" => []}},
+        {ChannelEvent.routing_key_channel_created(),
+         %{
+           "event_id" => "e",
+           "server_id" => "s",
+           "channel_id" => "c",
+           "name" => "n",
+           "kind" => "text"
+         }}
+      ]
+
+      for {key, payload} <- cases, bad <- ["ayer", "", 12_345, nil] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(key, Map.put(payload, "occurred_at", bad))
+      end
     end
   end
 end
