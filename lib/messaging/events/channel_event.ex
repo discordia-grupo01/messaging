@@ -14,6 +14,11 @@ defmodule Messaging.Events.ChannelEvent do
     defstruct [:event_id, :occurred_at, :server_id, :channel_ids]
   end
 
+  defmodule MemberJoined do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :user_id]
+    defstruct [:event_id, :occurred_at, :server_id, :user_id]
+  end
+
   defmodule MemberLeft do
     @enforce_keys [:event_id, :occurred_at, :server_id, :user_id]
     defstruct [:event_id, :occurred_at, :server_id, :user_id]
@@ -22,16 +27,34 @@ defmodule Messaging.Events.ChannelEvent do
   @routing_key_channel_created "servers.channel_created"
   @routing_key_channel_deleted "servers.channel_deleted"
   @routing_key_server_deleted "servers.server_deleted"
+  @routing_key_member_joined "servers.member_joined"
   @routing_key_member_left "servers.member_left"
 
   def routing_key_channel_created, do: @routing_key_channel_created
   def routing_key_channel_deleted, do: @routing_key_channel_deleted
   def routing_key_server_deleted, do: @routing_key_server_deleted
+  def routing_key_member_joined, do: @routing_key_member_joined
   def routing_key_member_left, do: @routing_key_member_left
 
   @spec parse(String.t(), map()) ::
           {:ok, struct()} | {:error, :unknown_routing_key | :invalid_payload}
-  def parse(@routing_key_channel_created, payload) do
+  def parse(routing_key, payload) do
+    with {:ok, event} <- do_parse(routing_key, payload),
+         {:ok, occurred_at} <- parse_time(event.occurred_at) do
+      {:ok, %{event | occurred_at: occurred_at}}
+    end
+  end
+
+  defp parse_time(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> {:ok, datetime}
+      {:error, _reason} -> {:error, :invalid_payload}
+    end
+  end
+
+  defp parse_time(_other), do: {:error, :invalid_payload}
+
+  defp do_parse(@routing_key_channel_created, payload) do
     case payload do
       %{
         "event_id" => event_id,
@@ -56,7 +79,7 @@ defmodule Messaging.Events.ChannelEvent do
     end
   end
 
-  def parse(@routing_key_channel_deleted, payload) do
+  defp do_parse(@routing_key_channel_deleted, payload) do
     case payload do
       %{
         "event_id" => event_id,
@@ -77,7 +100,7 @@ defmodule Messaging.Events.ChannelEvent do
     end
   end
 
-  def parse(@routing_key_server_deleted, payload) do
+  defp do_parse(@routing_key_server_deleted, payload) do
     case payload do
       %{
         "event_id" => event_id,
@@ -103,7 +126,29 @@ defmodule Messaging.Events.ChannelEvent do
     end
   end
 
-  def parse(@routing_key_member_left, payload) do
+  defp do_parse(@routing_key_member_joined, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "user_id" => user_id
+      }
+      when is_binary(server_id) and is_binary(user_id) ->
+        {:ok,
+         %MemberJoined{
+           event_id: event_id,
+           occurred_at: occurred_at,
+           server_id: server_id,
+           user_id: user_id
+         }}
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_member_left, payload) do
     case payload do
       %{
         "event_id" => event_id,
@@ -125,5 +170,5 @@ defmodule Messaging.Events.ChannelEvent do
     end
   end
 
-  def parse(_other_key, _payload), do: {:error, :unknown_routing_key}
+  defp do_parse(_other_key, _payload), do: {:error, :unknown_routing_key}
 end

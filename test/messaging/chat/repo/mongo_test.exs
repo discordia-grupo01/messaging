@@ -719,6 +719,123 @@ if mongo_url do
       assert {:ok, []} = Repo.list_conversations(a, 10)
     end
 
+    defp clock_key, do: "member:srv-#{Messaging.UUID.generate()}:user-1"
+
+    test "apply_clock/4: the first event for a key is applied" do
+      key = clock_key()
+
+      assert {:ok, :applied} = Repo.apply_clock(key, "joined", ~U[2026-10-06 12:00:00.000Z], nil)
+      assert %{"state" => "joined", "at" => ~U[2026-10-06 12:00:00.000Z]} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: a newer event replaces the state" do
+      key = clock_key()
+      {:ok, :applied} = Repo.apply_clock(key, "joined", ~U[2026-10-06 12:00:00.000Z], nil)
+
+      assert {:ok, :applied} = Repo.apply_clock(key, "left", ~U[2026-10-06 12:00:05.000Z], nil)
+      assert %{"state" => "left"} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: an older event arrives late and is dropped, leaving the newer state" do
+      key = clock_key()
+      {:ok, :applied} = Repo.apply_clock(key, "left", ~U[2026-10-06 12:00:05.000Z], nil)
+
+      assert {:ok, :stale} = Repo.apply_clock(key, "joined", ~U[2026-10-06 12:00:00.000Z], nil)
+      assert %{"state" => "left", "at" => ~U[2026-10-06 12:00:05.000Z]} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: an event with the very same instant is applied, like identify-service does" do
+      key = clock_key()
+      at = ~U[2026-10-06 12:00:00.000Z]
+      {:ok, :applied} = Repo.apply_clock(key, "joined", at, nil)
+
+      assert {:ok, :applied} = Repo.apply_clock(key, "left", at, nil)
+      assert %{"state" => "left"} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: a redelivered event is harmless" do
+      key = clock_key()
+      at = ~U[2026-10-06 12:00:00.000Z]
+
+      assert {:ok, :applied} = Repo.apply_clock(key, "left", at, nil)
+      assert {:ok, :applied} = Repo.apply_clock(key, "left", at, nil)
+      assert %{"state" => "left"} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: each key has its own order" do
+      a = clock_key()
+      b = clock_key()
+      {:ok, :applied} = Repo.apply_clock(a, "left", ~U[2026-10-06 12:00:05.000Z], nil)
+
+      assert {:ok, :applied} = Repo.apply_clock(b, "joined", ~U[2026-10-06 12:00:00.000Z], nil)
+    end
+
+    test "apply_clock/4: concurrent events leave the newest one, whatever the order they finish" do
+      key = clock_key()
+      base = ~U[2026-10-06 12:00:00.000Z]
+
+      1..30
+      |> Enum.shuffle()
+      |> Task.async_stream(
+        fn n -> Repo.apply_clock(key, "n#{n}", DateTime.add(base, n, :second), nil) end,
+        max_concurrency: 30
+      )
+      |> Enum.each(fn {:ok, result} -> assert match?({:ok, _}, result) end)
+
+      assert %{"state" => "n30"} = Repo.get_clock(key)
+    end
+
+    test "apply_clock/4: a tombstone keeps its expiry, and a TTL index will purge it" do
+      key = "channel:#{Messaging.UUID.generate()}"
+      expires = DateTime.add(DateTime.utc_now(), 7, :day) |> DateTime.truncate(:millisecond)
+
+      assert {:ok, :applied} =
+               Repo.apply_clock(key, "deleted", ~U[2026-10-06 12:00:00.000Z], expires)
+
+      assert %{"expires_at" => ^expires} = Repo.get_clock(key)
+
+      assert :ok = Repo.ensure_indexes()
+
+      {:ok, %{"cursor" => %{"firstBatch" => indexes}}} =
+        Mongo.command(Messaging.Mongo, listIndexes: "event_clocks")
+
+      assert %{"expireAfterSeconds" => 0} =
+               Enum.find(indexes, &(&1["name"] == "event_clocks_expires_at_ttl"))
+    end
+
+    test "get_clock/1 is nil for a key that was never seen" do
+      assert Repo.get_clock("member:nobody:#{Messaging.UUID.generate()}") == nil
+    end
+
+    test "list_channel_ids/1 returns the cached channels of that server only" do
+      server = "srv-#{Messaging.UUID.generate()}"
+      other = "srv-#{Messaging.UUID.generate()}"
+      mine = for n <- 1..3, do: "chan-#{n}-#{Messaging.UUID.generate()}"
+      theirs = "chan-x-#{Messaging.UUID.generate()}"
+
+      for id <- mine,
+          do:
+            :ok =
+              Repo.upsert_channel(%{
+                "_id" => id,
+                "server_id" => server,
+                "name" => "n",
+                "kind" => "text"
+              })
+
+      :ok =
+        Repo.upsert_channel(%{
+          "_id" => theirs,
+          "server_id" => other,
+          "name" => "n",
+          "kind" => "text"
+        })
+
+      assert {:ok, ids} = Repo.list_channel_ids(server)
+      assert Enum.sort(ids) == Enum.sort(mine)
+      assert {:ok, []} = Repo.list_channel_ids("srv-nobody-#{Messaging.UUID.generate()}")
+    end
+
     defp list_for(user_id) do
       with {:ok, conversations} <- Chat.list_conversations(user_id) do
         {:ok,

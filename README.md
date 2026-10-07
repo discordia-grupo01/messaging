@@ -44,19 +44,67 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   `BroadcastConsumer`), separado de `discordia.events`
   
 ## Eventos que consume
-- `servers.channel_created` -- upsert en la caché local de canales.
-- `servers.channel_deleted` -- evicción de la caché local de canales.
+- `servers.channel_created` -- upsert en la caché local de canales. Se descarta si
+  llega después de borrarse ese canal o su servidor.
+- `servers.channel_deleted` -- evicción de la caché local de canales y **cierre de
+  los sockets** unidos a ese canal.
 - `servers.server_deleted` -- se eliminó el servidor: se borran **todos los
   mensajes** de sus canales y los canales de la caché. El evento trae los ids de
   los canales (`channel_ids`) y además se usan los que la caché conoce de ese
   servidor, así que no depende de que la caché esté completa. Es idempotente:
   si se entrega dos veces, la segunda no encuentra nada que borrar. Un
   `channel_ids` que no sea una lista de strings se descarta
-  (`discarded_invalid_payload` en `consumed_events`) sin tocar nada.
+  (`discarded_invalid_payload` en `consumed_events`) sin tocar nada. También
+  **cierra los sockets** de todos sus canales.
 - `servers.member_left` -- alguien dejó de ser miembro de un servidor (se fue,
   lo expulsaron o lo banearon): se borran sus menciones de ese servidor, porque
   `GET /v1/mentions` trae el mensaje y si no seguiría leyendo contenido de un
-  servidor que ya no ve. Mismo consumer y misma cola que los anteriores.
+  servidor que ya no ve, y se le **cierran los sockets** de los canales de ese
+  servidor. Mismo consumer y misma cola que los anteriores.
+- `servers.member_joined` -- solo se registra, para poder ordenar contra un
+  `member_left` (ver más abajo). No se publica nada a los clientes.
+
+`servers` publica `member_left` en **todas** las salidas (irse, kick, ban y
+borrado del servidor), así que ese único evento cubre los cuatro casos.
+`member_banned` y `member_kicked` existen en el contrato pero `messaging` no los
+necesita.
+
+### Orden de los eventos
+Los eventos pueden llegar duplicados o fuera de orden. Se resuelve como en
+`identify-service`: **last-write-wins por `occurred_at`**. Por cada cosa
+(un canal, un servidor, o un par miembro–servidor) se guarda en `event_clocks`
+el estado y el instante del último evento aplicado, y un evento solo se aplica
+si es igual o más nuevo (la comparación es atómica en Mongo, así que dos
+instancias o dos eventos simultáneos no se pisan). Uno que llega tarde se
+descarta **sin error** y se anota en `consumed_events` como `ignored_stale`.
+- Un `member_left` anterior a un `member_joined` posterior no expulsa a nadie.
+- Un `channel_created` posterior a su `channel_deleted`, o a que se borró su
+  servidor, no resucita el canal.
+- Los borrados dejan una marca que **vence a los 7 días** (índice TTL); las de
+  miembros no vencen.
+- Un `occurred_at` que no es una fecha válida invalida todo el evento.
+
+### Si el procesamiento falla
+Un fallo de infraestructura (Mongo, RabbitMQ) al aplicar un evento no lo pierde:
+se registra como `error` (`channel_lifecycle_event_failed`), se espera un
+segundo y se **devuelve a la cola** para reintentarlo. Un evento mal formado,
+en cambio, se descarta (reintentarlo no lo arreglaría).
+
+### Cierre de conexiones
+Cuando alguien pierde el acceso a un canal ya no solo se le rechazan las
+acciones nuevas: se le **cierra el socket**. El consumer publica
+`access_revoked` por el fanout de RabbitMQ (`messaging.broadcast`) a cada
+`channel:<id>` afectado, así llega a las conexiones de **todas las instancias**.
+Cada canal abierto lo intercepta: si va para su usuario (o para todos, en un
+borrado), le empuja al cliente
+
+```json
+{"channel_id": "…", "reason": "member_left" | "channel_deleted" | "server_deleted"}
+```
+
+y se cierra (`phx_close`, sin reconexión automática del cliente de Phoenix). Si
+el cliente intenta volver a unirse, el `join` consulta permisos y lo rechaza.
+Los DM no se tocan: no dependen de ningún servidor.
 
 Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)

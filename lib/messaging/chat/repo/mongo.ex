@@ -5,6 +5,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @messages "messages"
   @channels "channels"
   @blocks "blocks"
+  @clocks "event_clocks"
   @mentions "mentions"
 
   @impl true
@@ -276,6 +277,32 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def apply_clock(key, state, %DateTime{} = at, expires_at) do
+    set = %{"state" => state, "at" => at}
+    set = if expires_at, do: Map.put(set, "expires_at", expires_at), else: set
+    filter = %{"_id" => key, "at" => %{"$lte" => at}}
+
+    case Mongo.update_one(@conn, @clocks, filter, %{"$set" => set}, upsert: true) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  defp duplicate_key?(%Mongo.WriteError{write_errors: [%{"code" => 11_000} | _]}), do: true
+  defp duplicate_key?(%{code: 11_000}), do: true
+  defp duplicate_key?(_other), do: false
+
+  @impl true
+  def get_clock(key), do: Mongo.find_one(@conn, @clocks, %{"_id" => key})
+
+  @impl true
+  def list_channel_ids(server_id) do
+    {:ok, cached_channel_ids(server_id)}
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
   def get_channel(channel_id), do: Mongo.find_one(@conn, @channels, %{"_id" => channel_id})
 
   @impl true
@@ -358,10 +385,15 @@ defmodule Messaging.Chat.Repo.Mongo do
       [name: "mentions_server_user", key: [server_id: 1, user_id: 1]]
     ]
 
+    clock_indexes = [
+      [name: "event_clocks_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]
+    ]
+
     with :ok <- Mongo.create_indexes(@conn, @messages, indexes),
          :ok <- Mongo.create_indexes(@conn, @channels, channel_indexes),
-         :ok <- Mongo.create_indexes(@conn, @blocks, block_indexes) do
-      Mongo.create_indexes(@conn, @mentions, mention_indexes)
+         :ok <- Mongo.create_indexes(@conn, @blocks, block_indexes),
+         :ok <- Mongo.create_indexes(@conn, @mentions, mention_indexes) do
+      Mongo.create_indexes(@conn, @clocks, clock_indexes)
     end
   end
 end

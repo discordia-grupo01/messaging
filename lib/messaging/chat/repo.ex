@@ -51,6 +51,14 @@ defmodule Messaging.Chat.Repo do
               :ok | {:error, term()}
   @callback delete_member_mentions(server_id :: String.t(), user_id :: String.t()) ::
               :ok | {:error, term()}
+  @callback apply_clock(
+              key :: String.t(),
+              state :: String.t(),
+              at :: DateTime.t(),
+              expires_at :: DateTime.t() | nil
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback get_clock(key :: String.t()) :: map() | nil | {:error, term()}
+  @callback list_channel_ids(server_id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}

@@ -409,6 +409,76 @@ defmodule MessagingWeb.RoomChannelTest do
     end
   end
 
+  describe "access revoked" do
+    setup do
+      Process.flag(:trap_exit, true)
+      :ok
+    end
+
+    defp revoke(user_id, reason \\ "member_left") do
+      MessagingWeb.Endpoint.broadcast("channel:" <> @channel_id, "access_revoked", %{
+        "channel_id" => @channel_id,
+        "reason" => reason,
+        "user_id" => user_id
+      })
+    end
+
+    test "the user who lost access is told why and the channel closes by itself" do
+      member = join_as("user-a")
+      ref = Process.monitor(member.channel_pid)
+
+      revoke("user-a")
+
+      assert_push "access_revoked", %{"channel_id" => @channel_id, "reason" => "member_left"}
+      assert_receive {:DOWN, ^ref, :process, _pid, :shutdown}
+    end
+
+    test "the notification does not carry the user id, only the channel and the reason" do
+      _member = join_as("user-a")
+
+      revoke("user-a")
+
+      assert_push "access_revoked", payload
+      assert Map.keys(payload) |> Enum.sort() == ["channel_id", "reason"]
+    end
+
+    test "everybody else in the channel keeps their connection and keeps receiving" do
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      kicked = join_as("user-a")
+      stays = join_as("user-b")
+      kicked_ref = Process.monitor(kicked.channel_pid)
+      stays_ref = Process.monitor(stays.channel_pid)
+
+      revoke("user-a")
+
+      assert_receive {:DOWN, ^kicked_ref, :process, _pid, :shutdown}
+      refute_receive {:DOWN, ^stays_ref, :process, _pid, _reason}, 100
+
+      ref = push(stays, "new_message", %{"content" => "sigo aca"})
+      assert_reply ref, :ok
+    end
+
+    test "a deletion has no user: it closes every member's channel" do
+      first = join_as("user-a")
+      second = join_as("user-b")
+      refs = for socket <- [first, second], do: Process.monitor(socket.channel_pid)
+
+      revoke(nil, "channel_deleted")
+
+      for ref <- refs, do: assert_receive({:DOWN, ^ref, :process, _pid, :shutdown})
+      assert_push "access_revoked", %{"reason" => "channel_deleted"}
+    end
+
+    test "a revoked user who tries to come back is refused at the join" do
+      stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _c, _u, _jwt ->
+        {:ok, false}
+      end)
+
+      assert {:error, %{error: %{code: "FORBIDDEN"}}} =
+               subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+    end
+  end
+
   describe "reconnection catch-up" do
     defp doc(id, at),
       do: %{

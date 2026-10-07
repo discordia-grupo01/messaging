@@ -10,6 +10,8 @@ defmodule MessagingWeb.RoomChannel do
 
   @dialyzer {:nowarn_function, handle_info: 2}
 
+  intercept ["access_revoked"]
+
   @impl true
   def join("channel:" <> channel_id, params, socket) do
     user_id = socket.assigns.user_id
@@ -45,6 +47,16 @@ defmodule MessagingWeb.RoomChannel do
         )
 
         {:stop, :catch_up_failed, socket}
+    end
+  end
+
+  @impl true
+  def handle_out("access_revoked", %{"user_id" => target} = payload, socket) do
+    if is_nil(target) or target == socket.assigns.user_id do
+      push(socket, "access_revoked", Map.take(payload, ["channel_id", "reason"]))
+      {:stop, :shutdown, socket}
+    else
+      {:noreply, socket}
     end
   end
 
