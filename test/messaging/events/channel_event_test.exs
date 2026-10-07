@@ -8,6 +8,8 @@ defmodule Messaging.Events.ChannelEventTest do
     ChannelDeleted,
     MemberJoined,
     MemberLeft,
+    MemberMuted,
+    MemberUnmuted,
     ServerDeleted
   }
 
@@ -174,6 +176,70 @@ defmodule Messaging.Events.ChannelEventTest do
       for bad <- [Map.delete(@joined, "user_id"), Map.put(@joined, "user_id", %{"$ne" => 1})] do
         assert {:error, :invalid_payload} =
                  ChannelEvent.parse(ChannelEvent.routing_key_member_joined(), bad)
+      end
+    end
+  end
+
+  describe "parse/2 for servers.member_muted" do
+    @muted %{
+      "event_id" => "evt-muted",
+      "occurred_at" => "2026-10-06T12:00:00Z",
+      "server_id" => "srv-1",
+      "user_id" => "user-1",
+      "muted_by" => "user-2",
+      "until_at" => "2026-10-07T12:00:00Z",
+      "reason" => "spam"
+    }
+
+    test "parses a well-formed mute event" do
+      assert {:ok,
+              %MemberMuted{
+                event_id: "evt-muted",
+                server_id: "srv-1",
+                user_id: "user-1",
+                muted_by: "user-2",
+                until_at: ~U[2026-10-07 12:00:00Z],
+                reason: "spam"
+              }} = ChannelEvent.parse(ChannelEvent.routing_key_member_muted(), @muted)
+    end
+
+    test "rejects missing fields" do
+      for bad <- [
+            Map.delete(@muted, "muted_by"),
+            Map.delete(@muted, "until_at"),
+            Map.delete(@muted, "reason")
+          ] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_member_muted(), bad)
+      end
+    end
+  end
+
+  describe "parse/2 for servers.member_unmuted" do
+    @unmuted %{
+      "event_id" => "evt-unmuted",
+      "occurred_at" => "2026-10-06T13:00:00Z",
+      "server_id" => "srv-1",
+      "user_id" => "user-1",
+      "unmuted_by" => "user-2",
+      "reason" => "expired"
+    }
+
+    test "parses a well-formed unmute event" do
+      assert {:ok,
+              %MemberUnmuted{
+                event_id: "evt-unmuted",
+                server_id: "srv-1",
+                user_id: "user-1",
+                unmuted_by: "user-2",
+                reason: "expired"
+              }} = ChannelEvent.parse(ChannelEvent.routing_key_member_unmuted(), @unmuted)
+    end
+
+    test "rejects missing fields" do
+      for bad <- [Map.delete(@unmuted, "unmuted_by"), Map.delete(@unmuted, "reason")] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_member_unmuted(), bad)
       end
     end
   end

@@ -12,7 +12,9 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
     ChannelEvent.routing_key_channel_deleted(),
     ChannelEvent.routing_key_server_deleted(),
     ChannelEvent.routing_key_member_joined(),
-    ChannelEvent.routing_key_member_left()
+    ChannelEvent.routing_key_member_left(),
+    ChannelEvent.routing_key_member_muted(),
+    ChannelEvent.routing_key_member_unmuted()
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)

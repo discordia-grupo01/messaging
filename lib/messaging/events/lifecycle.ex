@@ -81,6 +81,32 @@ defmodule Messaging.Events.Lifecycle do
     end
   end
 
+  def handle(%ChannelEvent.MemberMuted{} = event) do
+    case clock(member_mute_key(event), "muted", event.occurred_at, event.until_at) do
+      {:ok, :applied} ->
+        Logger.info("member_muted_applied", server_id: event.server_id, user_id: event.user_id)
+
+      {:ok, :stale} ->
+        ignored(:stale, "servers.member_muted")
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  def handle(%ChannelEvent.MemberUnmuted{} = event) do
+    case clock(member_mute_key(event), "unmuted", event.occurred_at) do
+      {:ok, :applied} ->
+        Logger.info("member_unmuted_applied", server_id: event.server_id, user_id: event.user_id)
+
+      {:ok, :stale} ->
+        ignored(:stale, "servers.member_unmuted")
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   defp server_state(server_id) do
     case Repo.impl().get_clock(server_key(server_id)) do
       %{"state" => "deleted"} -> :deleted
@@ -102,4 +128,7 @@ defmodule Messaging.Events.Lifecycle do
   defp channel_key(channel_id), do: "channel:" <> channel_id
   defp server_key(server_id), do: "server:" <> server_id
   defp member_key(%{server_id: server_id, user_id: user_id}), do: "member:#{server_id}:#{user_id}"
+
+  defp member_mute_key(%{server_id: server_id, user_id: user_id}),
+    do: "member_mute:#{server_id}:#{user_id}"
 end

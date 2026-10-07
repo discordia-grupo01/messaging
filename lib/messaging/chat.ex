@@ -37,8 +37,14 @@ defmodule Messaging.Chat do
 
   @spec send_message(send_message_params()) ::
           {:ok, Message.t()} | {:error, MessagingWeb.ApiError.reason()}
-  def send_message(%{channel_id: channel_id, user_id: user_id, content: content, raw_jwt: raw_jwt}) do
+  def send_message(%{
+        channel_id: channel_id,
+        user_id: user_id,
+        content: content,
+        raw_jwt: raw_jwt
+      }) do
     with {:ok, channel} <- fetch_text_channel(channel_id),
+         :ok <- ensure_not_muted(channel, user_id),
          {:ok, trimmed} <- validate_content(content),
          {:ok, true} <- check_permission(channel, user_id, raw_jwt),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, raw_jwt),
@@ -69,6 +75,7 @@ defmodule Messaging.Chat do
         raw_jwt: raw_jwt
       }) do
     with {:ok, channel} <- fetch_channel(channel_id),
+         :ok <- ensure_not_muted(channel, user_id),
          {:ok, true} <- check_permission(channel, user_id, raw_jwt),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- require_author(message, user_id),
@@ -364,6 +371,22 @@ defmodule Messaging.Chat do
 
   defp check_permission(%ChannelCache{} = channel, user_id, raw_jwt),
     do: Access.for_channel(channel).can_post?(channel, user_id, raw_jwt)
+
+  defp ensure_not_muted(%ChannelCache{server_id: nil}, _user_id), do: :ok
+
+  defp ensure_not_muted(%ChannelCache{server_id: server_id}, user_id) do
+    case repo().get_clock(member_mute_key(server_id, user_id)) do
+      %{"state" => "muted", "expires_at" => %DateTime{} = expires_at} ->
+        if DateTime.compare(expires_at, DateTime.utc_now()) == :gt,
+          do: {:error, :member_muted},
+          else: :ok
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp member_mute_key(server_id, user_id), do: "member_mute:#{server_id}:#{user_id}"
 
   defp resolve_mentions(%ChannelCache{kind: "dm"}, _content, _raw_jwt), do: {:ok, Mentions.none()}
 
