@@ -4,6 +4,7 @@ defmodule Messaging.Events.Audit do
 
   @type status ::
           :processed
+          | :ignored_stale
           | :discarded_malformed_payload
           | :discarded_unknown_routing_key
           | :discarded_invalid_payload

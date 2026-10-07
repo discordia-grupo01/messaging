@@ -2,9 +2,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   use GenServer
   require Logger
 
-  alias Messaging.Chat
-  alias Messaging.Chat.ChannelCache
-  alias Messaging.Events.{Audit, Backoff, ChannelEvent}
+  alias Messaging.Events.{Audit, Backoff, ChannelEvent, Lifecycle}
   alias Messaging.Log
 
   @exchange "discordia.events"
@@ -13,6 +11,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
     ChannelEvent.routing_key_channel_created(),
     ChannelEvent.routing_key_channel_deleted(),
     ChannelEvent.routing_key_server_deleted(),
+    ChannelEvent.routing_key_member_joined(),
     ChannelEvent.routing_key_member_left()
   ]
 
@@ -83,26 +82,30 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   def terminate(_reason, _state), do: :ok
 
   defp handle_delivery(payload, meta, chan) do
-    case Jason.decode(payload) do
-      {:ok, decoded} -> handle_decoded(decoded, payload, meta)
-      {:error, reason} -> handle_malformed(payload, meta, reason)
-    end
+    outcome =
+      case Jason.decode(payload) do
+        {:ok, decoded} -> handle_decoded(decoded, payload, meta)
+        {:error, reason} -> handle_malformed(payload, meta, reason)
+      end
 
-    AMQP.Basic.ack(chan, meta.delivery_tag)
+    finish(outcome, chan, meta)
+  end
+
+  defp finish(:ack, chan, meta), do: AMQP.Basic.ack(chan, meta.delivery_tag)
+
+  defp finish(:retry, chan, meta) do
+    Process.sleep(Application.get_env(:messaging, :event_retry_delay_ms, 1_000))
+    AMQP.Basic.nack(chan, meta.delivery_tag, requeue: true)
   end
 
   defp handle_decoded(decoded, payload, meta) do
     case ChannelEvent.parse(meta.routing_key, decoded) do
       {:ok, event} ->
-        apply_event(event)
-
-        Audit.record(%{
-          event_id: event.event_id,
-          routing_key: meta.routing_key,
-          raw_body: payload,
-          status: :processed,
-          error: nil
-        })
+        case Lifecycle.handle(event) do
+          :ok -> audit_event(event, meta, payload, :processed)
+          {:ignored, _cause} -> audit_event(event, meta, payload, :ignored_stale)
+          {:error, reason} -> failed(meta, reason)
+        end
 
       {:error, reason} ->
         Logger.warning("channel_lifecycle_consumer_bad_message",
@@ -117,7 +120,30 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
           status: discard_status(reason),
           error: inspect(reason)
         })
+
+        :ack
     end
+  end
+
+  defp audit_event(event, meta, payload, status) do
+    Audit.record(%{
+      event_id: event.event_id,
+      routing_key: meta.routing_key,
+      raw_body: payload,
+      status: status,
+      error: nil
+    })
+
+    :ack
+  end
+
+  defp failed(meta, reason) do
+    Logger.error("channel_lifecycle_event_failed",
+      reason: Log.reason(reason),
+      routing_key: meta.routing_key
+    )
+
+    :retry
   end
 
   defp handle_malformed(payload, meta, reason) do
@@ -133,42 +159,12 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
       status: :discarded_malformed_payload,
       error: inspect(reason)
     })
+
+    :ack
   end
 
   defp discard_status(:unknown_routing_key), do: :discarded_unknown_routing_key
   defp discard_status(:invalid_payload), do: :discarded_invalid_payload
-
-  defp apply_event(%ChannelEvent.ChannelCreated{} = event) do
-    :ok =
-      Chat.upsert_channel(%ChannelCache{
-        channel_id: event.channel_id,
-        server_id: event.server_id,
-        name: event.name,
-        kind: event.kind
-      })
-
-    Logger.info("channel_created_applied", channel_id: event.channel_id)
-  end
-
-  defp apply_event(%ChannelEvent.ChannelDeleted{} = event) do
-    :ok = Chat.delete_channel(event.channel_id)
-    Logger.info("channel_deleted_applied", channel_id: event.channel_id)
-  end
-
-  defp apply_event(%ChannelEvent.ServerDeleted{} = event) do
-    :ok = Chat.delete_server_data(event.server_id, event.channel_ids)
-
-    Logger.info("server_deleted_applied",
-      server_id: event.server_id,
-      channels: length(event.channel_ids)
-    )
-  end
-
-  defp apply_event(%ChannelEvent.MemberLeft{} = event) do
-    :ok = Chat.delete_member_mentions(event.server_id, event.user_id)
-
-    Logger.info("member_left_applied", server_id: event.server_id, user_id: event.user_id)
-  end
 
   defp connect(url, queue) do
     with {:ok, conn} <- AMQP.Connection.open(url),

@@ -255,6 +255,231 @@ if rabbitmq_url && mongo_url do
              }) == 1
     end
 
+    describe "closing sockets and ordering" do
+      defp seed_channels(server_id, count) do
+        for n <- 1..count do
+          id = "chan-#{n}-#{Messaging.UUID.generate()}"
+
+          :ok =
+            Chat.upsert_channel(%Messaging.Chat.ChannelCache{
+              channel_id: id,
+              server_id: server_id,
+              name: "n#{n}",
+              kind: "text"
+            })
+
+          MessagingWeb.Endpoint.subscribe("channel:" <> id)
+          id
+        end
+      end
+
+      defp publish(chan, key, fields, at \\ DateTime.utc_now()) do
+        event_id = Messaging.UUID.generate()
+
+        body =
+          Map.merge(
+            %{"event_id" => event_id, "occurred_at" => DateTime.to_iso8601(at)},
+            fields
+          )
+
+        :ok = AMQP.Basic.publish(chan, @exchange, key, Jason.encode!(body), persistent: true)
+        event_id
+      end
+
+      defp status(event_id), do: (consumed_event(event_id) || %{})["status"]
+
+      test "a member leaving, kicked or banned loses the open channels of that server, and only theirs",
+           %{chan: chan} do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [first, second] = seed_channels(server, 2)
+        user = "user-#{Messaging.UUID.generate()}"
+
+        event_id =
+          publish(chan, "servers.member_left", %{"server_id" => server, "user_id" => user})
+
+        for id <- [first, second] do
+          assert_receive %Phoenix.Socket.Broadcast{
+                           topic: "channel:" <> ^id,
+                           event: "access_revoked",
+                           payload: %{"user_id" => ^user, "reason" => "member_left"}
+                         },
+                         5_000
+        end
+
+        assert wait_until(fn -> status(event_id) == "processed" end)
+      end
+
+      test "a leave that arrives after a newer join is dropped: the user is not kicked", %{
+        chan: chan
+      } do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [channel] = seed_channels(server, 1)
+        user = "user-#{Messaging.UUID.generate()}"
+        now = DateTime.utc_now()
+
+        joined =
+          publish(chan, "servers.member_joined", %{"server_id" => server, "user_id" => user}, now)
+
+        assert wait_until(fn -> status(joined) == "processed" end)
+
+        stale =
+          publish(
+            chan,
+            "servers.member_left",
+            %{"server_id" => server, "user_id" => user},
+            DateTime.add(now, -60, :second)
+          )
+
+        assert wait_until(fn -> status(stale) == "ignored_stale" end)
+        refute_receive %Phoenix.Socket.Broadcast{topic: "channel:" <> ^channel}, 200
+      end
+
+      test "a leave, then a re-join, then a late duplicate of the leave: still not kicked again",
+           %{
+             chan: chan
+           } do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [channel] = seed_channels(server, 1)
+        user = "user-#{Messaging.UUID.generate()}"
+        now = DateTime.utc_now()
+        fields = %{"server_id" => server, "user_id" => user}
+
+        left = publish(chan, "servers.member_left", fields, now)
+        assert_receive %Phoenix.Socket.Broadcast{event: "access_revoked"}, 5_000
+        assert wait_until(fn -> status(left) == "processed" end)
+
+        joined = publish(chan, "servers.member_joined", fields, DateTime.add(now, 30, :second))
+        assert wait_until(fn -> status(joined) == "processed" end)
+
+        duplicate = publish(chan, "servers.member_left", fields, now)
+        assert wait_until(fn -> status(duplicate) == "ignored_stale" end)
+        refute_receive %Phoenix.Socket.Broadcast{topic: "channel:" <> ^channel}, 200
+      end
+
+      test "a deleted channel closes its sockets, whoever they belong to", %{chan: chan} do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [channel] = seed_channels(server, 1)
+
+        event_id =
+          publish(chan, "servers.channel_deleted", %{
+            "server_id" => server,
+            "channel_id" => channel
+          })
+
+        assert_receive %Phoenix.Socket.Broadcast{
+                         topic: "channel:" <> ^channel,
+                         event: "access_revoked",
+                         payload: %{"user_id" => nil, "reason" => "channel_deleted"}
+                       },
+                       5_000
+
+        assert wait_until(fn -> status(event_id) == "processed" end)
+        assert {:error, :channel_not_found} = Chat.channel_exists?(channel)
+      end
+
+      test "a deleted server closes every channel it had, even those only the cache knew", %{
+        chan: chan
+      } do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [known, cached_only] = seed_channels(server, 2)
+
+        publish(chan, "servers.server_deleted", %{"server_id" => server, "channel_ids" => [known]})
+
+        for id <- [known, cached_only] do
+          assert_receive %Phoenix.Socket.Broadcast{
+                           topic: "channel:" <> ^id,
+                           event: "access_revoked",
+                           payload: %{"reason" => "server_deleted"}
+                         },
+                         5_000
+        end
+      end
+
+      test "a channel_created that arrives after its channel_deleted is dropped", %{chan: chan} do
+        server = "srv-#{Messaging.UUID.generate()}"
+        channel = "chan-#{Messaging.UUID.generate()}"
+        now = DateTime.utc_now()
+
+        deleted =
+          publish(
+            chan,
+            "servers.channel_deleted",
+            %{"server_id" => server, "channel_id" => channel},
+            now
+          )
+
+        assert wait_until(fn -> status(deleted) == "processed" end)
+
+        late =
+          publish(
+            chan,
+            "servers.channel_created",
+            %{"server_id" => server, "channel_id" => channel, "name" => "x", "kind" => "text"},
+            DateTime.add(now, -30, :second)
+          )
+
+        assert wait_until(fn -> status(late) == "ignored_stale" end)
+        assert {:error, :channel_not_found} = Chat.channel_exists?(channel)
+      end
+
+      test "a channel_created for a server that was already deleted is dropped", %{chan: chan} do
+        server = "srv-#{Messaging.UUID.generate()}"
+        channel = "chan-#{Messaging.UUID.generate()}"
+
+        deleted =
+          publish(chan, "servers.server_deleted", %{"server_id" => server, "channel_ids" => []})
+
+        assert wait_until(fn -> status(deleted) == "processed" end)
+
+        late =
+          publish(chan, "servers.channel_created", %{
+            "server_id" => server,
+            "channel_id" => channel,
+            "name" => "x",
+            "kind" => "text"
+          })
+
+        assert wait_until(fn -> status(late) == "ignored_stale" end)
+        assert {:error, :channel_not_found} = Chat.channel_exists?(channel)
+      end
+
+      test "if the sockets cannot be told, the event is not lost: it is retried until it works",
+           %{
+             chan: chan
+           } do
+        previous = Application.get_env(:messaging, :broadcaster)
+        Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+        Application.put_env(:messaging, :event_retry_delay_ms, 50)
+
+        on_exit(fn ->
+          Application.put_env(:messaging, :broadcaster, previous)
+          Application.delete_env(:messaging, :event_retry_delay_ms)
+        end)
+
+        server = "srv-#{Messaging.UUID.generate()}"
+        [channel] = seed_channels(server, 1)
+        user = "user-#{Messaging.UUID.generate()}"
+
+        event_id =
+          publish(chan, "servers.member_left", %{"server_id" => server, "user_id" => user})
+
+        Process.sleep(400)
+        assert status(event_id) == nil
+        refute_received %Phoenix.Socket.Broadcast{}
+
+        Application.put_env(:messaging, :broadcaster, Messaging.Events.LocalBroadcaster)
+
+        assert_receive %Phoenix.Socket.Broadcast{
+                         topic: "channel:" <> ^channel,
+                         event: "access_revoked",
+                         payload: %{"user_id" => ^user}
+                       },
+                       5_000
+
+        assert wait_until(fn -> status(event_id) == "processed" end)
+      end
+    end
+
     defp consumed_event(event_id),
       do: Mongo.find_one(Messaging.Mongo, "consumed_events", %{"_id" => event_id})
 
