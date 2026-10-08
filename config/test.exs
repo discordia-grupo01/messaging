@@ -19,3 +19,4 @@ config :messaging, :users_http_plug, {Req.Test, Messaging.Chat.UsersClient.Http}
 config :messaging, :mentions_http_plug, {Req.Test, Messaging.Chat.MentionsClient.Http}
 
 config :logger, level: :warning
+config :logger, :console, colors: [enabled: false]

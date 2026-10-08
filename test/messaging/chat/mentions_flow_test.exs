@@ -8,6 +8,11 @@ defmodule Messaging.Chat.MentionsFlowTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
+    :ok
+  end
+
   @channel_id "chan-mentions"
   @server_id "srv-mentions"
   @author "author-1"

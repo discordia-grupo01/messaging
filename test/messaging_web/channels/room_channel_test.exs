@@ -25,6 +25,7 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
     stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
