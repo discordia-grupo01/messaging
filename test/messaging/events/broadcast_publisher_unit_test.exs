@@ -18,7 +18,7 @@ defmodule Messaging.Events.BroadcastPublisherUnitTest do
 
     assert {:reply, {:error, :not_connected}, ^state} =
              BroadcastPublisher.handle_call(
-               {:publish, %{"channel_id" => "c1"}},
+               {:publish, "channel:c1", "new_message", %{"channel_id" => "c1"}},
                {self(), make_ref()},
                state
              )
@@ -44,5 +44,18 @@ defmodule Messaging.Events.BroadcastPublisherUnitTest do
 
     assert backoff < 30_000
     assert_received :connect
+  end
+
+  test "handle_info({:EXIT, ...}) is ignored so the DOWN handler can reconnect" do
+    state = %{url: @unreachable_url, backoff: 1_000, conn: :fake_conn, chan: :fake_chan}
+
+    assert {:noreply, ^state} = BroadcastPublisher.handle_info({:EXIT, self(), :killed}, state)
+  end
+
+  test "terminate/2 closes the connection and never raises, even if it is already gone" do
+    {:ok, conn} = Agent.start(fn -> :not_an_amqp_connection end)
+
+    assert :ok = BroadcastPublisher.terminate(:shutdown, %{conn: %{pid: conn}})
+    assert :ok = BroadcastPublisher.terminate(:shutdown, %{conn: nil})
   end
 end

@@ -1,3 +1,8 @@
+logger_metadata =
+  "config/config.exs"
+  |> Config.Reader.read!(env: :prod)
+  |> get_in([:logger, :console, :metadata])
+
 %{
   configs: [
     %{
@@ -8,6 +13,9 @@
       },
       strict: true,
       checks: %{
+        enabled: [
+          {Credo.Check.Warning.MissedMetadataKeyInLoggerConfig, [metadata_keys: logger_metadata]}
+        ],
         disabled: [
           {Credo.Check.Design.TagTODO, []},
           {Credo.Check.Design.TagFIXME, []},

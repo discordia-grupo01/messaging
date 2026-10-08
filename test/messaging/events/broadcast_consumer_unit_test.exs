@@ -49,4 +49,17 @@ defmodule Messaging.Events.BroadcastConsumerUnitTest do
     state = %{url: @unreachable_url, backoff: 1_000, conn: nil, chan: nil}
     assert {:noreply, ^state} = BroadcastConsumer.handle_info({:basic_cancel_ok, %{}}, state)
   end
+
+  test "handle_info({:EXIT, ...}) is ignored so the DOWN handler can reconnect" do
+    state = %{url: @unreachable_url, backoff: 1_000, conn: :fake_conn, chan: :fake_chan}
+
+    assert {:noreply, ^state} = BroadcastConsumer.handle_info({:EXIT, self(), :killed}, state)
+  end
+
+  test "terminate/2 closes the connection and never raises, even if it is already gone" do
+    {:ok, conn} = Agent.start(fn -> :not_an_amqp_connection end)
+
+    assert :ok = BroadcastConsumer.terminate(:shutdown, %{conn: %{pid: conn}})
+    assert :ok = BroadcastConsumer.terminate(:shutdown, %{conn: nil})
+  end
 end

@@ -2,15 +2,17 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   use GenServer
   require Logger
 
-  alias Messaging.Chat
-  alias Messaging.Chat.ChannelCache
-  alias Messaging.Events.{Audit, Backoff, ChannelEvent}
+  alias Messaging.Events.{Audit, Backoff, ChannelEvent, Lifecycle}
+  alias Messaging.Log
 
   @exchange "discordia.events"
   @default_queue "messaging.channel_lifecycle"
   @routing_keys [
     ChannelEvent.routing_key_channel_created(),
-    ChannelEvent.routing_key_channel_deleted()
+    ChannelEvent.routing_key_channel_deleted(),
+    ChannelEvent.routing_key_server_deleted(),
+    ChannelEvent.routing_key_member_joined(),
+    ChannelEvent.routing_key_member_left()
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -29,12 +31,13 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
     case connect(state.url, state.queue) do
       {:ok, conn, chan} ->
         Process.monitor(conn.pid)
-        Logger.info("messaging: channel_lifecycle_consumer connected queue=#{state.queue}")
+        Logger.info("channel_lifecycle_consumer_connected", queue: state.queue)
         {:noreply, %{state | conn: conn, chan: chan, backoff: Backoff.initial()}}
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: channel_lifecycle_consumer connect_failed reason=#{inspect(reason)} retry_in_ms=#{state.backoff}"
+        Logger.warning("channel_lifecycle_consumer_connect_failed",
+          reason: Log.reason(reason),
+          retry_in_ms: state.backoff
         )
 
         Process.send_after(self(), :connect, state.backoff)
@@ -44,9 +47,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
-    Logger.warning(
-      "messaging: channel_lifecycle_consumer connection_down reason=#{inspect(reason)}"
-    )
+    Logger.warning("channel_lifecycle_consumer_connection_down", reason: Log.reason(reason))
 
     send(self(), :connect)
     {:noreply, %{state | conn: nil, chan: nil, backoff: Backoff.initial()}}
@@ -81,30 +82,35 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   def terminate(_reason, _state), do: :ok
 
   defp handle_delivery(payload, meta, chan) do
-    case Jason.decode(payload) do
-      {:ok, decoded} -> handle_decoded(decoded, payload, meta)
-      {:error, reason} -> handle_malformed(payload, meta, reason)
-    end
+    outcome =
+      case Jason.decode(payload) do
+        {:ok, decoded} -> handle_decoded(decoded, payload, meta)
+        {:error, reason} -> handle_malformed(payload, meta, reason)
+      end
 
-    AMQP.Basic.ack(chan, meta.delivery_tag)
+    finish(outcome, chan, meta)
+  end
+
+  defp finish(:ack, chan, meta), do: AMQP.Basic.ack(chan, meta.delivery_tag)
+
+  defp finish(:retry, chan, meta) do
+    Process.sleep(Application.get_env(:messaging, :event_retry_delay_ms, 1_000))
+    AMQP.Basic.nack(chan, meta.delivery_tag, requeue: true)
   end
 
   defp handle_decoded(decoded, payload, meta) do
     case ChannelEvent.parse(meta.routing_key, decoded) do
       {:ok, event} ->
-        apply_event(event)
-
-        Audit.record(%{
-          event_id: event.event_id,
-          routing_key: meta.routing_key,
-          raw_body: payload,
-          status: :processed,
-          error: nil
-        })
+        case Lifecycle.handle(event) do
+          :ok -> audit_event(event, meta, payload, :processed)
+          {:ignored, _cause} -> audit_event(event, meta, payload, :ignored_stale)
+          {:error, reason} -> failed(meta, reason)
+        end
 
       {:error, reason} ->
-        Logger.warning(
-          "messaging: channel_lifecycle_consumer bad_message reason=#{inspect(reason)} routing_key=#{meta.routing_key}"
+        Logger.warning("channel_lifecycle_consumer_bad_message",
+          reason: Log.reason(reason),
+          routing_key: meta.routing_key
         )
 
         Audit.record(%{
@@ -114,12 +120,36 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
           status: discard_status(reason),
           error: inspect(reason)
         })
+
+        :ack
     end
   end
 
+  defp audit_event(event, meta, payload, status) do
+    Audit.record(%{
+      event_id: event.event_id,
+      routing_key: meta.routing_key,
+      raw_body: payload,
+      status: status,
+      error: nil
+    })
+
+    :ack
+  end
+
+  defp failed(meta, reason) do
+    Logger.error("channel_lifecycle_event_failed",
+      reason: Log.reason(reason),
+      routing_key: meta.routing_key
+    )
+
+    :retry
+  end
+
   defp handle_malformed(payload, meta, reason) do
-    Logger.warning(
-      "messaging: channel_lifecycle_consumer bad_message reason=#{inspect(reason)} routing_key=#{meta.routing_key}"
+    Logger.warning("channel_lifecycle_consumer_bad_message",
+      reason: Log.reason(reason),
+      routing_key: meta.routing_key
     )
 
     Audit.record(%{
@@ -129,27 +159,12 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
       status: :discarded_malformed_payload,
       error: inspect(reason)
     })
+
+    :ack
   end
 
   defp discard_status(:unknown_routing_key), do: :discarded_unknown_routing_key
   defp discard_status(:invalid_payload), do: :discarded_invalid_payload
-
-  defp apply_event(%ChannelEvent.ChannelCreated{} = event) do
-    :ok =
-      Chat.upsert_channel(%ChannelCache{
-        channel_id: event.channel_id,
-        server_id: event.server_id,
-        name: event.name,
-        kind: event.kind
-      })
-
-    Logger.info("messaging: channel_created_applied channel_id=#{event.channel_id}")
-  end
-
-  defp apply_event(%ChannelEvent.ChannelDeleted{} = event) do
-    :ok = Chat.delete_channel(event.channel_id)
-    Logger.info("messaging: channel_deleted_applied channel_id=#{event.channel_id}")
-  end
 
   defp connect(url, queue) do
     with {:ok, conn} <- AMQP.Connection.open(url),

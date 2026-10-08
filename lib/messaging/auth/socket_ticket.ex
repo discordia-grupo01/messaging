@@ -1,4 +1,6 @@
 defmodule Messaging.Auth.SocketTicket do
+  alias Messaging.Log
+
   require Logger
 
   @ttl_seconds 30
@@ -22,13 +24,11 @@ defmodule Messaging.Auth.SocketTicket do
 
     case store().put(doc) do
       :ok ->
-        Logger.info("messaging: socket_ticket_issued user_id=#{user_id}")
+        Logger.info("socket_ticket_issued", user_id: user_id)
         {:ok, ticket}
 
       {:error, reason} = error ->
-        Logger.warning(
-          "messaging: socket_ticket_issue_failed user_id=#{user_id} reason=#{inspect(reason)}"
-        )
+        Logger.error("socket_ticket_issue_failed", user_id: user_id, reason: Log.reason(reason))
 
         error
     end
@@ -41,16 +41,16 @@ defmodule Messaging.Auth.SocketTicket do
         if DateTime.compare(expires_at, DateTime.utc_now()) == :gt do
           {:ok, %{user_id: user_id, raw_jwt: raw_jwt}}
         else
-          Logger.warning("messaging: socket_ticket_rejected reason=expired user_id=#{user_id}")
+          Logger.warning("socket_ticket_rejected", cause: "expired", user_id: user_id)
           {:error, :invalid_ticket}
         end
 
       {:ok, nil} ->
-        Logger.warning("messaging: socket_ticket_rejected reason=unknown_or_already_used")
+        Logger.warning("socket_ticket_rejected", cause: "unknown_or_already_used")
         {:error, :invalid_ticket}
 
       {:error, reason} ->
-        Logger.warning("messaging: socket_ticket_rejected reason=#{inspect(reason)}")
+        Logger.error("socket_ticket_rejected", cause: "store_error", reason: Log.reason(reason))
         {:error, :invalid_ticket}
     end
   end

@@ -20,6 +20,15 @@ defmodule MessagingWeb.Router do
     pipe_through [:api, :authenticated]
 
     get "/channels/:channel_id/messages", MessageController, :index
+    patch "/channels/:channel_id/messages/:message_id", MessageController, :update
+    delete "/channels/:channel_id/messages/:message_id", MessageController, :delete
+    post "/channels/:channel_id/mentions/read", MentionController, :read
+    get "/mentions", MentionController, :index
+    get "/conversations", ConversationController, :index
+    post "/conversations/:id/read", ConversationController, :read
+    get "/blocks", BlockController, :index
+    post "/blocks", BlockController, :create
+    delete "/blocks/:user_id", BlockController, :delete
     post "/socket-tickets", SocketTicketController, :create
   end
 end
