@@ -24,17 +24,31 @@ defmodule Messaging.Events.ChannelEvent do
     defstruct [:event_id, :occurred_at, :server_id, :user_id]
   end
 
+  defmodule MemberMuted do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :user_id, :muted_by, :until_at, :reason]
+    defstruct [:event_id, :occurred_at, :server_id, :user_id, :muted_by, :until_at, :reason]
+  end
+
+  defmodule MemberUnmuted do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :user_id, :unmuted_by, :reason]
+    defstruct [:event_id, :occurred_at, :server_id, :user_id, :unmuted_by, :reason]
+  end
+
   @routing_key_channel_created "servers.channel_created"
   @routing_key_channel_deleted "servers.channel_deleted"
   @routing_key_server_deleted "servers.server_deleted"
   @routing_key_member_joined "servers.member_joined"
   @routing_key_member_left "servers.member_left"
+  @routing_key_member_muted "servers.member_muted"
+  @routing_key_member_unmuted "servers.member_unmuted"
 
   def routing_key_channel_created, do: @routing_key_channel_created
   def routing_key_channel_deleted, do: @routing_key_channel_deleted
   def routing_key_server_deleted, do: @routing_key_server_deleted
   def routing_key_member_joined, do: @routing_key_member_joined
   def routing_key_member_left, do: @routing_key_member_left
+  def routing_key_member_muted, do: @routing_key_member_muted
+  def routing_key_member_unmuted, do: @routing_key_member_unmuted
 
   @spec parse(String.t(), map()) ::
           {:ok, struct()} | {:error, :unknown_routing_key | :invalid_payload}
@@ -163,6 +177,64 @@ defmodule Messaging.Events.ChannelEvent do
            occurred_at: occurred_at,
            server_id: server_id,
            user_id: user_id
+         }}
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_member_muted, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "user_id" => user_id,
+        "muted_by" => muted_by,
+        "until_at" => until_at,
+        "reason" => reason
+      }
+      when is_binary(server_id) and is_binary(user_id) and is_binary(muted_by) and
+             is_binary(reason) ->
+        with {:ok, until_at} <- parse_time(until_at) do
+          {:ok,
+           %MemberMuted{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             server_id: server_id,
+             user_id: user_id,
+             muted_by: muted_by,
+             until_at: until_at,
+             reason: reason
+           }}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_member_unmuted, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "user_id" => user_id,
+        "unmuted_by" => unmuted_by,
+        "reason" => reason
+      }
+      when is_binary(server_id) and is_binary(user_id) and is_binary(unmuted_by) and
+             is_binary(reason) ->
+        {:ok,
+         %MemberUnmuted{
+           event_id: event_id,
+           occurred_at: occurred_at,
+           server_id: server_id,
+           user_id: user_id,
+           unmuted_by: unmuted_by,
+           reason: reason
          }}
 
       _other ->

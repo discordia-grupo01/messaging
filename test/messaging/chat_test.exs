@@ -7,6 +7,11 @@ defmodule Messaging.ChatTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
+    :ok
+  end
+
   @channel_id "chan-1"
   @server_id "srv-1"
   @user_id "user-1"
