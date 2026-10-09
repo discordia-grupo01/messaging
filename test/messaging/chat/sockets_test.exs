@@ -45,12 +45,31 @@ defmodule Messaging.Chat.SocketsTest do
     }
   end
 
+  test "revoke_users/3 tells one channel, once per user, which users lost access" do
+    MessagingWeb.Endpoint.subscribe("channel:c-5")
+
+    assert :ok = Sockets.revoke_users("c-5", ["user-1", "user-2"], "permissions_changed")
+
+    for user <- ["user-1", "user-2"] do
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "channel:c-5",
+        event: "access_revoked",
+        payload: %{"channel_id" => "c-5", "reason" => "permissions_changed", "user_id" => ^user}
+      }
+    end
+
+    refute_receive %Phoenix.Socket.Broadcast{}, 50
+  end
+
   test "a failure to publish stops the process and is returned, so the event can be retried" do
     Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
     expect(Messaging.Chat.RepoMock, :list_channel_ids, fn _server -> {:ok, ["c-1", "c-2"]} end)
 
     assert {:error, :not_connected} = Sockets.revoke_member("srv-1", "user-1", "member_left")
     assert {:error, :not_connected} = Sockets.close_channels(["c-1"], "channel_deleted")
+
+    assert {:error, :not_connected} =
+             Sockets.revoke_users("c-1", ["user-1"], "permissions_changed")
   end
 
   test "a failure reading the channels is returned" do
