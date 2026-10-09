@@ -63,6 +63,14 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   servidor. Mismo consumer y misma cola que los anteriores.
 - `servers.member_joined` -- solo se registra, para poder ordenar contra un
   `member_left` (ver más abajo). No se publica nada a los clientes.
+- `servers.channel_access_revoked` -- uno o más miembros dejaron de ver un canal
+  (`VIEW_CHANNELS` ya con overrides) por un cambio de permisos: overrides, roles
+  editados, borrados, asignados o quitados, transferencia de propiedad, kick,
+  ban o salida. Trae `channel_id` y los `user_ids` que **perdieron** el acceso
+  (nunca vacío); a cada uno se le **cierra el socket** de ese canal con
+  `reason: "permissions_changed"`. No pasa por `event_clocks`: solo corta
+  conexiones y el `join` vuelve a chequear los permisos actuales, así que un
+  duplicado o uno fuera de orden cuesta a lo sumo una reconexión.
 
 `servers` publica `member_left` en **todas** las salidas (irse, kick, ban y
 borrado del servidor), así que ese único evento cubre los cuatro casos.
@@ -99,7 +107,7 @@ Cada canal abierto lo intercepta: si va para su usuario (o para todos, en un
 borrado), le empuja al cliente
 
 ```json
-{"channel_id": "…", "reason": "member_left" | "channel_deleted" | "server_deleted"}
+{"channel_id": "…", "reason": "member_left" | "permissions_changed" | "channel_deleted" | "server_deleted"}
 ```
 
 y se cierra (`phx_close`, sin reconexión automática del cliente de Phoenix). Si

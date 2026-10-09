@@ -24,14 +24,31 @@ defmodule Messaging.Chat.Sockets do
     end
   end
 
-  defp publish_all(channel_ids, reason, user_id) do
-    Enum.reduce_while(channel_ids, :ok, fn channel_id, :ok ->
-      payload = %{"channel_id" => channel_id, "reason" => reason, "user_id" => user_id}
+  @spec revoke_users(String.t(), [String.t()], String.t()) :: :ok | {:error, term()}
+  def revoke_users(channel_id, user_ids, reason) do
+    with :ok <- publish_each(user_ids, &publish(channel_id, reason, &1)) do
+      Logger.info("access_revoked",
+        channel_id: channel_id,
+        users: length(user_ids),
+        reason: reason
+      )
+    end
+  end
 
-      case Broadcaster.publish_to("channel:" <> channel_id, "access_revoked", payload) do
+  defp publish_all(channel_ids, reason, user_id),
+    do: publish_each(channel_ids, &publish(&1, reason, user_id))
+
+  defp publish_each(items, publish_fun) do
+    Enum.reduce_while(items, :ok, fn item, :ok ->
+      case publish_fun.(item) do
         :ok -> {:cont, :ok}
         {:error, _reason} = error -> {:halt, error}
       end
     end)
+  end
+
+  defp publish(channel_id, reason, user_id) do
+    payload = %{"channel_id" => channel_id, "reason" => reason, "user_id" => user_id}
+    Broadcaster.publish_to("channel:" <> channel_id, "access_revoked", payload)
   end
 end

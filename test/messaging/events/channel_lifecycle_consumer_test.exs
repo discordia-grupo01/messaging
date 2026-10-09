@@ -356,6 +356,31 @@ if rabbitmq_url && mongo_url do
         refute_receive %Phoenix.Socket.Broadcast{topic: "channel:" <> ^channel}, 200
       end
 
+      test "a permissions change closes that channel for the listed users only, every time it arrives",
+           %{chan: chan} do
+        server = "srv-#{Messaging.UUID.generate()}"
+        [channel, other] = seed_channels(server, 2)
+        users = ["user-#{Messaging.UUID.generate()}", "user-#{Messaging.UUID.generate()}"]
+        fields = %{"server_id" => server, "channel_id" => channel, "user_ids" => users}
+
+        for _delivery <- 1..2 do
+          event_id = publish(chan, "servers.channel_access_revoked", fields)
+
+          for user <- users do
+            assert_receive %Phoenix.Socket.Broadcast{
+                             topic: "channel:" <> ^channel,
+                             event: "access_revoked",
+                             payload: %{"user_id" => ^user, "reason" => "permissions_changed"}
+                           },
+                           5_000
+          end
+
+          assert wait_until(fn -> status(event_id) == "processed" end)
+        end
+
+        refute_receive %Phoenix.Socket.Broadcast{topic: "channel:" <> ^other}, 200
+      end
+
       test "a deleted channel closes its sockets, whoever they belong to", %{chan: chan} do
         server = "srv-#{Messaging.UUID.generate()}"
         [channel] = seed_channels(server, 1)

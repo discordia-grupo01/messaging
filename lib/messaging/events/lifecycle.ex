@@ -107,6 +107,16 @@ defmodule Messaging.Events.Lifecycle do
     end
   end
 
+  # No clock: it only cuts sockets and the join re-checks access, so a duplicate costs one reconnect.
+  def handle(%ChannelEvent.ChannelAccessRevoked{} = event) do
+    with :ok <- Sockets.revoke_users(event.channel_id, event.user_ids, "permissions_changed") do
+      Logger.info("channel_access_revoked_applied",
+        channel_id: event.channel_id,
+        users: length(event.user_ids)
+      )
+    end
+  end
+
   defp server_state(server_id) do
     case Repo.impl().get_clock(server_key(server_id)) do
       %{"state" => "deleted"} -> :deleted
