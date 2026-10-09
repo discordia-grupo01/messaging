@@ -25,6 +25,7 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
     stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
@@ -456,6 +457,24 @@ defmodule MessagingWeb.RoomChannelTest do
 
       ref = push(stays, "new_message", %{"content" => "sigo aca"})
       assert_reply ref, :ok
+    end
+
+    test "a permissions change closes the listed users' channel and leaves the rest open" do
+      hidden = join_as("user-a")
+      stays = join_as("user-b")
+      hidden_ref = Process.monitor(hidden.channel_pid)
+      stays_ref = Process.monitor(stays.channel_pid)
+
+      assert :ok =
+               Messaging.Chat.Sockets.revoke_users(@channel_id, ["user-a"], "permissions_changed")
+
+      assert_push "access_revoked", %{
+        "channel_id" => @channel_id,
+        "reason" => "permissions_changed"
+      }
+
+      assert_receive {:DOWN, ^hidden_ref, :process, _pid, :shutdown}
+      refute_receive {:DOWN, ^stays_ref, :process, _pid, _reason}, 100
     end
 
     test "a deletion has no user: it closes every member's channel" do

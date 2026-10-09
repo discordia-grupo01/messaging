@@ -229,4 +229,46 @@ defmodule Messaging.Events.LifecycleTest do
       assert {:error, :not_connected} = Lifecycle.handle(member(ChannelEvent.MemberLeft))
     end
   end
+
+  describe "channel_access_revoked" do
+    defp access_revoked,
+      do: %ChannelEvent.ChannelAccessRevoked{
+        event_id: "e4",
+        occurred_at: @t1,
+        server_id: "srv-1",
+        channel_id: "c-1",
+        user_ids: ["user-1", "user-2"]
+      }
+
+    test "each listed user is cut from that channel, without touching the clock" do
+      MessagingWeb.Endpoint.subscribe("channel:c-1")
+
+      assert :ok = Lifecycle.handle(access_revoked())
+
+      for user <- ["user-1", "user-2"] do
+        assert_receive %Phoenix.Socket.Broadcast{
+          topic: "channel:c-1",
+          event: "access_revoked",
+          payload: %{"user_id" => ^user, "reason" => "permissions_changed", "channel_id" => "c-1"}
+        }
+      end
+    end
+
+    test "a duplicate is applied again: it only costs a reconnect" do
+      MessagingWeb.Endpoint.subscribe("channel:c-1")
+
+      assert :ok = Lifecycle.handle(access_revoked())
+      assert :ok = Lifecycle.handle(access_revoked())
+
+      for _n <- 1..4, do: assert_receive(%Phoenix.Socket.Broadcast{event: "access_revoked"})
+    end
+
+    test "if the sockets cannot be told, the error is returned so the event is retried" do
+      previous = Application.get_env(:messaging, :broadcaster)
+      Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+      on_exit(fn -> Application.put_env(:messaging, :broadcaster, previous) end)
+
+      assert {:error, :not_connected} = Lifecycle.handle(access_revoked())
+    end
+  end
 end

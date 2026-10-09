@@ -3,6 +3,7 @@ defmodule MessagingWeb.ApiError do
           :empty_content
           | :message_too_long
           | :forbidden
+          | :member_muted
           | :channel_not_found
           | :channel_not_text
           | :invalid_cursor
@@ -30,6 +31,9 @@ defmodule MessagingWeb.ApiError do
 
   def describe(:forbidden),
     do: {"FORBIDDEN", "No tenés permiso para realizar esta acción en este canal."}
+
+  def describe(:member_muted),
+    do: {"MEMBER_MUTED", "No podés enviar mensajes mientras estás silenciado."}
 
   def describe(:channel_not_found), do: {"CHANNEL_NOT_FOUND", "El canal no existe."}
 
@@ -88,6 +92,7 @@ defmodule MessagingWeb.ApiError do
 
   @spec http_status(reason()) :: 400 | 403 | 404 | 503
   def http_status(:forbidden), do: 403
+  def http_status(:member_muted), do: 403
   def http_status(:not_message_author), do: 403
   def http_status(:message_delete_denied), do: 403
   def http_status(:message_not_found), do: 404
