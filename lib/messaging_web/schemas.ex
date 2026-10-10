@@ -49,6 +49,24 @@ defmodule MessagingWeb.Schemas do
           type: :boolean,
           description:
             "true si el mensaje mencionó `@everyone` y el autor tiene MENTION_EVERYONE; si no, queda como texto"
+        },
+        reactions: %Schema{
+          type: :array,
+          description:
+            "Reacciones del mensaje, en el orden en que se usó cada emoji por primera vez. " <>
+              "Viene en el historial; los eventos `new_message` y `message_updated` no la traen.",
+          items: %Schema{
+            type: :object,
+            properties: %{
+              emoji: %Schema{type: :string},
+              count: %Schema{type: :integer, minimum: 1},
+              reacted_by_me: %Schema{
+                type: :boolean,
+                description: "true si quien pide el historial es uno de los que reaccionó"
+              }
+            },
+            required: [:emoji, :count, :reacted_by_me]
+          }
         }
       },
       required: [

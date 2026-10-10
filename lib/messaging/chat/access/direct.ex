@@ -13,6 +13,9 @@ defmodule Messaging.Chat.Access.Direct do
   @impl true
   def can_delete?(%ChannelCache{} = channel, user_id), do: unblocked(channel, user_id)
 
+  @impl true
+  def can_react?(%ChannelCache{} = channel, user_id), do: unblocked(channel, user_id)
+
   defp unblocked(%ChannelCache{participants: participants}, user_id) do
     with {:ok, true} <- participant(participants, user_id) do
       case Blocks.check_contact(user_id, partner(participants, user_id)) do

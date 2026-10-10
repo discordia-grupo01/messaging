@@ -66,9 +66,10 @@ defmodule MessagingWeb.MessageController do
              limit: limit,
              before: Map.get(params, "before"),
              after: Map.get(params, "after")
-           ) do
+           ),
+         {:ok, reactions} <- Chat.reactions_for(messages, user_id) do
       json(conn, %{
-        "messages" => Enum.map(messages, &Message.to_api/1),
+        "messages" => Enum.map(messages, &Message.to_api(&1, reactions)),
         "next_cursor" => next_cursor
       })
     else

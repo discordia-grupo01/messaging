@@ -7,6 +7,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @blocks "blocks"
   @clocks "event_clocks"
   @mentions "mentions"
+  @reactions "reactions"
   @replica_servers "replica_servers"
   @replica_roles "replica_roles"
   @replica_members "replica_members"
@@ -119,6 +120,66 @@ defmodule Messaging.Chat.Repo.Mongo do
     end
   rescue
     error -> {:error, error}
+  end
+
+  @impl true
+  def add_reaction(%{"_id" => id} = doc) do
+    update = %{"$setOnInsert" => Map.delete(doc, "_id")}
+
+    case Mongo.update_one(@conn, @reactions, %{"_id" => id}, update, upsert: true) do
+      {:ok, %Mongo.UpdateResult{upserted_ids: []}} -> {:ok, :unchanged}
+      {:ok, %Mongo.UpdateResult{}} -> {:ok, :added}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :unchanged}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def remove_reaction(id) do
+    case Mongo.delete_one(@conn, @reactions, %{"_id" => id}) do
+      {:ok, %Mongo.DeleteResult{deleted_count: 0}} -> {:ok, :unchanged}
+      {:ok, %Mongo.DeleteResult{}} -> {:ok, :removed}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def count_reactions(message_id, emoji),
+    do: Mongo.count_documents(@conn, @reactions, %{"message_id" => message_id, "emoji" => emoji})
+
+  @impl true
+  def reaction_emojis(message_id),
+    do: Mongo.distinct(@conn, @reactions, "emoji", %{"message_id" => message_id})
+
+  @impl true
+  def list_reactions([]), do: {:ok, []}
+
+  def list_reactions(message_ids) do
+    case Mongo.find(@conn, @reactions, %{"message_id" => %{"$in" => message_ids}},
+           sort: [inserted_at: 1, _id: 1]
+         ) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def delete_reactions(message_id) do
+    case Mongo.delete_many(@conn, @reactions, %{"message_id" => message_id}) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def touch_message(id, at) do
+    case Mongo.update_one(@conn, @messages, live(%{"_id" => id}), %{
+           "$set" => %{"changed_at" => at}
+         }) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @impl true
@@ -323,6 +384,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   def delete_channel(channel_id) do
     with {:ok, _result} <- Mongo.delete_many(@conn, @messages, %{"channel_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_many(@conn, @mentions, %{"channel_id" => channel_id}),
+         {:ok, _result} <- Mongo.delete_many(@conn, @reactions, %{"channel_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_one(@conn, @replica_overrides, %{"_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_one(@conn, @channels, %{"_id" => channel_id}) do
       :ok
@@ -338,6 +400,8 @@ defmodule Messaging.Chat.Repo.Mongo do
            Mongo.delete_many(@conn, @messages, %{"channel_id" => %{"$in" => all_ids}}),
          {:ok, _result} <-
            Mongo.delete_many(@conn, @mentions, %{"channel_id" => %{"$in" => all_ids}}),
+         {:ok, _result} <-
+           Mongo.delete_many(@conn, @reactions, %{"channel_id" => %{"$in" => all_ids}}),
          {:ok, _result} <- delete_replica(server_id),
          {:ok, _result} <- Mongo.delete_many(@conn, @channels, %{"server_id" => server_id}) do
       :ok
@@ -569,6 +633,11 @@ defmodule Messaging.Chat.Repo.Mongo do
       [name: "mentions_server_user", key: [server_id: 1, user_id: 1]]
     ]
 
+    reaction_indexes = [
+      [name: "reactions_message_emoji", key: [message_id: 1, emoji: 1]],
+      [name: "reactions_channel", key: [channel_id: 1]]
+    ]
+
     clock_indexes = [
       [name: "event_clocks_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]
     ]
@@ -580,6 +649,7 @@ defmodule Messaging.Chat.Repo.Mongo do
          :ok <- Mongo.create_indexes(@conn, @channels, channel_indexes),
          :ok <- Mongo.create_indexes(@conn, @blocks, block_indexes),
          :ok <- Mongo.create_indexes(@conn, @mentions, mention_indexes),
+         :ok <- Mongo.create_indexes(@conn, @reactions, reaction_indexes),
          :ok <- Mongo.create_indexes(@conn, @replica_roles, replica_ttl ++ replica_by_server),
          :ok <- Mongo.create_indexes(@conn, @replica_members, replica_ttl ++ replica_by_server),
          :ok <- Mongo.create_indexes(@conn, @replica_overrides, replica_by_server) do

@@ -9,6 +9,8 @@ defmodule Messaging.Chat.MentionsFlowTest do
   setup :verify_on_exit!
 
   setup do
+    stub(Messaging.Chat.RepoMock, :list_reactions, fn _ids -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :delete_reactions, fn _id -> :ok end)
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     :ok
   end

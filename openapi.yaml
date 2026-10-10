@@ -269,6 +269,34 @@ components:
           type: array
           x-struct:
           x-validate:
+        reactions:
+          description: Reacciones del mensaje, en el orden en que se usó cada emoji por primera vez. Viene en el historial; los eventos `new_message` y `message_updated` no la traen.
+          items:
+            properties:
+              count:
+                minimum: 1
+                type: integer
+                x-struct:
+                x-validate:
+              emoji:
+                type: string
+                x-struct:
+                x-validate:
+              reacted_by_me:
+                description: true si quien pide el historial es uno de los que reaccionó
+                type: boolean
+                x-struct:
+                x-validate:
+            required:
+              - emoji
+              - count
+              - reacted_by_me
+            type: object
+            x-struct:
+            x-validate:
+          type: array
+          x-struct:
+          x-validate:
         server_id:
           description: null en los mensajes directos (no pertenecen a ningún servidor)
           format: uuid

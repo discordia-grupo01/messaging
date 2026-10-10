@@ -73,6 +73,20 @@ defmodule Messaging.Chat.Message do
     }
   end
 
+  def to_api(%__MODULE__{} = message, reactions_by_message) when is_map(reactions_by_message),
+    do: Map.put(to_api(message), "reactions", Map.get(reactions_by_message, message.id, []))
+
+  def reaction_api(%{message: message, emoji: emoji, count: count}, user_id, action) do
+    %{
+      "channel_id" => message.channel_id,
+      "message_id" => message.id,
+      "emoji" => emoji,
+      "user_id" => user_id,
+      "action" => action,
+      "count" => count
+    }
+  end
+
   def to_deleted_api(%__MODULE__{} = message) do
     %{
       "id" => message.id,

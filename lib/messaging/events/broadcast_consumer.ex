@@ -10,6 +10,7 @@ defmodule Messaging.Events.BroadcastConsumer do
     "new_message",
     "message_updated",
     "message_deleted",
+    "reaction_updated",
     "new_dm",
     "mention",
     "access_revoked"

@@ -22,6 +22,14 @@ defmodule Messaging.Chat.Repo do
   @callback list_changes(channel_id :: String.t(), since :: DateTime.t(), limit :: pos_integer()) ::
               {:ok, [map()]} | {:error, term()}
   @callback get_messages(ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}
+  @callback add_reaction(doc :: map()) :: {:ok, :added | :unchanged} | {:error, term()}
+  @callback remove_reaction(id :: String.t()) :: {:ok, :removed | :unchanged} | {:error, term()}
+  @callback count_reactions(message_id :: String.t(), emoji :: String.t()) ::
+              {:ok, non_neg_integer()} | {:error, term()}
+  @callback reaction_emojis(message_id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  @callback list_reactions(message_ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}
+  @callback delete_reactions(message_id :: String.t()) :: :ok | {:error, term()}
+  @callback touch_message(id :: String.t(), at :: DateTime.t()) :: :ok | {:error, term()}
   @callback ensure_conversation(doc :: map()) :: :ok | {:error, term()}
   @callback record_last_message(
               channel_id :: String.t(),
