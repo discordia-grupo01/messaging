@@ -100,6 +100,9 @@ defmodule Messaging.Chat.Repo do
               overrides :: [map()],
               at :: DateTime.t()
             ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_word_filter(server_id :: String.t(), words :: [String.t()], at :: DateTime.t()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback get_word_filter(server_id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback apply_profile(user_id :: String.t(), version :: pos_integer()) ::
               {:ok, :applied | :stale} | {:error, term()}
   @callback get_server_owner(server_id :: String.t()) ::

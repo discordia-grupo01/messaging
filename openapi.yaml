@@ -711,7 +711,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: Contenido vacío o demasiado largo, o cuerpo mal formado
+          description: Contenido vacío, demasiado largo o con palabras prohibidas (`BANNED_WORD`), o cuerpo mal formado
         '401':
           content:
             application/json:

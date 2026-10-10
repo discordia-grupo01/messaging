@@ -13,6 +13,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @replica_members "replica_members"
   @replica_overrides "replica_overrides"
   @replica_users "replica_users"
+  @replica_word_filters "replica_word_filters"
   @tombstone_ttl_seconds 7 * 24 * 60 * 60
 
   @impl true
@@ -417,7 +418,8 @@ defmodule Messaging.Chat.Repo.Mongo do
 
     with {:ok, _result} <- Mongo.delete_many(@conn, @replica_overrides, filter),
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_members, filter),
-         {:ok, _result} <- Mongo.delete_many(@conn, @replica_roles, filter) do
+         {:ok, _result} <- Mongo.delete_many(@conn, @replica_roles, filter),
+         {:ok, _result} <- Mongo.delete_one(@conn, @replica_word_filters, %{"_id" => server_id}) do
       Mongo.delete_one(@conn, @replica_servers, %{"_id" => server_id})
     end
   end
@@ -482,6 +484,22 @@ defmodule Messaging.Chat.Repo.Mongo do
     }
 
     apply_snapshot(@replica_overrides, channel_id, fields, at)
+  end
+
+  @impl true
+  def apply_word_filter(server_id, words, %DateTime{} = at),
+    do: apply_snapshot(@replica_word_filters, server_id, %{"words" => words}, at)
+
+  @impl true
+  def get_word_filter(server_id) do
+    case Mongo.find_one(@conn, @replica_word_filters, %{
+           "_id" => server_id,
+           "deleted" => %{"$ne" => true}
+         }) do
+      %{"words" => words} -> {:ok, words}
+      nil -> {:ok, []}
+      {:error, _reason} = error -> error
+    end
   end
 
   @impl true

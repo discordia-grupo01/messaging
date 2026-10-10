@@ -25,12 +25,47 @@ if mongo_url do
       end)
 
       for collection <-
-            ~w(replica_servers replica_roles replica_members replica_overrides replica_users) do
+            ~w(replica_servers replica_roles replica_members replica_overrides replica_users replica_word_filters) do
         {:ok, _result} = Mongo.delete_many(Messaging.Mongo, collection, %{})
       end
 
       id = Messaging.UUID.generate()
       {:ok, server: "srv-" <> id, channel: "chan-" <> id}
+    end
+
+    describe "banned words" do
+      test "a server without a list has an empty one", %{server: server} do
+        assert {:ok, []} = Repo.get_word_filter(server)
+      end
+
+      test "the newest list wins, an older one is ignored and an empty one clears it",
+           %{server: server} do
+        assert {:ok, :applied} = Repo.apply_word_filter(server, ["tonto", "feo"], @t2)
+        assert {:ok, :stale} = Repo.apply_word_filter(server, ["viejo"], @t1)
+        assert {:ok, ["tonto", "feo"]} = Repo.get_word_filter(server)
+
+        assert {:ok, :applied} = Repo.apply_word_filter(server, [], @t3)
+        assert {:ok, []} = Repo.get_word_filter(server)
+      end
+
+      test "the event goes all the way to blocking a message", %{server: server} do
+        event = %ChannelEvent.WordFilterUpdated{
+          event_id: "w1",
+          occurred_at: @t1,
+          server_id: server,
+          words: ["no sirve"]
+        }
+
+        assert :ok = Lifecycle.handle(event)
+        assert {:ok, words} = Repo.get_word_filter(server)
+        assert Messaging.Chat.WordFilter.matches("esto NO sirve", words) == ["no sirve"]
+      end
+
+      test "deleting the server deletes its list", %{server: server, channel: channel} do
+        {:ok, :applied} = Repo.apply_word_filter(server, ["tonto"], @t1)
+        assert :ok = Repo.delete_server_data(server, [channel])
+        assert {:ok, []} = Repo.get_word_filter(server)
+      end
     end
 
     describe "roles" do

@@ -16,6 +16,7 @@ defmodule MessagingWeb.MentionPushTest do
   @bob "bob-push"
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
 
     stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id ->

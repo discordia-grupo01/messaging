@@ -75,6 +75,10 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   `reason: "permissions_changed"`. No pasa por `event_clocks`: solo corta
   conexiones y el `join` vuelve a chequear los permisos actuales, así que un
   duplicado o uno fuera de orden cuesta a lo sumo una reconexión.
+- `servers.word_filter_updated` -- la lista completa de palabras prohibidas de
+  un servidor (ver [Palabras prohibidas](#palabras-prohibidas)). Se guarda en
+  `replica_word_filters` y, como las fotos de permisos, gana la de
+  `occurred_at` más nuevo.
 
 ### Réplica local de permisos y usuarios
 
@@ -492,6 +496,25 @@ Si Mongo no responde, el envío (o la edición) falla con
 `MENTIONS_UNAVAILABLE` (503), igual que ya pasa con el chequeo de
 `SEND_MESSAGES`. Si el autor no figura como miembro en la réplica, también
 (en la práctica no pasa: antes se le exigió `SEND_MESSAGES`).
+
+## Palabras prohibidas
+Cada servidor puede tener una lista de palabras o frases prohibidas, que se
+edita en `servers` (`PUT /v1/servers/{id}/banned-words`, con `MANAGE_MESSAGES`)
+y llega acá por `servers.word_filter_updated`.
+
+- `new_message` y `edit_message` (y el `PATCH` de edición) rechazan un mensaje
+  que contenga alguna: responden `BANNED_WORD` con las encontradas en
+  `details.words`, y no se guarda ni se emite nada. Una edición que deja el
+  mensaje igual no se chequea.
+- Se compara sin distinguir mayúsculas ni tildes ("Tónto" = "tonto") y solo por
+  palabras completas: "película" no choca con "culo". Una frase ("no sirve")
+  tiene que aparecer con esas palabras seguidas, sin importar la puntuación o
+  los espacios entre ellas. No detecta variantes escritas para esquivarlo
+  ("t0nt0", "t.o.n.t.o").
+- Nadie queda exento, ni el dueño. Se chequea después de los permisos, así que
+  quien no puede escribir recibe `FORBIDDEN` y nunca ve la lista.
+- Aplica desde que llega el evento: los mensajes ya enviados no se tocan. En
+  los mensajes directos no aplica (la lista es de cada servidor).
 
 ## Reacciones
 Historia #48: reaccionar a un mensaje con un emoji, en canales de servidor y en
