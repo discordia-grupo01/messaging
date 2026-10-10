@@ -68,7 +68,7 @@ defmodule MessagingWeb.BlockController do
     ]
 
   def create(conn, %{"user_id" => blocked_id}) when is_binary(blocked_id) do
-    case Blocks.block(conn.assigns.user_id, blocked_id, conn.assigns.raw_jwt) do
+    case Blocks.block(conn.assigns.user_id, blocked_id) do
       :ok -> send_resp(conn, 204, "")
       {:error, reason} -> error(conn, reason)
     end

@@ -1,5 +1,5 @@
 defmodule Messaging.Chat.Blocks do
-  alias Messaging.Chat.{Conversation, Repo, UsersClient}
+  alias Messaging.Chat.{Conversation, Repo}
   alias Messaging.Log
 
   require Logger
@@ -9,10 +9,10 @@ defmodule Messaging.Chat.Blocks do
 
   @type contact_error :: :user_blocked | :dm_not_delivered
 
-  @spec block(String.t(), term(), String.t()) :: :ok | {:error, term()}
-  def block(blocker_id, blocked_id, raw_jwt) do
+  @spec block(String.t(), term()) :: :ok | {:error, term()}
+  def block(blocker_id, blocked_id) do
     with :ok <- validate_target(blocker_id, blocked_id),
-         :ok <- verify_user(blocked_id, raw_jwt) do
+         :ok <- verify_user(blocked_id) do
       doc = %{
         "_id" => id(blocker_id, blocked_id),
         "blocker_id" => blocker_id,
@@ -75,11 +75,11 @@ defmodule Messaging.Chat.Blocks do
     if Conversation.valid_user_id?(blocked_id), do: :ok, else: {:error, :user_not_found}
   end
 
-  defp verify_user(user_id, raw_jwt) do
-    case UsersClient.verify(user_id, raw_jwt) do
-      :ok -> :ok
-      {:error, :not_found} -> {:error, :user_not_found}
-      {:error, :unavailable} -> {:error, :users_unavailable}
+  defp verify_user(user_id) do
+    case repo().user_known?(user_id) do
+      true -> :ok
+      false -> {:error, :user_not_found}
+      {:error, _reason} -> {:error, :users_unavailable}
     end
   end
 

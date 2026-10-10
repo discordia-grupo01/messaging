@@ -9,14 +9,10 @@ config :messaging, MessagingWeb.Endpoint,
 config :messaging, :start_amqp_consumers, false
 config :messaging, :ensure_indexes, false
 config :messaging, :chat_repo, Messaging.Chat.RepoMock
-config :messaging, :permissions_client, Messaging.Chat.PermissionsClientMock
-config :messaging, :users_client, Messaging.Chat.UsersClientMock
-config :messaging, :mentions_client, Messaging.Chat.MentionsClientMock
+config :messaging, :permissions_store, Messaging.Chat.PermissionsStoreMock
+config :messaging, :mention_resolver, Messaging.Chat.MentionResolverMock
 config :messaging, :ticket_store, Messaging.Auth.TicketStoreMock
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
-config :messaging, :permissions_http_plug, {Req.Test, Messaging.Chat.PermissionsClient.Http}
-config :messaging, :users_http_plug, {Req.Test, Messaging.Chat.UsersClient.Http}
-config :messaging, :mentions_http_plug, {Req.Test, Messaging.Chat.MentionsClient.Http}
 
 config :logger, level: :warning
 config :logger, :console, colors: [enabled: false]

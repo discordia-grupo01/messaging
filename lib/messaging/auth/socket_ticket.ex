@@ -5,20 +5,19 @@ defmodule Messaging.Auth.SocketTicket do
 
   @ttl_seconds 30
 
-  @type redeemed :: %{user_id: String.t(), raw_jwt: String.t()}
+  @type redeemed :: %{user_id: String.t()}
 
   def ttl_seconds, do: @ttl_seconds
 
   defp store, do: Application.get_env(:messaging, :ticket_store, Messaging.Auth.TicketStore.Mongo)
 
-  @spec issue(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  def issue(user_id, raw_jwt) do
+  @spec issue(String.t()) :: {:ok, String.t()} | {:error, term()}
+  def issue(user_id) do
     ticket = 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
     doc = %{
       "_id" => hash(ticket),
       "user_id" => user_id,
-      "raw_jwt" => raw_jwt,
       "expires_at" => DateTime.add(DateTime.utc_now(), @ttl_seconds, :second)
     }
 
@@ -37,9 +36,9 @@ defmodule Messaging.Auth.SocketTicket do
   @spec redeem(term()) :: {:ok, redeemed()} | {:error, :invalid_ticket}
   def redeem(ticket) when is_binary(ticket) do
     case store().take(hash(ticket)) do
-      {:ok, %{"user_id" => user_id, "raw_jwt" => raw_jwt, "expires_at" => expires_at}} ->
+      {:ok, %{"user_id" => user_id, "expires_at" => expires_at}} ->
         if DateTime.compare(expires_at, DateTime.utc_now()) == :gt do
-          {:ok, %{user_id: user_id, raw_jwt: raw_jwt}}
+          {:ok, %{user_id: user_id}}
         else
           Logger.warning("socket_ticket_rejected", cause: "expired", user_id: user_id)
           {:error, :invalid_ticket}

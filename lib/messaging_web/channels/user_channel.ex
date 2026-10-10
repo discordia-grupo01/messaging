@@ -20,8 +20,7 @@ defmodule MessagingWeb.UserChannel do
     params = %{
       sender_id: socket.assigns.user_id,
       recipient_id: recipient_id,
-      content: content,
-      raw_jwt: socket.assigns.raw_jwt
+      content: content
     }
 
     case Chat.send_direct_message(params) do

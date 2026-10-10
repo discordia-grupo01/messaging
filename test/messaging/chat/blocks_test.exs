@@ -13,7 +13,7 @@ defmodule Messaging.Chat.BlocksTest do
 
   describe "block/3" do
     test "CA1: stores the block after checking the user exists" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn @other, "jwt" -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn @other -> true end)
 
       expect(Messaging.Chat.RepoMock, :put_block, fn doc ->
         assert doc["_id"] == @me <> ":" <> @other
@@ -23,36 +23,36 @@ defmodule Messaging.Chat.BlocksTest do
         :ok
       end)
 
-      assert :ok = Blocks.block(@me, @other, "jwt")
+      assert :ok = Blocks.block(@me, @other)
     end
 
     test "you cannot block yourself and nothing is read or written" do
-      assert {:error, :cannot_block_self} = Blocks.block(@me, @me, "jwt")
+      assert {:error, :cannot_block_self} = Blocks.block(@me, @me)
     end
 
     test "an id that is not a plain identifier never reaches the services" do
       for bad <- ["", "a.b", "a$b", "../me", "a:b", nil, 5, %{"$ne" => 1}] do
-        assert {:error, :user_not_found} = Blocks.block(@me, bad, "jwt")
+        assert {:error, :user_not_found} = Blocks.block(@me, bad)
       end
     end
 
     test "a user that does not exist cannot be blocked" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, false} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> false end)
 
-      assert {:error, :user_not_found} = Blocks.block(@me, @other, "jwt")
+      assert {:error, :user_not_found} = Blocks.block(@me, @other)
     end
 
     test "if identify-service is unreachable the answer is 'unavailable', never a guess" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:error, :timeout} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> {:error, :timeout} end)
 
-      assert {:error, :users_unavailable} = Blocks.block(@me, @other, "jwt")
+      assert {:error, :users_unavailable} = Blocks.block(@me, @other)
     end
 
     test "a repository failure is propagated" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> true end)
       expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> {:error, :timeout} end)
 
-      assert {:error, :timeout} = Blocks.block(@me, @other, "jwt")
+      assert {:error, :timeout} = Blocks.block(@me, @other)
     end
   end
 
@@ -64,10 +64,10 @@ defmodule Messaging.Chat.BlocksTest do
     end
 
     test "blocking logs who did it, and never who was blocked" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> true end)
       expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> :ok end)
 
-      log = capture_log(fn -> assert :ok = Blocks.block(@me, @other, "jwt") end)
+      log = capture_log(fn -> assert :ok = Blocks.block(@me, @other) end)
 
       assert %{"message" => "block_created", "level" => "info", "user_id" => @me} =
                log |> String.trim() |> Jason.decode!()
@@ -87,10 +87,10 @@ defmodule Messaging.Chat.BlocksTest do
     end
 
     test "a failed block is an error with the reason, again without the other user" do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> true end)
       expect(Messaging.Chat.RepoMock, :put_block, fn _doc -> {:error, :timeout} end)
 
-      log = capture_log(fn -> assert {:error, :timeout} = Blocks.block(@me, @other, "jwt") end)
+      log = capture_log(fn -> assert {:error, :timeout} = Blocks.block(@me, @other) end)
 
       assert %{"message" => "block_failed", "level" => "error", "reason" => ":timeout"} =
                log |> String.trim() |> Jason.decode!()

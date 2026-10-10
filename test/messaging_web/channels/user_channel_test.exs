@@ -49,7 +49,7 @@ defmodule MessagingWeb.UserChannelTest do
   defp stub_new_conversation(a, b) do
     id = dm_id(a, b)
     stub(Messaging.Chat.RepoMock, :get_channel, fn ^id -> nil end)
-    stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+    stub(Messaging.Chat.RepoMock, :user_known?, fn _id -> true end)
     stub(Messaging.Chat.RepoMock, :ensure_conversation, fn _doc -> :ok end)
     stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
     stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
@@ -147,7 +147,7 @@ defmodule MessagingWeb.UserChannelTest do
     test "a recipient that does not exist is rejected" do
       id = dm_id(@ana, @cami)
       stub(Messaging.Chat.RepoMock, :get_channel, fn ^id -> nil end)
-      stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, false} end)
+      stub(Messaging.Chat.RepoMock, :user_known?, fn _id -> false end)
       ana = join_own(@ana)
 
       ref = push(ana, "send_dm", %{"to" => @cami, "content" => "hola"})
@@ -159,7 +159,7 @@ defmodule MessagingWeb.UserChannelTest do
     test "identify-service being down is a clear error and the channel survives" do
       id = dm_id(@ana, @beto)
       stub(Messaging.Chat.RepoMock, :get_channel, fn ^id -> nil end)
-      stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:error, :timeout} end)
+      stub(Messaging.Chat.RepoMock, :user_known?, fn _id -> {:error, :timeout} end)
       ana = join_own(@ana)
 
       ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola"})

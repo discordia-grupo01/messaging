@@ -30,65 +30,65 @@ defmodule Messaging.Chat.AccessTest do
     end
 
     test "a participant can view and post" do
-      assert {:ok, true} = Access.Direct.can_view?(dm(), "a", "jwt")
-      assert {:ok, true} = Access.Direct.can_post?(dm(), "b", "jwt")
+      assert {:ok, true} = Access.Direct.can_view?(dm(), "a")
+      assert {:ok, true} = Access.Direct.can_post?(dm(), "b")
     end
 
     test "a stranger gets the same answer as for a conversation that does not exist" do
-      assert {:error, :channel_not_found} = Access.Direct.can_view?(dm(), "intruder", "jwt")
-      assert {:error, :channel_not_found} = Access.Direct.can_post?(dm(), "intruder", "jwt")
+      assert {:error, :channel_not_found} = Access.Direct.can_view?(dm(), "intruder")
+      assert {:error, :channel_not_found} = Access.Direct.can_post?(dm(), "intruder")
     end
 
     test "a block in either direction stops posting but not viewing" do
       expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "b:a"}]} end)
-      assert {:ok, false} = Access.Direct.can_post?(dm(), "a", "jwt")
+      assert {:ok, false} = Access.Direct.can_post?(dm(), "a")
 
       expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "a:b"}]} end)
-      assert {:ok, false} = Access.Direct.can_post?(dm(), "b", "jwt")
+      assert {:ok, false} = Access.Direct.can_post?(dm(), "b")
 
-      assert {:ok, true} = Access.Direct.can_view?(dm(), "a", "jwt")
-      assert {:ok, true} = Access.Direct.can_view?(dm(), "b", "jwt")
+      assert {:ok, true} = Access.Direct.can_view?(dm(), "a")
+      assert {:ok, true} = Access.Direct.can_view?(dm(), "b")
     end
 
     test "deleting follows the same rule as posting: a block freezes the conversation" do
       expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "b:a"}]} end)
-      assert {:ok, false} = Access.Direct.can_delete?(dm(), "a", "jwt")
+      assert {:ok, false} = Access.Direct.can_delete?(dm(), "a")
 
       expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
-      assert {:ok, true} = Access.Direct.can_delete?(dm(), "a", "jwt")
+      assert {:ok, true} = Access.Direct.can_delete?(dm(), "a")
 
-      assert {:error, :channel_not_found} = Access.Direct.can_delete?(dm(), "intruder", "jwt")
+      assert {:error, :channel_not_found} = Access.Direct.can_delete?(dm(), "intruder")
     end
 
     test "a failing block lookup is propagated, not read as 'allowed'" do
       expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:error, :timeout} end)
 
-      assert {:error, :timeout} = Access.Direct.can_post?(dm(), "a", "jwt")
+      assert {:error, :timeout} = Access.Direct.can_post?(dm(), "a")
     end
 
     test "nobody moderates a direct conversation" do
-      assert {:ok, false} = Access.Direct.can_moderate?(dm(), "a", "jwt")
+      assert {:ok, false} = Access.Direct.can_moderate?(dm(), "a")
     end
   end
 
   describe "Server" do
     test "asks servers for each permission in that channel" do
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, 2, fn "c-1", "u", "jwt" ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, 2, fn _channel, "u" ->
         {:ok, true}
       end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn "c-1", "u", "jwt" ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, "u" ->
         {:ok, false}
       end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn "c-1", "u", "jwt" ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_manage_messages?, fn _channel, "u" ->
         {:ok, true}
       end)
 
-      assert {:ok, true} = Access.Server.can_view?(text(), "u", "jwt")
-      assert {:ok, true} = Access.Server.can_delete?(text(), "u", "jwt")
-      assert {:ok, false} = Access.Server.can_post?(text(), "u", "jwt")
-      assert {:ok, true} = Access.Server.can_moderate?(text(), "u", "jwt")
+      assert {:ok, true} = Access.Server.can_view?(text(), "u")
+      assert {:ok, true} = Access.Server.can_delete?(text(), "u")
+      assert {:ok, false} = Access.Server.can_post?(text(), "u")
+      assert {:ok, true} = Access.Server.can_moderate?(text(), "u")
     end
   end
 end

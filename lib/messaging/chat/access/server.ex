@@ -4,22 +4,21 @@ defmodule Messaging.Chat.Access.Server do
   alias Messaging.Chat.ChannelCache
 
   @impl true
-  def can_view?(%ChannelCache{channel_id: channel_id}, user_id, raw_jwt),
-    do: client().can_view_channel?(channel_id, user_id, raw_jwt)
+  def can_view?(%ChannelCache{} = channel, user_id),
+    do: store().can_view_channel?(channel, user_id)
 
   @impl true
-  def can_post?(%ChannelCache{channel_id: channel_id}, user_id, raw_jwt),
-    do: client().can_send_messages?(channel_id, user_id, raw_jwt)
+  def can_post?(%ChannelCache{} = channel, user_id),
+    do: store().can_send_messages?(channel, user_id)
 
   @impl true
-  def can_delete?(%ChannelCache{} = channel, user_id, raw_jwt),
-    do: can_view?(channel, user_id, raw_jwt)
+  def can_delete?(%ChannelCache{} = channel, user_id), do: can_view?(channel, user_id)
 
   @impl true
-  def can_moderate?(%ChannelCache{channel_id: channel_id}, user_id, raw_jwt),
-    do: client().can_manage_messages?(channel_id, user_id, raw_jwt)
+  def can_moderate?(%ChannelCache{} = channel, user_id),
+    do: store().can_manage_messages?(channel, user_id)
 
-  defp client,
+  defp store,
     do:
-      Application.get_env(:messaging, :permissions_client, Messaging.Chat.PermissionsClient.Http)
+      Application.get_env(:messaging, :permissions_store, Messaging.Chat.PermissionsStore.Replica)
 end
