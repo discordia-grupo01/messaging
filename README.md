@@ -26,19 +26,23 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   guardan también los canales de voz: así escribir en uno responde
   `CHANNEL_NOT_TEXT` en vez de un engañoso "el canal no existe".
 - **Chequeo de permisos (`VIEW_CHANNELS` / `SEND_MESSAGES` / `MANAGE_MESSAGES`)**:
-  llamada HTTP síncrona a `servers` (`Messaging.Chat.PermissionsClient`) en el
-  momento de unirse al canal, en cada envío y al editar o borrar -- no se cachea
-  porque un rol o un override puede cambiar en cualquier momento. Se consultan
-  los permisos **efectivos en el canal**
-  (`GET /v1/channels/{channel_id}/members/{user_id}/permissions`), que ya
-  incluyen los overrides por canal de `servers` (#57): un rol al que le
-  denegaron `VIEW_CHANNELS` en `#staff` no puede abrirlo ni leer su historial,
-  aunque lo tenga a nivel servidor. `401`/`403`/`404` de `servers` cuentan como
-  "sin permiso".
-- **Menciones**: si el mensaje tiene alguna, otra llamada síncrona a
-  `servers` (`Messaging.Chat.MentionsClient`,
-  `POST /v1/servers/:id/mentions/resolve`) decide cuáles valen y a quién
-  notificar. Los mensajes sin menciones no hacen esta llamada.
+  **local, sin llamar a `servers`** (ADR 0003). `Messaging.Chat.PermissionsStore.Replica`
+  lee de Mongo el dueño del servidor, los permisos de cada rol, los roles del miembro y los
+  overrides del canal, y `Messaging.Chat.Permissions` calcula los permisos **efectivos en el
+  canal** con la misma regla que `servers` (#57): el dueño y los administradores pueden todo;
+  el resto parte de la unión de sus roles y aplica el override de `@everyone` y después los de
+  sus otros roles (`allow` gana a `deny`). Un rol al que le denegaron `VIEW_CHANNELS` en
+  `#staff` no puede abrirlo ni leer su historial, aunque lo tenga a nivel servidor. Quien no
+  figura como miembro, o un rol que todavía no llegó, cuenta como "sin permiso". Se decide en
+  el `join`, en cada envío y al editar o borrar.
+- **Menciones**: `Messaging.Chat.MentionResolver.Replica` decide, con la misma réplica,
+  cuáles valen y a quién notificar: un usuario mencionado cuenta si es miembro; los roles y
+  `@everyone` solo si quien escribe tiene `MENTION_EVERYONE` (el dueño y los administradores
+  lo tienen implícito); se avisa a quienes **ven ese canal**, ya con los overrides. Los
+  mensajes sin menciones no hacen nada de esto.
+- **Existencia de un usuario** (primer DM y bloqueos): colección `replica_users`
+  (`user_id` + `version`), alimentada por `users.profile_updated`. Un usuario recién
+  registrado no existe para `messaging` hasta que llega su evento (unos segundos).
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
   `BroadcastConsumer`), separado de `discordia.events`
@@ -71,6 +75,31 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   `reason: "permissions_changed"`. No pasa por `event_clocks`: solo corta
   conexiones y el `join` vuelve a chequear los permisos actuales, así que un
   duplicado o uno fuera de orden cuesta a lo sumo una reconexión.
+
+### Réplica local de permisos y usuarios
+
+Todos van por la misma cola (`messaging.channel_lifecycle`) y son **fotos completas** de una
+entidad, no diferencias. Cada una se guarda solo si su `occurred_at` es mayor o igual al de la
+que ya hay (`users.profile_updated` usa `version`); si no, se descarta como `ignored_stale`.
+Detalle del contrato en `docs/asyncapi/permissions.yaml`.
+
+| Evento | Qué hace |
+|---|---|
+| `servers.owner_updated` | guarda el dueño del servidor (`replica_servers`) |
+| `servers.role_updated` | guarda los permisos del rol y si es `@everyone` (`replica_roles`) |
+| `servers.role_deleted` | deja una lápida (TTL 7 días) y saca el rol de los miembros y de los overrides |
+| `servers.member_roles_updated` | reemplaza los roles del miembro (`replica_members`) |
+| `servers.channel_overrides_updated` | reemplaza todos los overrides del canal (`replica_overrides`); lista vacía = ninguno |
+| `users.profile_updated` | guarda `user_id` y `version` (`replica_users`) |
+
+Además, `servers.member_left` quita al miembro de la réplica, `servers.channel_deleted` borra
+los overrides del canal y `servers.server_deleted` borra todo lo replicado de ese servidor.
+Los eventos de un servidor ya borrado se ignoran.
+
+**Alta y recuperación.** RabbitMQ no guarda lo publicado antes de que exista la cola, así que
+al sumar este consumidor hay que desplegar `messaging` primero (declara las claves de ruteo) y
+después `servers` (migración `0022_backfill_access_events`) e `identify-service`
+(`000016_republish_profile_events`), que re-publican todo. Se puede repetir sin riesgo.
 
 `servers` publica `member_left` en **todas** las salidas (irse, kick, ban y
 borrado del servidor), así que ese único evento cubre los cuatro casos.
@@ -308,9 +337,9 @@ reply ok {"conversation_id": "...", "message": {...}}
 
 - **Se crea al primer mensaje.** No existe ningún endpoint para "abrir" una conversación: mientras
   nadie escriba, no hay nada guardado. La primera vez se valida que el destinatario exista
-  (`GET /v1/users/{id}` de `identify-service`, con el JWT de quien envía; `404 RECIPIENT_NOT_FOUND` si
-  no existe) y se crea la conversación; los mensajes siguientes ya no consultan a `identify-service`.
-  Si `identify-service` no responde: `503 USERS_UNAVAILABLE`.
+  en la réplica local de usuarios (`404 RECIPIENT_NOT_FOUND` si no figura; un usuario recién
+  registrado figura a los pocos segundos) y se crea la conversación; los mensajes siguientes ya
+  no consultan nada. Si Mongo no responde: `503 USERS_UNAVAILABLE`.
 - **Un solo canal entre dos personas.** El id de la conversación es un UUID v5 del par de usuarios
   ordenado, así que da lo mismo quién escribe primero y dos primeros mensajes simultáneos caen en el
   mismo documento (el alta es un upsert con `$setOnInsert`).
@@ -342,7 +371,7 @@ propia conversación sin leer.
   más reciente primero (default 50, máx. 100; todavía sin paginación). Cada una trae `id`,
   `partner_id`, `unread`, `last_message_at` y `last_message` (`null` si ese mensaje se eliminó).
   Solo ids: ningún dato del perfil del otro usuario (nombre, foto, email), que se pide a
-  `identify-service`.
+  `identify-service`. La réplica de usuarios guarda solo `user_id` y `version`.
 - `POST /v1/conversations/:id/read` -- marca como leído hasta el último mensaje que hoy tiene la
   conversación (`204`). Un mensaje que llegue después sigue sin leer.
 - `GET /v1/channels/:id/messages` -- historial de la conversación (con el `id` de la conversación).
@@ -365,11 +394,11 @@ documento por par `bloqueador:bloqueado`, con índice por bloqueador). Están en
 llamada más entre servicios que pueda caerse.
 
 - `POST /v1/blocks` con `{"user_id": "..."}` -- bloquea (`204`). Es idempotente. El id viaja en el
-  cuerpo y no en la URL. Un cuerpo sin `user_id` string da `400 INVALID_PAYLOAD`. Verifica que el usuario exista
-  (`404 USER_NOT_FOUND`; si `identify-service` no responde, `503 USERS_UNAVAILABLE`). No se puede
+  cuerpo y no en la URL. Un cuerpo sin `user_id` string da `400 INVALID_PAYLOAD`. Verifica que el usuario exista en la
+  réplica local (`404 USER_NOT_FOUND`; si Mongo no responde, `503 USERS_UNAVAILABLE`). No se puede
   bloquear a uno mismo (`400 CANNOT_BLOCK_SELF`).
-- `DELETE /v1/blocks/:user_id` -- desbloquea (`204`). Es idempotente y **no** consulta a
-  `identify-service`: se puede desbloquear a alguien que ya no existe.
+- `DELETE /v1/blocks/:user_id` -- desbloquea (`204`). Es idempotente y **no** consulta la
+  réplica de usuarios: se puede desbloquear a alguien que ya no existe.
 - `GET /v1/blocks?limit=` -- a quién bloqueé, el más reciente primero (default 50, máx. 100). Cada
   elemento trae solo `user_id` y `created_at`. **Nunca** se informa quién te bloqueó a vos.
 - `GET /v1/conversations` suma `blocked_by_me` en cada conversación, para que el cliente muestre
@@ -377,8 +406,8 @@ llamada más entre servicios que pueda caerse.
 
 **Efecto sobre los DM.** El bloqueo vale en las dos direcciones, para **enviar**:
 - Quien fue bloqueado recibe `403 DM_NOT_DELIVERED` ("No se pudo entregar el mensaje."). El mensaje
-  **no se guarda**, no se crea la conversación si era la primera vez, no se consulta a
-  `identify-service` y nadie recibe ningún evento.
+  **no se guarda**, no se crea la conversación si era la primera vez, no se consulta la
+  réplica de usuarios y nadie recibe ningún evento.
 - Quien bloqueó recibe `403 USER_BLOCKED` si intenta escribirle a esa persona: tiene que
   desbloquearla primero. Es información propia, así que se le dice.
 - Se comprueba en **cada** mensaje, no solo en el primero, así que aplica también a conversaciones que
@@ -420,18 +449,18 @@ cliente al elegir a alguien del autocompletado:
 Un `@nombre` suelto es texto común: solo cuenta lo que tiene id. `@here` no
 existe. En mensajes directos los tokens quedan como texto.
 
-**Al enviar** (`new_message`), si el texto tiene algún token, `messaging` le
-pregunta a `servers` (`POST /v1/servers/:id/mentions/resolve`, con el JWT del
-autor) qué menciones valen. Las reglas viven en `servers`, que es dueño de
-miembros, roles y permisos:
+**Al enviar** (`new_message`), si el texto tiene algún token, `messaging` decide
+qué menciones valen con la réplica local de miembros, roles y overrides (ver
+"Réplica local de permisos y usuarios"), con las reglas de la historia:
 
 - **CA1:** un usuario mencionado cuenta si es miembro del servidor. No hace
   falta ningún permiso.
 - **CA2 / CA3:** los roles y `@everyone` cuentan solo si el autor tiene
   `MENTION_EVERYONE` (el dueño y los administradores lo tienen siempre).
-- **CA4:** sin ese permiso, `servers` los devuelve vacíos y el mensaje se envía
+- **CA4:** sin ese permiso, se descartan y el mensaje se envía
   igual, con eso como **texto plano**. No es un error.
-- Se notifica a quienes pueden ver el canal (`VIEW_CHANNELS`), nunca al autor.
+- Se notifica a quienes pueden ver **ese canal** (`VIEW_CHANNELS` ya con los
+  overrides del canal), nunca al autor.
 
 El mensaje guarda lo que valió en `mentions`, `mention_roles` y
 `mention_everyone` (siempre presentes en la API; `[]`/`false` en mensajes
@@ -457,9 +486,10 @@ nuevos reciben `mention` (corregir un typo no vuelve a pinguear a nadie).
 **Eliminar** un mensaje borra sus notificaciones. Borrar el canal o el
 servidor también.
 
-Si `servers` no responde, el envío (o la edición) falla con
+Si Mongo no responde, el envío (o la edición) falla con
 `MENTIONS_UNAVAILABLE` (503), igual que ya pasa con el chequeo de
-`SEND_MESSAGES`.
+`SEND_MESSAGES`. Si el autor no figura como miembro en la réplica, también
+(en la práctica no pasa: antes se le exigió `SEND_MESSAGES`).
 
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
@@ -555,25 +585,18 @@ docker compose up -d mongo rabbitmq
 mix phx.server
 ```
 
-`IDENTIFY_BASE_URL` (default `http://localhost:8081`) apunta a `identify-service`: se usa solo
-para validar que el destinatario de un DM exista, la primera vez que se le escribe. En producción
-es obligatoria (como `SERVERS_BASE_URL`): sin ella la app no arranca.
-
-En ambos casos, `SERVERS_BASE_URL` (`.env`) tiene que apuntar a una instancia
-de `servers` corriendo (para el chequeo de permisos) -- por default asume
-`http://localhost:8080`. Si `servers` corre en su propio `docker compose`
-aparte (no en el mismo proyecto que este) y acá levantaste todo con **"Todo
-en Docker"**, `localhost` desde adentro del container `api` no llega al host
--- usá `SERVERS_BASE_URL=http://host.docker.internal:8080` en ese caso (Mac/
-Windows con Docker Desktop). Si corrés `mix phx.server` en el host, `localhost`
-funciona normal.
+`messaging` ya no llama por HTTP a `servers` ni a `identify-service`: los permisos, las
+menciones y la existencia de un usuario se resuelven con una réplica local que se alimenta de
+eventos de RabbitMQ (ver "Réplica local de permisos y usuarios"). Para que un servidor o un
+usuario creados antes de levantar este servicio aparezcan hay que re-publicar los eventos desde
+`servers` e `identify-service` (backfill) con la cola de `messaging` ya creada.
 
 ## Tests
 ```bash
 make test   # mix coveralls -- falla si la cobertura total < 70% (coveralls.json)
 ```
 Los tests unitarios y el e2e de `RoomChannel` usan `Mox`
-(`Messaging.Chat.RepoMock`, `Messaging.Chat.PermissionsClientMock`) y
+(`Messaging.Chat.RepoMock`, `Messaging.Chat.PermissionsStoreMock`, `Messaging.Chat.MentionResolverMock`) y
 `Messaging.Events.LocalBroadcaster` (entrega en tiempo real in-process, sin
 broker) -- no necesitan Mongo ni RabbitMQ reales.
 
