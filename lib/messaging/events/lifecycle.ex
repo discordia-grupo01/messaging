@@ -72,6 +72,8 @@ defmodule Messaging.Events.Lifecycle do
 
   def handle(%ChannelEvent.MemberLeft{} = event) do
     with {:ok, :applied} <- clock(member_key(event), "left", event.occurred_at),
+         {:ok, _outcome} <-
+           Repo.impl().delete_member(event.server_id, event.user_id, event.occurred_at),
          :ok <- Chat.delete_member_mentions(event.server_id, event.user_id),
          :ok <- Sockets.revoke_member(event.server_id, event.user_id, "member_left") do
       Logger.info("member_left_applied", server_id: event.server_id, user_id: event.user_id)
@@ -114,6 +116,76 @@ defmodule Messaging.Events.Lifecycle do
         channel_id: event.channel_id,
         users: length(event.user_ids)
       )
+    end
+  end
+
+  def handle(%ChannelEvent.RoleUpdated{} = event) do
+    replica_write(event.server_id, "servers.role_updated", fn ->
+      Repo.impl().apply_role(
+        event.server_id,
+        event.role_id,
+        event.permissions,
+        event.is_everyone,
+        event.occurred_at
+      )
+    end)
+  end
+
+  def handle(%ChannelEvent.RoleDeleted{} = event) do
+    replica_write(event.server_id, "servers.role_deleted", fn ->
+      Repo.impl().delete_role(event.server_id, event.role_id, event.occurred_at)
+    end)
+  end
+
+  def handle(%ChannelEvent.MemberRolesUpdated{} = event) do
+    replica_write(event.server_id, "servers.member_roles_updated", fn ->
+      Repo.impl().apply_member_roles(
+        event.server_id,
+        event.user_id,
+        event.role_ids,
+        event.occurred_at
+      )
+    end)
+  end
+
+  def handle(%ChannelEvent.ChannelOverridesUpdated{} = event) do
+    replica_write(event.server_id, "servers.channel_overrides_updated", fn ->
+      Repo.impl().apply_channel_overrides(
+        event.server_id,
+        event.channel_id,
+        event.overrides,
+        event.occurred_at
+      )
+    end)
+  end
+
+  def handle(%ChannelEvent.OwnerUpdated{} = event) do
+    replica_write(event.server_id, "servers.owner_updated", fn ->
+      Repo.impl().apply_server_owner(event.server_id, event.owner_id, event.occurred_at)
+    end)
+  end
+
+  def handle(%ChannelEvent.ProfileUpdated{} = event) do
+    case Repo.impl().apply_profile(event.user_id, event.version) do
+      {:ok, :applied} ->
+        Logger.info("profile_replicated", user_id: event.user_id, version: event.version)
+
+      {:ok, :stale} ->
+        ignored(:stale, "users.profile_updated")
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp replica_write(server_id, routing_key, write) do
+    with :alive <- server_state(server_id),
+         {:ok, :applied} <- write.() do
+      Logger.info("replica_updated", routing_key: routing_key, server_id: server_id)
+    else
+      :deleted -> ignored(:server_deleted, routing_key)
+      {:ok, :stale} -> ignored(:stale, routing_key)
+      {:error, _reason} = error -> error
     end
   end
 

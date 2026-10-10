@@ -7,6 +7,12 @@ defmodule Messaging.Chat.Repo.Mongo do
   @blocks "blocks"
   @clocks "event_clocks"
   @mentions "mentions"
+  @replica_servers "replica_servers"
+  @replica_roles "replica_roles"
+  @replica_members "replica_members"
+  @replica_overrides "replica_overrides"
+  @replica_users "replica_users"
+  @tombstone_ttl_seconds 7 * 24 * 60 * 60
 
   @impl true
   def insert_message(doc) do
@@ -317,6 +323,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   def delete_channel(channel_id) do
     with {:ok, _result} <- Mongo.delete_many(@conn, @messages, %{"channel_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_many(@conn, @mentions, %{"channel_id" => channel_id}),
+         {:ok, _result} <- Mongo.delete_one(@conn, @replica_overrides, %{"_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_one(@conn, @channels, %{"_id" => channel_id}) do
       :ok
     end
@@ -331,6 +338,7 @@ defmodule Messaging.Chat.Repo.Mongo do
            Mongo.delete_many(@conn, @messages, %{"channel_id" => %{"$in" => all_ids}}),
          {:ok, _result} <-
            Mongo.delete_many(@conn, @mentions, %{"channel_id" => %{"$in" => all_ids}}),
+         {:ok, _result} <- delete_replica(server_id),
          {:ok, _result} <- Mongo.delete_many(@conn, @channels, %{"server_id" => server_id}) do
       :ok
     else
@@ -338,6 +346,182 @@ defmodule Messaging.Chat.Repo.Mongo do
     end
   rescue
     error -> {:error, error}
+  end
+
+  defp delete_replica(server_id) do
+    filter = %{"server_id" => server_id}
+
+    with {:ok, _result} <- Mongo.delete_many(@conn, @replica_overrides, filter),
+         {:ok, _result} <- Mongo.delete_many(@conn, @replica_members, filter),
+         {:ok, _result} <- Mongo.delete_many(@conn, @replica_roles, filter) do
+      Mongo.delete_one(@conn, @replica_servers, %{"_id" => server_id})
+    end
+  end
+
+  @impl true
+  def apply_server_owner(server_id, owner_id, %DateTime{} = at),
+    do: apply_snapshot(@replica_servers, server_id, %{"owner_id" => owner_id}, at)
+
+  @impl true
+  def apply_role(server_id, role_id, permissions, is_everyone, %DateTime{} = at) do
+    fields = %{
+      "server_id" => server_id,
+      "permissions" => permissions,
+      "is_everyone" => is_everyone
+    }
+
+    apply_snapshot(@replica_roles, role_id, fields, at)
+  end
+
+  @impl true
+  def delete_role(server_id, role_id, %DateTime{} = at) do
+    with {:ok, :applied} <-
+           apply_tombstone(@replica_roles, role_id, %{"server_id" => server_id}, at),
+         {:ok, _result} <-
+           Mongo.update_many(
+             @conn,
+             @replica_members,
+             %{"server_id" => server_id},
+             %{"$pull" => %{"role_ids" => role_id}}
+           ),
+         {:ok, _result} <-
+           Mongo.update_many(
+             @conn,
+             @replica_overrides,
+             %{"server_id" => server_id},
+             %{"$pull" => %{"overrides" => %{"role_id" => role_id}}}
+           ) do
+      {:ok, :applied}
+    end
+  end
+
+  @impl true
+  def apply_member_roles(server_id, user_id, role_ids, %DateTime{} = at) do
+    fields = %{"server_id" => server_id, "user_id" => user_id, "role_ids" => role_ids}
+    apply_snapshot(@replica_members, member_key(server_id, user_id), fields, at)
+  end
+
+  @impl true
+  def delete_member(server_id, user_id, %DateTime{} = at) do
+    fields = %{"server_id" => server_id, "user_id" => user_id, "role_ids" => []}
+    apply_tombstone(@replica_members, member_key(server_id, user_id), fields, at)
+  end
+
+  @impl true
+  def apply_channel_overrides(server_id, channel_id, overrides, %DateTime{} = at) do
+    fields = %{
+      "server_id" => server_id,
+      "overrides" =>
+        Enum.map(overrides, fn o ->
+          %{"role_id" => o.role_id, "allow" => o.allow, "deny" => o.deny}
+        end)
+    }
+
+    apply_snapshot(@replica_overrides, channel_id, fields, at)
+  end
+
+  @impl true
+  def apply_profile(user_id, version) do
+    filter = %{"_id" => user_id, "version" => %{"$lt" => version}}
+
+    case Mongo.update_one(@conn, @replica_users, filter, %{"$set" => %{"version" => version}},
+           upsert: true
+         ) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def get_server_owner(server_id) do
+    case Mongo.find_one(@conn, @replica_servers, %{"_id" => server_id}) do
+      %{"owner_id" => owner_id} -> owner_id
+      nil -> nil
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def get_member(server_id, user_id) do
+    Mongo.find_one(@conn, @replica_members, %{
+      "_id" => member_key(server_id, user_id),
+      "deleted" => %{"$ne" => true}
+    })
+  end
+
+  @impl true
+  def get_members(_server_id, []), do: {:ok, []}
+
+  def get_members(server_id, user_ids) do
+    keys = Enum.map(user_ids, &member_key(server_id, &1))
+    list(@replica_members, %{"_id" => %{"$in" => keys}, "deleted" => %{"$ne" => true}})
+  end
+
+  @impl true
+  def list_members(server_id) do
+    list(@replica_members, %{"server_id" => server_id, "deleted" => %{"$ne" => true}})
+  end
+
+  @impl true
+  def list_roles(server_id) do
+    list(@replica_roles, %{"server_id" => server_id, "deleted" => %{"$ne" => true}})
+  end
+
+  @impl true
+  def get_channel_overrides(channel_id) do
+    case Mongo.find_one(@conn, @replica_overrides, %{"_id" => channel_id}) do
+      %{"overrides" => overrides} -> {:ok, overrides}
+      nil -> {:ok, []}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def user_known?(user_id) do
+    case Mongo.find_one(@conn, @replica_users, %{"_id" => user_id}, projection: %{"_id" => 1}) do
+      nil -> false
+      {:error, _reason} = error -> error
+      _doc -> true
+    end
+  end
+
+  defp list(collection, filter) do
+    case Mongo.find(@conn, collection, filter) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp member_key(server_id, user_id), do: "#{server_id}:#{user_id}"
+
+  defp apply_snapshot(collection, id, fields, at) do
+    update = %{
+      "$set" => fields |> Map.merge(%{"at" => at, "deleted" => false}),
+      "$unset" => %{"expires_at" => ""}
+    }
+
+    write_if_newer(collection, id, at, update)
+  end
+
+  defp apply_tombstone(collection, id, fields, at) do
+    expires_at = DateTime.add(DateTime.utc_now(), @tombstone_ttl_seconds, :second)
+
+    update = %{
+      "$set" => Map.merge(fields, %{"at" => at, "deleted" => true, "expires_at" => expires_at})
+    }
+
+    write_if_newer(collection, id, at, update)
+  end
+
+  defp write_if_newer(collection, id, at, update) do
+    filter = %{"_id" => id, "at" => %{"$lte" => at}}
+
+    case Mongo.update_one(@conn, collection, filter, update, upsert: true) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
   end
 
   defp cached_channel_ids(server_id) do
@@ -389,10 +573,16 @@ defmodule Messaging.Chat.Repo.Mongo do
       [name: "event_clocks_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]
     ]
 
+    replica_ttl = [[name: "replica_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]]
+    replica_by_server = [[name: "replica_server", key: [server_id: 1]]]
+
     with :ok <- Mongo.create_indexes(@conn, @messages, indexes),
          :ok <- Mongo.create_indexes(@conn, @channels, channel_indexes),
          :ok <- Mongo.create_indexes(@conn, @blocks, block_indexes),
-         :ok <- Mongo.create_indexes(@conn, @mentions, mention_indexes) do
+         :ok <- Mongo.create_indexes(@conn, @mentions, mention_indexes),
+         :ok <- Mongo.create_indexes(@conn, @replica_roles, replica_ttl ++ replica_by_server),
+         :ok <- Mongo.create_indexes(@conn, @replica_members, replica_ttl ++ replica_by_server),
+         :ok <- Mongo.create_indexes(@conn, @replica_overrides, replica_by_server) do
       Mongo.create_indexes(@conn, @clocks, clock_indexes)
     end
   end
