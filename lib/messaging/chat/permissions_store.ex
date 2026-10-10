@@ -9,4 +9,7 @@ defmodule Messaging.Chat.PermissionsStore do
 
   @callback can_view_channel?(ChannelCache.t(), user_id :: String.t()) ::
               {:ok, boolean()} | {:error, term()}
+
+  @callback can_add_reactions?(ChannelCache.t(), user_id :: String.t()) ::
+              {:ok, boolean()} | {:error, term()}
 end

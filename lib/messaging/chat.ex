@@ -7,7 +7,9 @@ defmodule Messaging.Chat do
     MentionResolver,
     Mentions,
     Message,
-    UserMention
+    Reaction,
+    UserMention,
+    WordFilter
   }
 
   alias Messaging.Events.MentionNotifier
@@ -44,6 +46,7 @@ defmodule Messaging.Chat do
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, trimmed} <- validate_content(content),
          {:ok, true} <- check_permission(channel, user_id),
+         :ok <- check_word_filter(channel, trimmed),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
          {:ok, message} <- persist_message(channel, user_id, trimmed, mentions) do
       record_mentions(message, mentions.recipient_ids)
@@ -103,6 +106,102 @@ defmodule Messaging.Chat do
     else
       {:ok, false} -> {:error, :forbidden}
       {:error, _reason} = error -> error
+    end
+  end
+
+  @type reaction_params :: %{
+          channel_id: String.t(),
+          message_id: term(),
+          user_id: String.t(),
+          emoji: term()
+        }
+
+  @type reaction_result :: %{
+          message: Message.t(),
+          emoji: String.t(),
+          count: non_neg_integer(),
+          changed: boolean()
+        }
+
+  @spec add_reaction(reaction_params()) ::
+          {:ok, reaction_result()} | {:error, MessagingWeb.ApiError.reason()}
+  def add_reaction(%{
+        channel_id: channel_id,
+        message_id: message_id,
+        user_id: user_id,
+        emoji: emoji
+      }) do
+    with {:ok, channel} <- fetch_channel(channel_id),
+         :ok <- ensure_not_muted(channel, user_id),
+         {:ok, emoji} <- Reaction.validate_emoji(emoji),
+         {:ok, true} <- Access.for_channel(channel).can_react?(channel, user_id),
+         {:ok, message} <- fetch_message(channel_id, message_id),
+         :ok <- ensure_reaction_room(message, emoji),
+         now = DateTime.utc_now() |> DateTime.truncate(:millisecond),
+         {:ok, outcome} <- repo().add_reaction(Reaction.new_doc(message, emoji, user_id, now)) do
+      reaction_result(message, emoji, outcome == :added, now)
+    else
+      {:ok, false} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @spec remove_reaction(reaction_params()) ::
+          {:ok, reaction_result()} | {:error, MessagingWeb.ApiError.reason()}
+  def remove_reaction(%{
+        channel_id: channel_id,
+        message_id: message_id,
+        user_id: user_id,
+        emoji: emoji
+      }) do
+    with {:ok, channel} <- fetch_channel(channel_id),
+         {:ok, emoji} <- Reaction.validate_emoji(emoji),
+         {:ok, true} <- Access.for_channel(channel).can_view?(channel, user_id),
+         {:ok, message} <- fetch_message(channel_id, message_id),
+         {:ok, outcome} <- repo().remove_reaction(Reaction.id(message.id, emoji, user_id)) do
+      now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      reaction_result(message, emoji, outcome == :removed, now)
+    else
+      {:ok, false} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc "Reactions of each message as `viewer_id` sees them: `%{message_id => [summary]}`."
+  @spec reactions_for([Message.t()], String.t()) ::
+          {:ok, %{String.t() => [Reaction.summary()]}} | {:error, term()}
+  def reactions_for([], _viewer_id), do: {:ok, %{}}
+
+  def reactions_for(messages, viewer_id) do
+    with {:ok, docs} <- repo().list_reactions(Enum.map(messages, & &1.id)) do
+      {:ok, Reaction.summarize(docs, viewer_id)}
+    end
+  end
+
+  defp ensure_reaction_room(%Message{id: id}, emoji) do
+    with {:ok, emojis} <- repo().reaction_emojis(id) do
+      if emoji in emojis or length(emojis) < Reaction.max_per_message(),
+        do: :ok,
+        else: {:error, :too_many_reactions}
+    end
+  end
+
+  defp reaction_result(%Message{} = message, emoji, changed, now) do
+    with {:ok, count} <- repo().count_reactions(message.id, emoji) do
+      if changed, do: touch_message(message, now)
+      {:ok, %{message: message, emoji: emoji, count: count, changed: changed}}
+    end
+  end
+
+  # Moves changed_at so a member reconnecting gets the message back in
+  # changed_messages, with its current reactions.
+  defp touch_message(%Message{} = message, now) do
+    case repo().touch_message(message.id, now) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("message_touch_failed", message_id: message.id, reason: Log.reason(reason))
     end
   end
 
@@ -359,6 +458,17 @@ defmodule Messaging.Chat do
     end
   end
 
+  defp check_word_filter(%ChannelCache{server_id: nil}, _content), do: :ok
+
+  defp check_word_filter(%ChannelCache{server_id: server_id}, content) do
+    with {:ok, banned} <- repo().get_word_filter(server_id) do
+      case WordFilter.matches(content, banned) do
+        [] -> :ok
+        words -> {:error, {:banned_word, words}}
+      end
+    end
+  end
+
   defp check_permission(%ChannelCache{} = channel, user_id),
     do: Access.for_channel(channel).can_post?(channel, user_id)
 
@@ -526,6 +636,7 @@ defmodule Messaging.Chat do
         )
 
         forget_mentions(message)
+        forget_reactions(message)
         {:ok, Message.from_doc(doc)}
 
       {:error, reason} = error ->
@@ -554,11 +665,25 @@ defmodule Messaging.Chat do
     end
   end
 
+  defp forget_reactions(%Message{} = message) do
+    case repo().delete_reactions(message.id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("reactions_delete_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
+        )
+    end
+  end
+
   defp apply_edit(_channel, %Message{content: content} = message, content, _actor_id),
     do: {:ok, message, :unchanged}
 
   defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
-    with {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
+    with :ok <- check_word_filter(channel, new_content),
+         {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
       update_content(message, new_content, mentions)
     end
   end

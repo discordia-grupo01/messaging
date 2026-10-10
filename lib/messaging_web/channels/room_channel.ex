@@ -115,8 +115,45 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
+  def handle_in(event, %{"message_id" => message_id, "emoji" => emoji}, socket)
+      when event in ["add_reaction", "remove_reaction"] do
+    params = %{
+      channel_id: socket.assigns.channel_id,
+      message_id: message_id,
+      user_id: socket.assigns.user_id,
+      emoji: emoji
+    }
+
+    {action, result} =
+      if event == "add_reaction",
+        do: {"added", Chat.add_reaction(params)},
+        else: {"removed", Chat.remove_reaction(params)}
+
+    case result do
+      {:ok, reaction} ->
+        if reaction.changed, do: publish_reaction(reaction, socket.assigns.user_id, action)
+
+        {:reply,
+         {:ok,
+          %{
+            "emoji" => reaction.emoji,
+            "count" => reaction.count,
+            "reacted_by_me" => action == "added"
+          }}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, ApiError.payload(reason)}, socket}
+    end
+  end
+
   def handle_in(event, _payload, socket)
-      when event in ["new_message", "edit_message", "delete_message"] do
+      when event in [
+             "new_message",
+             "edit_message",
+             "delete_message",
+             "add_reaction",
+             "remove_reaction"
+           ] do
     {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
   end
 
@@ -146,6 +183,19 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
+  defp publish_reaction(reaction, user_id, action) do
+    case Broadcaster.publish("reaction_updated", Message.reaction_api(reaction, user_id, action)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("reaction_updated_broadcast_failed",
+          message_id: reaction.message.id,
+          reason: Log.reason(reason)
+        )
+    end
+  end
+
   defp validate_cursor(nil), do: :ok
   defp validate_cursor(id) when is_binary(id), do: :ok
   defp validate_cursor(_other), do: {:error, :invalid_cursor}
@@ -164,15 +214,15 @@ defmodule MessagingWeb.RoomChannel do
   defp push_changes(_socket, nil), do: :ok
 
   defp push_changes(socket, since) do
-    case Chat.list_changes(socket.assigns.channel_id, since) do
-      {:ok, messages, deleted_ids} ->
-        push(socket, "changed_messages", %{
-          "messages" => Enum.map(messages, &Message.to_api/1),
-          "deleted_ids" => deleted_ids
-        })
+    with {:ok, messages, deleted_ids} <- Chat.list_changes(socket.assigns.channel_id, since),
+         {:ok, reactions} <- Chat.reactions_for(messages, socket.assigns.user_id) do
+      push(socket, "changed_messages", %{
+        "messages" => Enum.map(messages, &Message.to_api(&1, reactions)),
+        "deleted_ids" => deleted_ids
+      })
 
-        :ok
-
+      :ok
+    else
       {:error, :too_many_changes} ->
         push(socket, "resync_required", %{})
         :ok
@@ -185,18 +235,19 @@ defmodule MessagingWeb.RoomChannel do
   defp push_missed_messages(_socket, nil), do: :ok
 
   defp push_missed_messages(socket, last_message_id) do
-    case Chat.list_messages(socket.assigns.channel_id,
-           after: last_message_id,
-           limit: Chat.max_page_limit()
-         ) do
-      {:ok, messages, next_cursor} ->
-        push(socket, "missed_messages", %{
-          "messages" => Enum.map(messages, &Message.to_api/1),
-          "next_cursor" => next_cursor
-        })
+    with {:ok, messages, next_cursor} <-
+           Chat.list_messages(socket.assigns.channel_id,
+             after: last_message_id,
+             limit: Chat.max_page_limit()
+           ),
+         {:ok, reactions} <- Chat.reactions_for(messages, socket.assigns.user_id) do
+      push(socket, "missed_messages", %{
+        "messages" => Enum.map(messages, &Message.to_api(&1, reactions)),
+        "next_cursor" => next_cursor
+      })
 
-        :ok
-
+      :ok
+    else
       {:error, :invalid_cursor} ->
         push(socket, "resync_required", %{})
         :ok

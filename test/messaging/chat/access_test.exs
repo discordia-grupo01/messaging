@@ -66,6 +66,16 @@ defmodule Messaging.Chat.AccessTest do
       assert {:error, :timeout} = Access.Direct.can_post?(dm(), "a")
     end
 
+    test "reacting follows the same rule as posting" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, [%{"_id" => "b:a"}]} end)
+      assert {:ok, false} = Access.Direct.can_react?(dm(), "a")
+
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      assert {:ok, true} = Access.Direct.can_react?(dm(), "a")
+
+      assert {:error, :channel_not_found} = Access.Direct.can_react?(dm(), "intruder")
+    end
+
     test "nobody moderates a direct conversation" do
       assert {:ok, false} = Access.Direct.can_moderate?(dm(), "a")
     end
@@ -89,6 +99,14 @@ defmodule Messaging.Chat.AccessTest do
       assert {:ok, true} = Access.Server.can_delete?(text(), "u")
       assert {:ok, false} = Access.Server.can_post?(text(), "u")
       assert {:ok, true} = Access.Server.can_moderate?(text(), "u")
+    end
+
+    test "reacting asks servers for ADD_REACTIONS in that channel" do
+      expect(Messaging.Chat.PermissionsStoreMock, :can_add_reactions?, fn %{channel_id: _}, "u" ->
+        {:ok, false}
+      end)
+
+      assert {:ok, false} = Access.Server.can_react?(text(), "u")
     end
   end
 end

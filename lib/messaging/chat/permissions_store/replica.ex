@@ -15,6 +15,10 @@ defmodule Messaging.Chat.PermissionsStore.Replica do
   @impl true
   def can_view_channel?(channel, user_id), do: has_permission?(channel, user_id, "VIEW_CHANNELS")
 
+  @impl true
+  def can_add_reactions?(channel, user_id),
+    do: has_permission?(channel, user_id, "ADD_REACTIONS")
+
   defp has_permission?(%ChannelCache{server_id: nil}, _user_id, _permission), do: {:ok, false}
 
   defp has_permission?(%ChannelCache{} = channel, user_id, permission) do

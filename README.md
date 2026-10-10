@@ -75,6 +75,10 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   `reason: "permissions_changed"`. No pasa por `event_clocks`: solo corta
   conexiones y el `join` vuelve a chequear los permisos actuales, así que un
   duplicado o uno fuera de orden cuesta a lo sumo una reconexión.
+- `servers.word_filter_updated` -- la lista completa de palabras prohibidas de
+  un servidor (ver [Palabras prohibidas](#palabras-prohibidas)). Se guarda en
+  `replica_word_filters` y, como las fotos de permisos, gana la de
+  `occurred_at` más nuevo.
 
 ### Réplica local de permisos y usuarios
 
@@ -169,6 +173,8 @@ dominio para otros servicios.
     conversación directa (ver [Mensajes directos](#mensajes-directos-dm)).
   - `handle_in("new_message", %{"content" => "..."})` -- requiere
     `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+  - `handle_in("add_reaction" | "remove_reaction", %{"message_id" => "<id>", "emoji" => "👍"})`
+    -- reacciona a un mensaje o saca la reacción propia (ver [Reacciones](#reacciones)).
 - WS `/socket`, channel `"user:" <> user_id` (`MessagingWeb.UserChannel`, solo el propio usuario):
   - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
     (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
@@ -490,6 +496,64 @@ Si Mongo no responde, el envío (o la edición) falla con
 `MENTIONS_UNAVAILABLE` (503), igual que ya pasa con el chequeo de
 `SEND_MESSAGES`. Si el autor no figura como miembro en la réplica, también
 (en la práctica no pasa: antes se le exigió `SEND_MESSAGES`).
+
+## Palabras prohibidas
+Cada servidor puede tener una lista de palabras o frases prohibidas, que se
+edita en `servers` (`PUT /v1/servers/{id}/banned-words`, con `MANAGE_MESSAGES`)
+y llega acá por `servers.word_filter_updated`.
+
+- `new_message` y `edit_message` (y el `PATCH` de edición) rechazan un mensaje
+  que contenga alguna: responden `BANNED_WORD` con las encontradas en
+  `details.words`, y no se guarda ni se emite nada. Una edición que deja el
+  mensaje igual no se chequea.
+- Se compara sin distinguir mayúsculas ni tildes ("Tónto" = "tonto") y solo por
+  palabras completas: "película" no choca con "culo". Una frase ("no sirve")
+  tiene que aparecer con esas palabras seguidas, sin importar la puntuación o
+  los espacios entre ellas. No detecta variantes escritas para esquivarlo
+  ("t0nt0", "t.o.n.t.o").
+- Nadie queda exento, ni el dueño. Se chequea después de los permisos, así que
+  quien no puede escribir recibe `FORBIDDEN` y nunca ve la lista.
+- Aplica desde que llega el evento: los mensajes ya enviados no se tocan. En
+  los mensajes directos no aplica (la lista es de cada servidor).
+
+## Reacciones
+Historia #48: reaccionar a un mensaje con un emoji, en canales de servidor y en
+conversaciones directas.
+
+- **Agregar** (`add_reaction`): pide `ADD_REACTIONS` en el canal (lo calcula la
+  réplica de permisos, con los overrides del canal; el owner y los administradores
+  siempre pueden). En un DM alcanza con ser participante y que ninguno haya
+  bloqueado al otro, igual que para escribir. Un miembro silenciado no reacciona.
+- **Sacar** (`remove_reaction`): solo la reacción propia, y alcanza con ver el canal:
+  quien perdió `ADD_REACTIONS` puede retirar las que ya había puesto.
+- **Emoji**: tiene que ser exactamente un emoji (un grafema; vale 👨‍👩‍👧, 👍🏽, 🇦🇷 o
+  1️⃣); texto o varios emojis dan `INVALID_EMOJI`. Un mensaje admite hasta 20 emojis
+  distintos (`TOO_MANY_REACTIONS`); los que ya están se pueden seguir usando.
+- **Idempotente**: son dos acciones explícitas y no un "toggle", así un doble click o
+  un reintento no deshacen nada. Repetir una reacción, o sacar una que no estaba,
+  responde `ok` sin emitir nada.
+
+La respuesta trae `{"emoji", "count", "reacted_by_me"}`. Si algo cambió, se emite a
+todos los que tienen el canal abierto:
+
+```json
+"reaction_updated": {"channel_id", "message_id", "emoji", "user_id",
+                     "action": "added" | "removed", "count": 3}
+```
+
+`reacted_by_me` no viaja en el evento (es el mismo para todos): cada cliente usa el
+`count` que manda el servidor y, si `user_id` es el suyo, actualiza su `reacted_by_me`.
+
+El historial (`GET /messages`, `missed_messages`, `changed_messages`) trae
+`reactions: [{"emoji", "count", "reacted_by_me"}]` en cada mensaje, calculado para
+quien pide, en el orden en que se usó cada emoji. `new_message` y `message_updated`
+no la traen: el cliente conserva las que ya tenía.
+
+Se guardan en la colección `reactions`, un documento por mensaje, emoji y usuario
+(`_id` = `"<message_id>:<emoji>:<user_id>"`, así dos reacciones iguales nunca se
+duplican). Reaccionar mueve el `changed_at` del mensaje, así quien vuelve de una
+desconexión recibe el mensaje en `changed_messages` con sus reacciones al día. Se
+borran junto con el mensaje, el canal o el servidor.
 
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),

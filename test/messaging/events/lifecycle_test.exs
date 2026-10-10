@@ -340,6 +340,37 @@ defmodule Messaging.Events.LifecycleTest do
       assert :ok = Lifecycle.handle(event)
     end
 
+    test "the banned words of a server replace the ones we had" do
+      expect_alive()
+
+      expect(Messaging.Chat.RepoMock, :apply_word_filter, fn "srv-1", ["tonto"], @t1 ->
+        {:ok, :applied}
+      end)
+
+      event = %ChannelEvent.WordFilterUpdated{
+        event_id: "w1",
+        occurred_at: @t1,
+        server_id: "srv-1",
+        words: ["tonto"]
+      }
+
+      assert :ok = Lifecycle.handle(event)
+    end
+
+    test "an older banned words list never replaces a newer one" do
+      expect_alive()
+      expect(Messaging.Chat.RepoMock, :apply_word_filter, fn _s, _w, _a -> {:ok, :stale} end)
+
+      event = %ChannelEvent.WordFilterUpdated{
+        event_id: "w2",
+        occurred_at: @t1,
+        server_id: "srv-1",
+        words: []
+      }
+
+      assert {:ignored, :stale} = Lifecycle.handle(event)
+    end
+
     test "a snapshot older than the one we have is ignored" do
       expect_alive()
       expect(Messaging.Chat.RepoMock, :apply_server_owner, fn _s, _o, _a -> {:ok, :stale} end)

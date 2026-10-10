@@ -853,6 +853,97 @@ if mongo_url do
       assert %{"partialFilterExpression" => %{"changed_at" => %{"$exists" => true}}} =
                Enum.find(indexes, &(&1["name"] == "messages_channel_changed_at"))
     end
+
+    describe "reactions" do
+      alias Messaging.Chat.Reaction
+
+      defp message(channel_id) do
+        [id] = seed(channel_id, 1)
+        %{id: id, channel_id: channel_id}
+      end
+
+      defp react(message, emoji, user_id, second \\ 0) do
+        at = DateTime.add(~U[2026-10-10 12:00:00.000Z], second, :second)
+        Repo.add_reaction(Reaction.new_doc(message, emoji, user_id, at))
+      end
+
+      test "adding is idempotent and removing tells whether something was there",
+           %{channel_id: channel_id} do
+        msg = message(channel_id)
+
+        assert {:ok, :added} = react(msg, "👍", "u1")
+        assert {:ok, :unchanged} = react(msg, "👍", "u1")
+        assert {:ok, :added} = react(msg, "👍", "u2")
+        assert {:ok, 2} = Repo.count_reactions(msg.id, "👍")
+
+        assert {:ok, :removed} = Repo.remove_reaction(Reaction.id(msg.id, "👍", "u1"))
+        assert {:ok, :unchanged} = Repo.remove_reaction(Reaction.id(msg.id, "👍", "u1"))
+        assert {:ok, 1} = Repo.count_reactions(msg.id, "👍")
+      end
+
+      test "two members reacting at the same time both count", %{channel_id: channel_id} do
+        msg = message(channel_id)
+
+        results =
+          1..20
+          |> Task.async_stream(&react(msg, "🔥", "u#{&1}"), max_concurrency: 20)
+          |> Enum.map(fn {:ok, result} -> result end)
+
+        assert Enum.all?(results, &(&1 == {:ok, :added}))
+        assert {:ok, 20} = Repo.count_reactions(msg.id, "🔥")
+      end
+
+      test "lists the distinct emojis and every reaction of a page", %{channel_id: channel_id} do
+        msg = message(channel_id)
+        other = message(channel_id)
+        react(msg, "👍", "u1", 1)
+        react(msg, "🎉", "u2", 2)
+        react(msg, "👍", "u2", 3)
+        react(other, "😂", "u1", 4)
+
+        assert {:ok, emojis} = Repo.reaction_emojis(msg.id)
+        assert Enum.sort(emojis) == Enum.sort(["👍", "🎉"])
+
+        assert {:ok, docs} = Repo.list_reactions([msg.id, other.id])
+
+        assert %{
+                 msg.id => [
+                   %{"emoji" => "👍", "count" => 2, "reacted_by_me" => true},
+                   %{"emoji" => "🎉", "count" => 1, "reacted_by_me" => false}
+                 ],
+                 other.id => [%{"emoji" => "😂", "count" => 1, "reacted_by_me" => true}]
+               } == Reaction.summarize(docs, "u1")
+      end
+
+      test "touch_message moves changed_at so the reaction shows up in the change feed",
+           %{channel_id: channel_id} do
+        msg = message(channel_id)
+        at = ~U[2030-01-01 00:00:00.000Z]
+
+        assert :ok = Repo.touch_message(msg.id, at)
+        assert {:ok, [%{"_id" => id}]} = Repo.list_changes(channel_id, at, 10)
+        assert id == msg.id
+      end
+
+      test "deleting a message, a channel or a server takes its reactions along",
+           %{channel_id: channel_id} do
+        msg = message(channel_id)
+        react(msg, "👍", "u1")
+        assert :ok = Repo.delete_reactions(msg.id)
+        assert {:ok, []} = Repo.list_reactions([msg.id])
+
+        msg = message(channel_id)
+        react(msg, "👍", "u1")
+        assert :ok = Repo.delete_channel(channel_id)
+        assert {:ok, []} = Repo.list_reactions([msg.id])
+
+        other_channel = "chan-" <> Messaging.UUID.generate()
+        msg = message(other_channel)
+        react(msg, "👍", "u1")
+        assert :ok = Repo.delete_server_data("srv-gone", [other_channel])
+        assert {:ok, []} = Repo.list_reactions([msg.id])
+      end
+    end
   end
 else
   defmodule Messaging.Chat.Repo.MongoTest do

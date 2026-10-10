@@ -66,9 +66,10 @@ defmodule MessagingWeb.MessageController do
              limit: limit,
              before: Map.get(params, "before"),
              after: Map.get(params, "after")
-           ) do
+           ),
+         {:ok, reactions} <- Chat.reactions_for(messages, user_id) do
       json(conn, %{
-        "messages" => Enum.map(messages, &Message.to_api/1),
+        "messages" => Enum.map(messages, &Message.to_api(&1, reactions)),
         "next_cursor" => next_cursor
       })
     else
@@ -96,8 +97,8 @@ defmodule MessagingWeb.MessageController do
     responses: [
       ok: {"El mensaje, ya editado", "application/json", Schemas.Message},
       bad_request:
-        {"Contenido vacío o demasiado largo, o cuerpo mal formado", "application/json",
-         Schemas.ErrorResponse},
+        {"Contenido vacío, demasiado largo o con palabras prohibidas (`BANNED_WORD`), o cuerpo mal formado",
+         "application/json", Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

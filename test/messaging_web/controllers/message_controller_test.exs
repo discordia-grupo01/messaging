@@ -7,6 +7,9 @@ defmodule MessagingWeb.MessageControllerTest do
   setup :verify_on_exit!
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :list_reactions, fn _ids -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :delete_reactions, fn _id -> :ok end)
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     :ok
   end
@@ -214,6 +217,59 @@ defmodule MessagingWeb.MessageControllerTest do
     conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=not-a-number")
 
     assert json_response(conn, 200)["messages"] == []
+  end
+
+  test "the history carries each message's reactions as the caller sees them", %{conn: conn} do
+    allow_view("user-2")
+
+    expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+      {:ok,
+       [
+         message_doc("msg-2", ~U[2026-10-10 12:00:02Z]),
+         message_doc("msg-1", ~U[2026-10-10 12:00:01Z])
+       ]}
+    end)
+
+    expect(Messaging.Chat.RepoMock, :list_reactions, fn ids ->
+      assert Enum.sort(ids) == ["msg-1", "msg-2"]
+
+      {:ok,
+       [
+         %{
+           "message_id" => "msg-1",
+           "emoji" => "👍",
+           "user_id" => "user-1",
+           "inserted_at" => ~U[2026-10-10 12:01:00Z]
+         },
+         %{
+           "message_id" => "msg-1",
+           "emoji" => "👍",
+           "user_id" => "user-2",
+           "inserted_at" => ~U[2026-10-10 12:02:00Z]
+         },
+         %{
+           "message_id" => "msg-1",
+           "emoji" => "🎉",
+           "user_id" => "user-1",
+           "inserted_at" => ~U[2026-10-10 12:03:00Z]
+         }
+       ]}
+    end)
+
+    conn = conn |> authed("user-2") |> get("/v1/channels/#{@channel_id}/messages")
+
+    assert %{
+             "messages" => [
+               %{
+                 "id" => "msg-1",
+                 "reactions" => [
+                   %{"emoji" => "👍", "count" => 2, "reacted_by_me" => true},
+                   %{"emoji" => "🎉", "count" => 1, "reacted_by_me" => false}
+                 ]
+               },
+               %{"id" => "msg-2", "reactions" => []}
+             ]
+           } = json_response(conn, 200)
   end
 
   describe "PATCH /v1/channels/:channel_id/messages/:message_id" do

@@ -18,6 +18,10 @@ defmodule Messaging.Chat.Access.Server do
   def can_moderate?(%ChannelCache{} = channel, user_id),
     do: store().can_manage_messages?(channel, user_id)
 
+  @impl true
+  def can_react?(%ChannelCache{} = channel, user_id),
+    do: store().can_add_reactions?(channel, user_id)
+
   defp store,
     do:
       Application.get_env(:messaging, :permissions_store, Messaging.Chat.PermissionsStore.Replica)

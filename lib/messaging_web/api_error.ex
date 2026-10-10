@@ -20,6 +20,9 @@ defmodule MessagingWeb.ApiError do
           | :user_blocked
           | :dm_not_delivered
           | :invalid_payload
+          | {:banned_word, [String.t()]}
+          | :invalid_emoji
+          | :too_many_reactions
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -84,8 +87,25 @@ defmodule MessagingWeb.ApiError do
   def describe(:invalid_payload),
     do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
 
+  def describe(:invalid_emoji), do: {"INVALID_EMOJI", "La reacción tiene que ser un solo emoji."}
+
+  def describe(:too_many_reactions),
+    do:
+      {"TOO_MANY_REACTIONS",
+       "El mensaje ya tiene el máximo de #{Messaging.Chat.Reaction.max_per_message()} reacciones distintas."}
+
+  def describe({:banned_word, _words}),
+    do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
+
   @spec payload(reason(), map()) :: map()
-  def payload(reason, details \\ %{}) do
+  def payload(reason, details \\ %{})
+
+  def payload({:banned_word, words} = reason, details) do
+    {code, message} = describe(reason)
+    %{error: %{code: code, message: message, details: Map.put(details, :words, words)}}
+  end
+
+  def payload(reason, details) do
     {code, message} = describe(reason)
     %{error: %{code: code, message: message, details: details}}
   end

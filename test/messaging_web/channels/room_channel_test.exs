@@ -25,6 +25,9 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :list_reactions, fn _ids -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :delete_reactions, fn _id -> :ok end)
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
@@ -56,6 +59,18 @@ defmodule MessagingWeb.RoomChannelTest do
 
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
+  end
+
+  test "a message with a banned word is rejected with the words, and nobody receives it" do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn @server_id -> {:ok, ["tonto"]} end)
+
+    socket = join_socket("user-a")
+    {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+
+    ref = push(socket, "new_message", %{"content" => "sos un Tonto"})
+
+    assert_reply ref, :error, %{error: %{code: "BANNED_WORD", details: %{words: ["tonto"]}}}
+    refute_push "new_message", _payload
   end
 
   test "rejects an empty message" do
@@ -751,6 +766,140 @@ defmodule MessagingWeb.RoomChannelTest do
 
       assert {:stop, :catch_up_failed, ^socket} =
                RoomChannel.handle_info({:after_join, nil, ~U[2026-09-28 12:00:00Z]}, socket)
+    end
+  end
+
+  describe "reactions" do
+    defp reaction_message,
+      do: %{
+        "_id" => "msg-1",
+        "channel_id" => @channel_id,
+        "server_id" => @server_id,
+        "user_id" => "user-b",
+        "content" => "hola",
+        "inserted_at" => ~U[2026-10-10 12:00:00Z]
+      }
+
+    setup do
+      stub(Messaging.Chat.RepoMock, :get_message, fn "msg-1" -> reaction_message() end)
+      stub(Messaging.Chat.RepoMock, :reaction_emojis, fn "msg-1" -> {:ok, []} end)
+      stub(Messaging.Chat.RepoMock, :count_reactions, fn "msg-1", "👍" -> {:ok, 2} end)
+      stub(Messaging.Chat.RepoMock, :touch_message, fn "msg-1", _at -> :ok end)
+
+      stub(Messaging.Chat.PermissionsStoreMock, :can_add_reactions?, fn _channel, _uid ->
+        {:ok, true}
+      end)
+
+      :ok
+    end
+
+    defp joined(user_id) do
+      {:ok, _reply, socket} =
+        subscribe_and_join(join_socket(user_id), RoomChannel, "channel:" <> @channel_id)
+
+      socket
+    end
+
+    test "CA1: a reaction reaches every member with the channel open" do
+      stub(Messaging.Chat.RepoMock, :add_reaction, fn _doc -> {:ok, :added} end)
+
+      reactor = joined("user-a")
+      _other = joined("user-b")
+
+      ref = push(reactor, "add_reaction", %{"message_id" => "msg-1", "emoji" => "👍"})
+      assert_reply ref, :ok, %{"emoji" => "👍", "count" => 2, "reacted_by_me" => true}
+
+      event = %{
+        "channel_id" => @channel_id,
+        "message_id" => "msg-1",
+        "emoji" => "👍",
+        "user_id" => "user-a",
+        "action" => "added",
+        "count" => 2
+      }
+
+      assert_push "reaction_updated", ^event
+      assert_push "reaction_updated", ^event
+    end
+
+    test "CA2: removing the own reaction is broadcast as removed" do
+      stub(Messaging.Chat.RepoMock, :remove_reaction, fn "msg-1:👍:user-a" -> {:ok, :removed} end)
+      stub(Messaging.Chat.RepoMock, :count_reactions, fn "msg-1", "👍" -> {:ok, 1} end)
+
+      socket = joined("user-a")
+      ref = push(socket, "remove_reaction", %{"message_id" => "msg-1", "emoji" => "👍"})
+
+      assert_reply ref, :ok, %{"count" => 1, "reacted_by_me" => false}
+
+      assert_push "reaction_updated", %{
+        "action" => "removed",
+        "user_id" => "user-a",
+        "count" => 1
+      }
+    end
+
+    test "a repeated reaction is acknowledged but not broadcast again" do
+      stub(Messaging.Chat.RepoMock, :add_reaction, fn _doc -> {:ok, :unchanged} end)
+
+      socket = joined("user-a")
+      ref = push(socket, "add_reaction", %{"message_id" => "msg-1", "emoji" => "👍"})
+
+      assert_reply ref, :ok, %{"reacted_by_me" => true}
+      refute_push "reaction_updated", _payload
+    end
+
+    test "CA3: without ADD_REACTIONS the reaction is rejected and nobody hears about it" do
+      stub(Messaging.Chat.PermissionsStoreMock, :can_add_reactions?, fn _channel, _uid ->
+        {:ok, false}
+      end)
+
+      socket = joined("user-a")
+      ref = push(socket, "add_reaction", %{"message_id" => "msg-1", "emoji" => "👍"})
+
+      assert_reply ref, :error, %{error: %{code: "FORBIDDEN"}}
+      refute_push "reaction_updated", _payload
+    end
+
+    test "rejects anything that isn't one emoji, and malformed payloads" do
+      socket = joined("user-a")
+
+      ref = push(socket, "add_reaction", %{"message_id" => "msg-1", "emoji" => "jaja"})
+      assert_reply ref, :error, %{error: %{code: "INVALID_EMOJI"}}
+
+      ref = push(socket, "remove_reaction", %{"emoji" => "👍"})
+      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+    end
+
+    test "catch-up after a reconnect carries each message's reactions for that member" do
+      stub(Messaging.Chat.RepoMock, :list_changes, fn @channel_id, _since, _limit ->
+        {:ok, [Map.put(reaction_message(), "changed_at", ~U[2026-10-10 12:05:00Z])]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :list_reactions, fn ["msg-1"] ->
+        {:ok,
+         [
+           %{
+             "message_id" => "msg-1",
+             "emoji" => "🔥",
+             "user_id" => "user-a",
+             "inserted_at" => ~U[2026-10-10 12:01:00Z]
+           }
+         ]}
+      end)
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id, %{
+          "changes_since" => "2026-10-10T12:00:00Z"
+        })
+
+      assert_push "changed_messages", %{
+        "messages" => [
+          %{
+            "id" => "msg-1",
+            "reactions" => [%{"emoji" => "🔥", "count" => 1, "reacted_by_me" => true}]
+          }
+        ]
+      }
     end
   end
 end
