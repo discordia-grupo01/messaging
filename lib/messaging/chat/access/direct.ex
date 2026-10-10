@@ -4,14 +4,14 @@ defmodule Messaging.Chat.Access.Direct do
   alias Messaging.Chat.{Blocks, ChannelCache}
 
   @impl true
-  def can_view?(%ChannelCache{participants: participants}, user_id, _raw_jwt),
+  def can_view?(%ChannelCache{participants: participants}, user_id),
     do: participant(participants, user_id)
 
   @impl true
-  def can_post?(%ChannelCache{} = channel, user_id, _raw_jwt), do: unblocked(channel, user_id)
+  def can_post?(%ChannelCache{} = channel, user_id), do: unblocked(channel, user_id)
 
   @impl true
-  def can_delete?(%ChannelCache{} = channel, user_id, _raw_jwt), do: unblocked(channel, user_id)
+  def can_delete?(%ChannelCache{} = channel, user_id), do: unblocked(channel, user_id)
 
   defp unblocked(%ChannelCache{participants: participants}, user_id) do
     with {:ok, true} <- participant(participants, user_id) do
@@ -24,7 +24,7 @@ defmodule Messaging.Chat.Access.Direct do
   end
 
   @impl true
-  def can_moderate?(%ChannelCache{}, _user_id, _raw_jwt), do: {:ok, false}
+  def can_moderate?(%ChannelCache{}, _user_id), do: {:ok, false}
 
   defp participant(participants, user_id) do
     if user_id in participants, do: {:ok, true}, else: {:error, :channel_not_found}

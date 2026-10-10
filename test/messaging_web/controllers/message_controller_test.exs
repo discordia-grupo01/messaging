@@ -68,9 +68,8 @@ defmodule MessagingWeb.MessageControllerTest do
   defp allow_view(user_id \\ "user-1") do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
-                                                                        ^user_id,
-                                                                        _ ->
+    expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn %{channel_id: @channel_id},
+                                                                       ^user_id ->
       {:ok, true}
     end)
   end
@@ -169,7 +168,7 @@ defmodule MessagingWeb.MessageControllerTest do
   test "403s when the caller lacks VIEW_CHANNELS", %{conn: conn} do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+    expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
       {:ok, false}
     end)
 
@@ -189,7 +188,7 @@ defmodule MessagingWeb.MessageControllerTest do
   test "400s on an unknown `before` cursor", %{conn: conn} do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+    expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
       {:ok, true}
     end)
 
@@ -203,7 +202,7 @@ defmodule MessagingWeb.MessageControllerTest do
   test "an unparseable `limit` falls back to the default page size", %{conn: conn} do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+    expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
       {:ok, true}
     end)
 
@@ -228,9 +227,11 @@ defmodule MessagingWeb.MessageControllerTest do
     defp allow_edit(doc \\ stored()) do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
-                                                                           "user-1",
-                                                                           _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn %{
+                                                                            channel_id:
+                                                                              @channel_id
+                                                                          },
+                                                                          "user-1" ->
         {:ok, true}
       end)
 
@@ -331,7 +332,7 @@ defmodule MessagingWeb.MessageControllerTest do
     test "403 when the caller can no longer write in the channel", %{conn: conn} do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
         {:ok, false}
       end)
 
@@ -368,9 +369,10 @@ defmodule MessagingWeb.MessageControllerTest do
     defp allow_delete(doc, user_id \\ "user-1") do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn @channel_id,
-                                                                          ^user_id,
-                                                                          _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn %{
+                                                                           channel_id: @channel_id
+                                                                         },
+                                                                         ^user_id ->
         {:ok, true}
       end)
 
@@ -415,9 +417,11 @@ defmodule MessagingWeb.MessageControllerTest do
     test "CA2: a member with MANAGE_MESSAGES deletes someone else's message", %{conn: conn} do
       allow_delete(stored(), "moderator")
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn @channel_id,
-                                                                             "moderator",
-                                                                             _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_manage_messages?, fn %{
+                                                                              channel_id:
+                                                                                @channel_id
+                                                                            },
+                                                                            "moderator" ->
         {:ok, true}
       end)
 
@@ -432,7 +436,7 @@ defmodule MessagingWeb.MessageControllerTest do
          %{conn: conn} do
       allow_delete(stored(), "intruder")
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_manage_messages?, fn _channel, _uid ->
         {:ok, false}
       end)
 
@@ -447,7 +451,7 @@ defmodule MessagingWeb.MessageControllerTest do
     test "403 when the caller cannot view the channel", %{conn: conn} do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
         {:ok, false}
       end)
 

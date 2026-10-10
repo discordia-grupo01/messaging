@@ -25,9 +25,7 @@ config :logger, level: log_level
 
 config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
-  rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672"),
-  servers_base_url: System.get_env("SERVERS_BASE_URL", "http://localhost:8080"),
-  identify_base_url: System.get_env("IDENTIFY_BASE_URL", "http://localhost:8081")
+  rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
 
 if config_env() == :prod do
   allowed_origins =
@@ -48,7 +46,5 @@ if config_env() == :prod do
 
   config :messaging,
     mongo_url: System.fetch_env!("MONGO_URL"),
-    rabbitmq_url: System.fetch_env!("RABBITMQ_URL"),
-    servers_base_url: System.fetch_env!("SERVERS_BASE_URL"),
-    identify_base_url: System.fetch_env!("IDENTIFY_BASE_URL")
+    rabbitmq_url: System.fetch_env!("RABBITMQ_URL")
 end

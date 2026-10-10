@@ -16,7 +16,6 @@ defmodule Messaging.Chat.MentionsFlowTest do
   @channel_id "chan-mentions"
   @server_id "srv-mentions"
   @author "author-1"
-  @raw_jwt "a.jwt.token"
   @role "9b1e2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"
 
   defp text_channel_doc,
@@ -30,9 +29,8 @@ defmodule Messaging.Chat.MentionsFlowTest do
   defp allow_send do
     expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn @channel_id,
-                                                                         @author,
-                                                                         @raw_jwt ->
+    expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn %{channel_id: @channel_id},
+                                                                        @author ->
       {:ok, true}
     end)
   end
@@ -40,10 +38,12 @@ defmodule Messaging.Chat.MentionsFlowTest do
   defp resolution(fields), do: struct!(Mentions.none(), fields)
 
   defp expect_resolve(expected_query, result) do
-    expect(Messaging.Chat.MentionsClientMock, :resolve, fn @server_id,
-                                                           @channel_id,
-                                                           query,
-                                                           @raw_jwt ->
+    expect(Messaging.Chat.MentionResolverMock, :resolve, fn %{
+                                                              server_id: @server_id,
+                                                              channel_id: @channel_id
+                                                            },
+                                                            query,
+                                                            _actor ->
       assert query == expected_query
       result
     end)
@@ -54,8 +54,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
       Chat.send_message(%{
         channel_id: @channel_id,
         user_id: @author,
-        content: content,
-        raw_jwt: @raw_jwt
+        content: content
       })
 
   defp stored_doc(overrides) do
@@ -207,14 +206,13 @@ defmodule Messaging.Chat.MentionsFlowTest do
       allow_send()
       expect(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
 
-      # No MentionsClientMock expectation: calling it would fail the test.
       assert {:ok, %Message{mentions: []}} = send_message("hola @ana, mail a@b.com")
     end
 
     test "if servers can't check the mentions, the message is not sent" do
       allow_send()
 
-      expect(Messaging.Chat.MentionsClientMock, :resolve, fn _sid, _cid, _query, _jwt ->
+      expect(Messaging.Chat.MentionResolverMock, :resolve, fn _channel, _query, _actor ->
         {:error, :mentions_unavailable}
       end)
 
@@ -260,7 +258,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
     defp allow_edit(doc) do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
         {:ok, true}
       end)
 
@@ -273,8 +271,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
           channel_id: @channel_id,
           message_id: "msg-1",
           user_id: @author,
-          content: content,
-          raw_jwt: @raw_jwt
+          content: content
         })
 
     test "swapping who is mentioned forgets the old one and notifies only the new one" do
@@ -365,7 +362,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
     test "if servers can't check the new mentions, the edit is not applied" do
       allow_edit(stored_doc(%{"content" => "aviso"}))
 
-      expect(Messaging.Chat.MentionsClientMock, :resolve, fn _sid, _cid, _query, _jwt ->
+      expect(Messaging.Chat.MentionResolverMock, :resolve, fn _channel, _query, _actor ->
         {:error, :mentions_unavailable}
       end)
 
@@ -377,7 +374,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
     test "deleting a message with mentions removes its notifications" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-      expect(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+      expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
         {:ok, true}
       end)
 
@@ -395,8 +392,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
                Chat.delete_message(%{
                  channel_id: @channel_id,
                  message_id: "msg-1",
-                 user_id: @author,
-                 raw_jwt: @raw_jwt
+                 user_id: @author
                })
     end
   end
@@ -422,8 +418,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
                  channel_id: dm["_id"],
                  message_id: "msg-1",
                  user_id: @author,
-                 content: "<@friend> @everyone",
-                 raw_jwt: @raw_jwt
+                 content: "<@friend> @everyone"
                })
     end
   end

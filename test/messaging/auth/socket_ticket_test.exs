@@ -7,44 +7,44 @@ defmodule Messaging.Auth.SocketTicketTest do
 
   setup :verify_on_exit!
 
-  test "issue/2 stores the user, the jwt and a short expiry under a hash, never the raw ticket" do
+  test "issue/1 stores the user and a short expiry under a hash, never the raw ticket or a token" do
     expect(TicketStoreMock, :put, fn doc ->
       assert doc["user_id"] == "user-1"
-      assert doc["raw_jwt"] == "the.jwt.value"
+      refute Map.has_key?(doc, "raw_jwt")
       assert DateTime.compare(doc["expires_at"], DateTime.utc_now()) == :gt
       assert DateTime.diff(doc["expires_at"], DateTime.utc_now()) <= SocketTicket.ttl_seconds()
       send(self(), {:stored_id, doc["_id"]})
       :ok
     end)
 
-    assert {:ok, ticket} = SocketTicket.issue("user-1", "the.jwt.value")
+    assert {:ok, ticket} = SocketTicket.issue("user-1")
 
     assert_received {:stored_id, stored_id}
     refute stored_id == ticket
     assert String.length(stored_id) == 64
   end
 
-  test "issue/2 returns a different ticket every time" do
+  test "issue/1 returns a different ticket every time" do
     stub(TicketStoreMock, :put, fn _doc -> :ok end)
 
-    assert {:ok, first} = SocketTicket.issue("user-1", "jwt")
-    assert {:ok, second} = SocketTicket.issue("user-1", "jwt")
+    assert {:ok, first} = SocketTicket.issue("user-1")
+    assert {:ok, second} = SocketTicket.issue("user-1")
     refute first == second
   end
 
-  test "issue/2 surfaces a store failure" do
+  test "issue/1 surfaces a store failure" do
     expect(TicketStoreMock, :put, fn _doc -> {:error, :mongo_down} end)
 
-    assert {:error, :mongo_down} = SocketTicket.issue("user-1", "jwt")
+    assert {:error, :mongo_down} = SocketTicket.issue("user-1")
   end
 
-  test "redeem/1 returns the user and jwt for a live ticket, looked up by hash" do
+  test "redeem/1 returns the user for a live ticket, looked up by hash" do
     stub(TicketStoreMock, :put, fn doc ->
       send(self(), {:stored, doc})
       :ok
     end)
 
-    {:ok, ticket} = SocketTicket.issue("user-1", "the.jwt.value")
+    {:ok, ticket} = SocketTicket.issue("user-1")
     assert_received {:stored, doc}
 
     expect(TicketStoreMock, :take, fn id ->
@@ -52,7 +52,7 @@ defmodule Messaging.Auth.SocketTicketTest do
       {:ok, doc}
     end)
 
-    assert {:ok, %{user_id: "user-1", raw_jwt: "the.jwt.value"}} = SocketTicket.redeem(ticket)
+    assert {:ok, %{user_id: "user-1"}} = SocketTicket.redeem(ticket)
   end
 
   test "redeem/1 rejects an expired ticket" do

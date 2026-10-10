@@ -10,7 +10,6 @@ if mongo_url do
       do: %{
         "_id" => id,
         "user_id" => "user-1",
-        "raw_jwt" => "jwt",
         "expires_at" => DateTime.utc_now()
       }
 

@@ -8,13 +8,13 @@ defmodule MessagingWeb.UserSocketTest do
 
   setup :verify_on_exit!
 
-  test "connect/3 accepts a valid ticket and assigns the user id and the original jwt" do
+  test "connect/3 accepts a valid ticket and assigns the user id" do
     doc = AuthFixtures.ticket_doc("user-1")
     expect(TicketStoreMock, :take, fn _id -> {:ok, doc} end)
 
     assert {:ok, socket} = connect(UserSocket, %{"ticket" => "a-ticket"})
     assert socket.assigns.user_id == "user-1"
-    assert socket.assigns.raw_jwt == doc["raw_jwt"]
+    refute Map.has_key?(socket.assigns, :raw_jwt)
   end
 
   test "connect/3 rejects a missing ticket" do

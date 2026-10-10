@@ -68,7 +68,7 @@ defmodule Messaging.Events.ChannelEventTest do
   end
 
   test "parse/2 rejects an unknown routing key" do
-    assert {:error, :unknown_routing_key} = ChannelEvent.parse("servers.role_updated", %{})
+    assert {:error, :unknown_routing_key} = ChannelEvent.parse("servers.unknown_thing", %{})
   end
 
   describe "parse/2 for servers.server_deleted" do
@@ -305,6 +305,213 @@ defmodule Messaging.Events.ChannelEventTest do
       for bad <- [Map.delete(@unmuted, "unmuted_by"), Map.delete(@unmuted, "reason")] do
         assert {:error, :invalid_payload} =
                  ChannelEvent.parse(ChannelEvent.routing_key_member_unmuted(), bad)
+      end
+    end
+  end
+
+  describe "parse/2 for servers.role_updated" do
+    @role_updated %{
+      "event_id" => "evt-r1",
+      "occurred_at" => "2026-10-09T12:00:00.123456Z",
+      "server_id" => "srv-1",
+      "role_id" => "role-1",
+      "permissions" => ["SEND_MESSAGES", "VIEW_CHANNELS"],
+      "is_everyone" => false
+    }
+
+    test "parses the snapshot of a role" do
+      assert {:ok,
+              %ChannelEvent.RoleUpdated{
+                server_id: "srv-1",
+                role_id: "role-1",
+                permissions: ["SEND_MESSAGES", "VIEW_CHANNELS"],
+                is_everyone: false
+              }} = ChannelEvent.parse(ChannelEvent.routing_key_role_updated(), @role_updated)
+    end
+
+    test "a role may have no permissions" do
+      assert {:ok, %ChannelEvent.RoleUpdated{permissions: []}} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_role_updated(),
+                 %{@role_updated | "permissions" => []}
+               )
+    end
+
+    for field <- ~w(server_id role_id permissions is_everyone) do
+      test "rejects a payload without #{field}" do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(
+                   ChannelEvent.routing_key_role_updated(),
+                   Map.delete(@role_updated, unquote(field))
+                 )
+      end
+    end
+
+    test "rejects permissions that are not a list of names" do
+      for bad <- ["VIEW_CHANNELS", [1, 2], nil] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(
+                   ChannelEvent.routing_key_role_updated(),
+                   %{@role_updated | "permissions" => bad}
+                 )
+      end
+    end
+  end
+
+  describe "parse/2 for servers.role_deleted" do
+    test "parses a well-formed payload and rejects an incomplete one" do
+      payload = %{
+        "event_id" => "evt-r2",
+        "occurred_at" => "2026-10-09T12:00:00Z",
+        "server_id" => "srv-1",
+        "role_id" => "role-1"
+      }
+
+      assert {:ok, %ChannelEvent.RoleDeleted{server_id: "srv-1", role_id: "role-1"}} =
+               ChannelEvent.parse(ChannelEvent.routing_key_role_deleted(), payload)
+
+      assert {:error, :invalid_payload} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_role_deleted(),
+                 Map.delete(payload, "role_id")
+               )
+    end
+  end
+
+  describe "parse/2 for servers.member_roles_updated" do
+    @member_roles %{
+      "event_id" => "evt-m1",
+      "occurred_at" => "2026-10-09T12:00:00Z",
+      "server_id" => "srv-1",
+      "user_id" => "user-1",
+      "role_ids" => ["role-1", "role-2", "role-1"]
+    }
+
+    test "parses the roles of a member without repeats" do
+      assert {:ok,
+              %ChannelEvent.MemberRolesUpdated{user_id: "user-1", role_ids: ["role-1", "role-2"]}} =
+               ChannelEvent.parse(ChannelEvent.routing_key_member_roles_updated(), @member_roles)
+    end
+
+    test "a member may have no roles" do
+      assert {:ok, %ChannelEvent.MemberRolesUpdated{role_ids: []}} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_member_roles_updated(),
+                 %{@member_roles | "role_ids" => []}
+               )
+    end
+
+    test "rejects missing fields and role ids that are not strings" do
+      for bad <- [Map.delete(@member_roles, "user_id"), %{@member_roles | "role_ids" => [%{}]}] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_member_roles_updated(), bad)
+      end
+    end
+  end
+
+  describe "parse/2 for servers.channel_overrides_updated" do
+    @overrides %{
+      "event_id" => "evt-o1",
+      "occurred_at" => "2026-10-09T12:00:00Z",
+      "server_id" => "srv-1",
+      "channel_id" => "chan-1",
+      "overrides" => [
+        %{"role_id" => "role-1", "allow" => ["SEND_MESSAGES"], "deny" => []},
+        %{"role_id" => "role-2", "allow" => [], "deny" => ["VIEW_CHANNELS"]}
+      ]
+    }
+
+    test "parses every override of the channel, in order" do
+      assert {:ok,
+              %ChannelEvent.ChannelOverridesUpdated{
+                channel_id: "chan-1",
+                overrides: [
+                  %{role_id: "role-1", allow: ["SEND_MESSAGES"], deny: []},
+                  %{role_id: "role-2", allow: [], deny: ["VIEW_CHANNELS"]}
+                ]
+              }} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_channel_overrides_updated(),
+                 @overrides
+               )
+    end
+
+    test "an empty list means the channel has no overrides left" do
+      assert {:ok, %ChannelEvent.ChannelOverridesUpdated{overrides: []}} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_channel_overrides_updated(),
+                 %{@overrides | "overrides" => []}
+               )
+    end
+
+    test "rejects a malformed override list" do
+      bad_lists = [
+        nil,
+        "x",
+        [%{"role_id" => "role-1", "allow" => []}],
+        [%{"role_id" => "", "allow" => [], "deny" => []}],
+        [%{"role_id" => "role-1", "allow" => "SEND_MESSAGES", "deny" => []}]
+      ]
+
+      for bad <- bad_lists do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(
+                   ChannelEvent.routing_key_channel_overrides_updated(),
+                   %{@overrides | "overrides" => bad}
+                 )
+      end
+    end
+  end
+
+  describe "parse/2 for servers.owner_updated" do
+    test "parses a well-formed payload and rejects an incomplete one" do
+      payload = %{
+        "event_id" => "evt-w1",
+        "occurred_at" => "2026-10-09T12:00:00Z",
+        "server_id" => "srv-1",
+        "owner_id" => "user-1"
+      }
+
+      assert {:ok, %ChannelEvent.OwnerUpdated{server_id: "srv-1", owner_id: "user-1"}} =
+               ChannelEvent.parse(ChannelEvent.routing_key_owner_updated(), payload)
+
+      assert {:error, :invalid_payload} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_owner_updated(),
+                 %{payload | "owner_id" => ""}
+               )
+    end
+  end
+
+  describe "parse/2 for users.profile_updated" do
+    @profile %{
+      "event_id" => "evt-p1",
+      "occurred_at" => "2026-10-09T12:00:00Z",
+      "user_id" => "user-1",
+      "version" => 3,
+      "name" => "Ana",
+      "avatar_url" => "",
+      "description" => "",
+      "status_text" => "",
+      "status_emoji" => ""
+    }
+
+    test "keeps only the id and the version of the snapshot" do
+      assert {:ok, %ChannelEvent.ProfileUpdated{user_id: "user-1", version: 3} = event} =
+               ChannelEvent.parse(ChannelEvent.routing_key_profile_updated(), @profile)
+
+      refute Map.has_key?(event, :name)
+    end
+
+    test "rejects a missing user, a missing version or a version that is not positive" do
+      for bad <- [
+            Map.delete(@profile, "user_id"),
+            Map.delete(@profile, "version"),
+            %{@profile | "version" => 0},
+            %{@profile | "version" => "3"}
+          ] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_profile_updated(), bad)
       end
     end
   end

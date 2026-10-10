@@ -22,7 +22,7 @@ defmodule MessagingWeb.SocketTicketController do
     ]
 
   def create(conn, _params) do
-    case SocketTicket.issue(conn.assigns.user_id, conn.assigns.raw_jwt) do
+    case SocketTicket.issue(conn.assigns.user_id) do
       {:ok, ticket} ->
         conn
         |> put_status(201)

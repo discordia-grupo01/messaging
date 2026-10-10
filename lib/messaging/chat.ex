@@ -4,11 +4,10 @@ defmodule Messaging.Chat do
     Blocks,
     ChannelCache,
     Conversation,
+    MentionResolver,
     Mentions,
-    MentionsClient,
     Message,
-    UserMention,
-    UsersClient
+    UserMention
   }
 
   alias Messaging.Events.MentionNotifier
@@ -31,8 +30,7 @@ defmodule Messaging.Chat do
   @type send_message_params :: %{
           channel_id: String.t(),
           user_id: String.t(),
-          content: String.t(),
-          raw_jwt: String.t()
+          content: String.t()
         }
 
   @spec send_message(send_message_params()) ::
@@ -40,14 +38,13 @@ defmodule Messaging.Chat do
   def send_message(%{
         channel_id: channel_id,
         user_id: user_id,
-        content: content,
-        raw_jwt: raw_jwt
+        content: content
       }) do
     with {:ok, channel} <- fetch_text_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, trimmed} <- validate_content(content),
-         {:ok, true} <- check_permission(channel, user_id, raw_jwt),
-         {:ok, mentions} <- resolve_mentions(channel, trimmed, raw_jwt),
+         {:ok, true} <- check_permission(channel, user_id),
+         {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
          {:ok, message} <- persist_message(channel, user_id, trimmed, mentions) do
       record_mentions(message, mentions.recipient_ids)
       {:ok, message}
@@ -61,8 +58,7 @@ defmodule Messaging.Chat do
           channel_id: String.t(),
           message_id: term(),
           user_id: String.t(),
-          content: String.t(),
-          raw_jwt: String.t()
+          content: String.t()
         }
 
   @spec edit_message(edit_message_params()) ::
@@ -71,16 +67,15 @@ defmodule Messaging.Chat do
         channel_id: channel_id,
         message_id: message_id,
         user_id: user_id,
-        content: content,
-        raw_jwt: raw_jwt
+        content: content
       }) do
     with {:ok, channel} <- fetch_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
-         {:ok, true} <- check_permission(channel, user_id, raw_jwt),
+         {:ok, true} <- check_permission(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- require_author(message, user_id),
          {:ok, trimmed} <- validate_content(content) do
-      apply_edit(channel, message, trimmed, raw_jwt)
+      apply_edit(channel, message, trimmed, user_id)
     else
       {:ok, false} -> {:error, :forbidden}
       {:error, _reason} = error -> error
@@ -90,8 +85,7 @@ defmodule Messaging.Chat do
   @type delete_message_params :: %{
           channel_id: String.t(),
           message_id: term(),
-          user_id: String.t(),
-          raw_jwt: String.t()
+          user_id: String.t()
         }
 
   @spec delete_message(delete_message_params()) ::
@@ -99,13 +93,12 @@ defmodule Messaging.Chat do
   def delete_message(%{
         channel_id: channel_id,
         message_id: message_id,
-        user_id: user_id,
-        raw_jwt: raw_jwt
+        user_id: user_id
       }) do
     with {:ok, channel} <- fetch_channel(channel_id),
-         {:ok, true} <- Access.for_channel(channel).can_delete?(channel, user_id, raw_jwt),
+         {:ok, true} <- Access.for_channel(channel).can_delete?(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
-         :ok <- authorize_delete(channel, message, user_id, raw_jwt) do
+         :ok <- authorize_delete(channel, message, user_id) do
       apply_delete(message, user_id)
     else
       {:ok, false} -> {:error, :forbidden}
@@ -116,8 +109,7 @@ defmodule Messaging.Chat do
   @type send_direct_params :: %{
           sender_id: String.t(),
           recipient_id: term(),
-          content: String.t(),
-          raw_jwt: String.t()
+          content: String.t()
         }
 
   @spec send_direct_message(send_direct_params()) ::
@@ -125,13 +117,12 @@ defmodule Messaging.Chat do
   def send_direct_message(%{
         sender_id: sender_id,
         recipient_id: recipient_id,
-        content: content,
-        raw_jwt: raw_jwt
+        content: content
       }) do
     with :ok <- validate_recipient(sender_id, recipient_id),
          {:ok, trimmed} <- validate_content(content),
          :ok <- Blocks.check_contact(sender_id, recipient_id),
-         {:ok, channel} <- ensure_conversation(sender_id, recipient_id, raw_jwt),
+         {:ok, channel} <- ensure_conversation(sender_id, recipient_id),
          {:ok, message} <- persist_message(channel, sender_id, trimmed) do
       record_last_message(channel, message)
       {:ok, channel, message}
@@ -220,10 +211,9 @@ defmodule Messaging.Chat do
   @spec channel_exists?(String.t()) :: {:ok, ChannelCache.t()} | {:error, atom()}
   def channel_exists?(channel_id), do: fetch_channel(channel_id)
 
-  @spec can_view_channel?(ChannelCache.t(), String.t(), String.t()) ::
-          {:ok, boolean()} | {:error, term()}
-  def can_view_channel?(%ChannelCache{} = channel, user_id, raw_jwt),
-    do: Access.for_channel(channel).can_view?(channel, user_id, raw_jwt)
+  @spec can_view_channel?(ChannelCache.t(), String.t()) :: {:ok, boolean()} | {:error, term()}
+  def can_view_channel?(%ChannelCache{} = channel, user_id),
+    do: Access.for_channel(channel).can_view?(channel, user_id)
 
   @spec upsert_channel(ChannelCache.t()) :: :ok | {:error, term()}
   def upsert_channel(%ChannelCache{} = channel) do
@@ -295,20 +285,20 @@ defmodule Messaging.Chat do
     if Conversation.valid_user_id?(recipient_id), do: :ok, else: {:error, :recipient_not_found}
   end
 
-  defp ensure_conversation(sender_id, recipient_id, raw_jwt) do
+  defp ensure_conversation(sender_id, recipient_id) do
     conversation_id = Conversation.id(sender_id, recipient_id)
 
     case repo().get_channel(conversation_id) do
       %{} = doc -> {:ok, ChannelCache.from_doc(doc)}
-      nil -> create_conversation(sender_id, recipient_id, raw_jwt)
+      nil -> create_conversation(sender_id, recipient_id)
       {:error, _reason} = error -> error
     end
   end
 
-  defp create_conversation(sender_id, recipient_id, raw_jwt) do
+  defp create_conversation(sender_id, recipient_id) do
     doc = Conversation.new_doc(sender_id, recipient_id, DateTime.utc_now())
 
-    with :ok <- verify_recipient(recipient_id, raw_jwt),
+    with :ok <- verify_recipient(recipient_id),
          :ok <- repo().ensure_conversation(doc) do
       Logger.info("conversation_created", conversation_id: doc["_id"], user_id: sender_id)
 
@@ -316,11 +306,11 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp verify_recipient(recipient_id, raw_jwt) do
-    case UsersClient.verify(recipient_id, raw_jwt) do
-      :ok -> :ok
-      {:error, :not_found} -> {:error, :recipient_not_found}
-      {:error, :unavailable} -> {:error, :users_unavailable}
+  defp verify_recipient(recipient_id) do
+    case repo().user_known?(recipient_id) do
+      true -> :ok
+      false -> {:error, :recipient_not_found}
+      {:error, _reason} -> {:error, :users_unavailable}
     end
   end
 
@@ -369,8 +359,8 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp check_permission(%ChannelCache{} = channel, user_id, raw_jwt),
-    do: Access.for_channel(channel).can_post?(channel, user_id, raw_jwt)
+  defp check_permission(%ChannelCache{} = channel, user_id),
+    do: Access.for_channel(channel).can_post?(channel, user_id)
 
   defp ensure_not_muted(%ChannelCache{server_id: nil}, _user_id), do: :ok
 
@@ -388,16 +378,17 @@ defmodule Messaging.Chat do
 
   defp member_mute_key(server_id, user_id), do: "member_mute:#{server_id}:#{user_id}"
 
-  defp resolve_mentions(%ChannelCache{kind: "dm"}, _content, _raw_jwt), do: {:ok, Mentions.none()}
-
-  defp resolve_mentions(%ChannelCache{server_id: nil}, _content, _raw_jwt),
+  defp resolve_mentions(%ChannelCache{kind: "dm"}, _content, _actor_id),
     do: {:ok, Mentions.none()}
 
-  defp resolve_mentions(%ChannelCache{} = channel, content, raw_jwt) do
+  defp resolve_mentions(%ChannelCache{server_id: nil}, _content, _actor_id),
+    do: {:ok, Mentions.none()}
+
+  defp resolve_mentions(%ChannelCache{} = channel, content, actor_id) do
     query = Mentions.parse(content)
 
     if Mentions.any?(query),
-      do: MentionsClient.resolve(channel.server_id, channel.channel_id, query, raw_jwt),
+      do: MentionResolver.resolve(channel, query, actor_id),
       else: {:ok, Mentions.none()}
   end
 
@@ -509,10 +500,10 @@ defmodule Messaging.Chat do
   defp require_author(%Message{user_id: user_id}, user_id), do: :ok
   defp require_author(%Message{}, _user_id), do: {:error, :not_message_author}
 
-  defp authorize_delete(_channel, %Message{user_id: user_id}, user_id, _raw_jwt), do: :ok
+  defp authorize_delete(_channel, %Message{user_id: user_id}, user_id), do: :ok
 
-  defp authorize_delete(%ChannelCache{} = channel, %Message{}, user_id, raw_jwt) do
-    case Access.for_channel(channel).can_moderate?(channel, user_id, raw_jwt) do
+  defp authorize_delete(%ChannelCache{} = channel, %Message{}, user_id) do
+    case Access.for_channel(channel).can_moderate?(channel, user_id) do
       {:ok, true} -> :ok
       {:ok, false} -> {:error, :message_delete_denied}
       {:error, _reason} = error -> error
@@ -563,11 +554,11 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp apply_edit(_channel, %Message{content: content} = message, content, _raw_jwt),
+  defp apply_edit(_channel, %Message{content: content} = message, content, _actor_id),
     do: {:ok, message, :unchanged}
 
-  defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, raw_jwt) do
-    with {:ok, mentions} <- resolve_mentions(channel, new_content, raw_jwt) do
+  defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
+    with {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
       update_content(message, new_content, mentions)
     end
   end
