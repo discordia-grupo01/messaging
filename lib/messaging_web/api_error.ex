@@ -20,6 +20,8 @@ defmodule MessagingWeb.ApiError do
           | :user_blocked
           | :dm_not_delivered
           | :invalid_payload
+          | :invalid_emoji
+          | :too_many_reactions
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -83,6 +85,13 @@ defmodule MessagingWeb.ApiError do
 
   def describe(:invalid_payload),
     do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
+
+  def describe(:invalid_emoji), do: {"INVALID_EMOJI", "La reacción tiene que ser un solo emoji."}
+
+  def describe(:too_many_reactions),
+    do:
+      {"TOO_MANY_REACTIONS",
+       "El mensaje ya tiene el máximo de #{Messaging.Chat.Reaction.max_per_message()} reacciones distintas."}
 
   @spec payload(reason(), map()) :: map()
   def payload(reason, details \\ %{}) do

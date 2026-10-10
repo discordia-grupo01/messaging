@@ -18,7 +18,7 @@ defmodule Messaging.ReplicaFixtures do
     do: [
       %{
         "_id" => "everyone",
-        "permissions" => ["VIEW_CHANNELS", "SEND_MESSAGES"],
+        "permissions" => ["VIEW_CHANNELS", "SEND_MESSAGES", "ADD_REACTIONS"],
         "is_everyone" => true
       },
       %{"_id" => "mod", "permissions" => ["MANAGE_MESSAGES"], "is_everyone" => false},

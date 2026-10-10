@@ -89,6 +89,33 @@ defmodule Messaging.Chat.PermissionsStore.ReplicaTest do
     assert {:ok, false} = Replica.can_send_messages?(Fixtures.channel(), "ana")
   end
 
+  test "a member with the default role can react" do
+    Fixtures.stub_server("owner-1")
+    member("ana", ["everyone"])
+
+    assert {:ok, true} = Replica.can_add_reactions?(Fixtures.channel(), "ana")
+  end
+
+  test "a channel can deny reactions while still allowing to write" do
+    Fixtures.stub_server("owner-1", [Fixtures.override("everyone", [], ["ADD_REACTIONS"])])
+    member("ana", ["everyone"])
+
+    assert {:ok, true} = Replica.can_send_messages?(Fixtures.channel(), "ana")
+    assert {:ok, false} = Replica.can_add_reactions?(Fixtures.channel(), "ana")
+  end
+
+  test "the owner and administrators always react" do
+    Fixtures.stub_server("owner-1", [Fixtures.override("everyone", [], ["ADD_REACTIONS"])])
+
+    stub(Messaging.Chat.RepoMock, :get_member, fn
+      "srv-1", "owner-1" -> Fixtures.member("owner-1", ["everyone"])
+      "srv-1", "ana" -> Fixtures.member("ana", ["everyone", "admin"])
+    end)
+
+    assert {:ok, true} = Replica.can_add_reactions?(Fixtures.channel(), "owner-1")
+    assert {:ok, true} = Replica.can_add_reactions?(Fixtures.channel(), "ana")
+  end
+
   test "a role that was deleted grants nothing" do
     Fixtures.stub_server("owner-1")
     member("ana", ["deleted-role"])

@@ -10,6 +10,8 @@ defmodule Messaging.Chat.Access do
               {:ok, boolean()} | {:error, term()}
   @callback can_moderate?(ChannelCache.t(), user_id :: String.t()) ::
               {:ok, boolean()} | {:error, term()}
+  @callback can_react?(ChannelCache.t(), user_id :: String.t()) ::
+              {:ok, boolean()} | {:error, term()}
 
   @spec for_channel(ChannelCache.t()) :: module()
   def for_channel(%ChannelCache{kind: "dm"}), do: Direct
