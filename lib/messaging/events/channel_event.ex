@@ -34,6 +34,11 @@ defmodule Messaging.Events.ChannelEvent do
     defstruct [:event_id, :occurred_at, :server_id, :user_id, :unmuted_by, :reason]
   end
 
+  defmodule WordFilterUpdated do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :words]
+    defstruct [:event_id, :occurred_at, :server_id, :words]
+  end
+
   defmodule ChannelAccessRevoked do
     @enforce_keys [:event_id, :occurred_at, :server_id, :channel_id, :user_ids]
     defstruct [:event_id, :occurred_at, :server_id, :channel_id, :user_ids]
@@ -76,6 +81,7 @@ defmodule Messaging.Events.ChannelEvent do
   @routing_key_member_left "servers.member_left"
   @routing_key_member_muted "servers.member_muted"
   @routing_key_member_unmuted "servers.member_unmuted"
+  @routing_key_word_filter_updated "servers.word_filter_updated"
   @routing_key_channel_access_revoked "servers.channel_access_revoked"
   @routing_key_role_updated "servers.role_updated"
   @routing_key_role_deleted "servers.role_deleted"
@@ -91,6 +97,7 @@ defmodule Messaging.Events.ChannelEvent do
   def routing_key_member_left, do: @routing_key_member_left
   def routing_key_member_muted, do: @routing_key_member_muted
   def routing_key_member_unmuted, do: @routing_key_member_unmuted
+  def routing_key_word_filter_updated, do: @routing_key_word_filter_updated
   def routing_key_channel_access_revoked, do: @routing_key_channel_access_revoked
   def routing_key_role_updated, do: @routing_key_role_updated
   def routing_key_role_deleted, do: @routing_key_role_deleted
@@ -258,6 +265,31 @@ defmodule Messaging.Events.ChannelEvent do
              reason: reason
            }}
         end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_word_filter_updated, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "words" => words
+      }
+      when is_binary(server_id) and is_list(words) ->
+        if Enum.all?(words, &is_binary/1),
+          do:
+            {:ok,
+             %WordFilterUpdated{
+               event_id: event_id,
+               occurred_at: occurred_at,
+               server_id: server_id,
+               words: words
+             }},
+          else: {:error, :invalid_payload}
 
       _other ->
         {:error, :invalid_payload}

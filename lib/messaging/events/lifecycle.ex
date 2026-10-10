@@ -159,6 +159,12 @@ defmodule Messaging.Events.Lifecycle do
     end)
   end
 
+  def handle(%ChannelEvent.WordFilterUpdated{} = event) do
+    replica_write(event.server_id, "servers.word_filter_updated", fn ->
+      Repo.impl().apply_word_filter(event.server_id, event.words, event.occurred_at)
+    end)
+  end
+
   def handle(%ChannelEvent.OwnerUpdated{} = event) do
     replica_write(event.server_id, "servers.owner_updated", fn ->
       Repo.impl().apply_server_owner(event.server_id, event.owner_id, event.occurred_at)

@@ -97,8 +97,8 @@ defmodule MessagingWeb.MessageController do
     responses: [
       ok: {"El mensaje, ya editado", "application/json", Schemas.Message},
       bad_request:
-        {"Contenido vacío o demasiado largo, o cuerpo mal formado", "application/json",
-         Schemas.ErrorResponse},
+        {"Contenido vacío, demasiado largo o con palabras prohibidas (`BANNED_WORD`), o cuerpo mal formado",
+         "application/json", Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

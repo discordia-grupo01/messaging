@@ -8,7 +8,8 @@ defmodule Messaging.Chat do
     Mentions,
     Message,
     Reaction,
-    UserMention
+    UserMention,
+    WordFilter
   }
 
   alias Messaging.Events.MentionNotifier
@@ -45,6 +46,7 @@ defmodule Messaging.Chat do
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, trimmed} <- validate_content(content),
          {:ok, true} <- check_permission(channel, user_id),
+         :ok <- check_word_filter(channel, trimmed),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
          {:ok, message} <- persist_message(channel, user_id, trimmed, mentions) do
       record_mentions(message, mentions.recipient_ids)
@@ -456,6 +458,17 @@ defmodule Messaging.Chat do
     end
   end
 
+  defp check_word_filter(%ChannelCache{server_id: nil}, _content), do: :ok
+
+  defp check_word_filter(%ChannelCache{server_id: server_id}, content) do
+    with {:ok, banned} <- repo().get_word_filter(server_id) do
+      case WordFilter.matches(content, banned) do
+        [] -> :ok
+        words -> {:error, {:banned_word, words}}
+      end
+    end
+  end
+
   defp check_permission(%ChannelCache{} = channel, user_id),
     do: Access.for_channel(channel).can_post?(channel, user_id)
 
@@ -669,7 +682,8 @@ defmodule Messaging.Chat do
     do: {:ok, message, :unchanged}
 
   defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
-    with {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
+    with :ok <- check_word_filter(channel, new_content),
+         {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
       update_content(message, new_content, mentions)
     end
   end

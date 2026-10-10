@@ -25,6 +25,7 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   setup do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :list_reactions, fn _ids -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :delete_reactions, fn _id -> :ok end)
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
@@ -58,6 +59,18 @@ defmodule MessagingWeb.RoomChannelTest do
 
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
+  end
+
+  test "a message with a banned word is rejected with the words, and nobody receives it" do
+    stub(Messaging.Chat.RepoMock, :get_word_filter, fn @server_id -> {:ok, ["tonto"]} end)
+
+    socket = join_socket("user-a")
+    {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+
+    ref = push(socket, "new_message", %{"content" => "sos un Tonto"})
+
+    assert_reply ref, :error, %{error: %{code: "BANNED_WORD", details: %{words: ["tonto"]}}}
+    refute_push "new_message", _payload
   end
 
   test "rejects an empty message" do

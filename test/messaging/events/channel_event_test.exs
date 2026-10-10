@@ -280,6 +280,44 @@ defmodule Messaging.Events.ChannelEventTest do
     end
   end
 
+  describe "parse/2 for servers.word_filter_updated" do
+    @word_filter %{
+      "event_id" => "evt-words",
+      "occurred_at" => "2026-10-10T18:00:00Z",
+      "server_id" => "srv-1",
+      "words" => ["tonto", "no sirve"]
+    }
+
+    test "parses the whole list, and an empty one" do
+      assert {:ok,
+              %ChannelEvent.WordFilterUpdated{
+                event_id: "evt-words",
+                occurred_at: ~U[2026-10-10 18:00:00Z],
+                server_id: "srv-1",
+                words: ["tonto", "no sirve"]
+              }} =
+               ChannelEvent.parse(ChannelEvent.routing_key_word_filter_updated(), @word_filter)
+
+      assert {:ok, %ChannelEvent.WordFilterUpdated{words: []}} =
+               ChannelEvent.parse(
+                 ChannelEvent.routing_key_word_filter_updated(),
+                 Map.put(@word_filter, "words", [])
+               )
+    end
+
+    test "rejects a missing list, null, or words that are not strings" do
+      for bad <- [
+            Map.delete(@word_filter, "words"),
+            Map.put(@word_filter, "words", nil),
+            Map.put(@word_filter, "words", ["ok", 1]),
+            Map.put(@word_filter, "server_id", 7)
+          ] do
+        assert {:error, :invalid_payload} =
+                 ChannelEvent.parse(ChannelEvent.routing_key_word_filter_updated(), bad)
+      end
+    end
+  end
+
   describe "parse/2 for servers.member_unmuted" do
     @unmuted %{
       "event_id" => "evt-unmuted",
