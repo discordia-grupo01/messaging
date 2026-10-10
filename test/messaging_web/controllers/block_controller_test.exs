@@ -20,7 +20,7 @@ defmodule MessagingWeb.BlockControllerTest do
     end
 
     test "CA1: blocks an existing user and answers 204 with no body", %{conn: conn} do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn @other, _jwt -> {:ok, true} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn @other -> true end)
 
       expect(Messaging.Chat.RepoMock, :put_block, fn doc ->
         assert doc["blocker_id"] == @me and doc["blocked_id"] == @other
@@ -33,7 +33,7 @@ defmodule MessagingWeb.BlockControllerTest do
     end
 
     test "blocking someone already blocked is also 204", %{conn: conn} do
-      stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      stub(Messaging.Chat.RepoMock, :user_known?, fn _id -> true end)
       stub(Messaging.Chat.RepoMock, :put_block, fn _doc -> :ok end)
 
       assert conn |> authed() |> post("/v1/blocks", %{"user_id" => @other}) |> response(204)
@@ -47,7 +47,7 @@ defmodule MessagingWeb.BlockControllerTest do
     end
 
     test "404 for a user that does not exist, or an id that is not valid", %{conn: conn} do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, false} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> false end)
 
       conn1 = conn |> authed() |> post("/v1/blocks", %{"user_id" => @other})
       assert json_response(conn1, 404)["error"]["code"] == "USER_NOT_FOUND"
@@ -57,7 +57,7 @@ defmodule MessagingWeb.BlockControllerTest do
     end
 
     test "503 when identify-service cannot confirm the user", %{conn: conn} do
-      expect(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:error, :timeout} end)
+      expect(Messaging.Chat.RepoMock, :user_known?, fn _id -> {:error, :timeout} end)
 
       conn = conn |> authed() |> post("/v1/blocks", %{"user_id" => @other})
 

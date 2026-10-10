@@ -9,7 +9,7 @@ defmodule MessagingWeb.Plugs.Authenticate do
     with [header] <- get_req_header(conn, "authorization"),
          "Bearer " <> token <- header,
          {:ok, user_id} <- Token.user_id(token) do
-      conn |> assign(:user_id, user_id) |> assign(:raw_jwt, token)
+      assign(conn, :user_id, user_id)
     else
       _other ->
         conn

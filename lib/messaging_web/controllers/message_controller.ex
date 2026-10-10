@@ -57,11 +57,10 @@ defmodule MessagingWeb.MessageController do
 
   def index(conn, %{"channel_id" => channel_id} = params) do
     user_id = conn.assigns.user_id
-    raw_jwt = conn.assigns.raw_jwt
     limit = params |> Map.get("limit") |> parse_limit()
 
     with {:ok, channel} <- Chat.channel_exists?(channel_id),
-         {:ok, true} <- Chat.can_view_channel?(channel, user_id, raw_jwt),
+         {:ok, true} <- Chat.can_view_channel?(channel, user_id),
          {:ok, messages, next_cursor} <-
            Chat.list_messages(channel_id,
              limit: limit,
@@ -115,8 +114,7 @@ defmodule MessagingWeb.MessageController do
              channel_id: channel_id,
              message_id: message_id,
              user_id: conn.assigns.user_id,
-             content: content,
-             raw_jwt: conn.assigns.raw_jwt
+             content: content
            }) do
       if change == :updated, do: publish_update(message)
       json(conn, Message.to_api(message))
@@ -156,8 +154,7 @@ defmodule MessagingWeb.MessageController do
     case Chat.delete_message(%{
            channel_id: channel_id,
            message_id: message_id,
-           user_id: conn.assigns.user_id,
-           raw_jwt: conn.assigns.raw_jwt
+           user_id: conn.assigns.user_id
          }) do
       {:ok, message} ->
         publish_deletion(message)

@@ -13,12 +13,12 @@ defmodule MessagingWeb.SocketTicketControllerTest do
     assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
   end
 
-  test "issues a ticket bound to the caller and their jwt", %{conn: conn} do
+  test "issues a ticket bound to the caller, without keeping their token", %{conn: conn} do
     token = AuthFixtures.token_for("user-1")
 
     expect(TicketStoreMock, :put, fn doc ->
       assert doc["user_id"] == "user-1"
-      assert doc["raw_jwt"] == token
+      refute Map.has_key?(doc, "raw_jwt")
       :ok
     end)
 

@@ -22,8 +22,14 @@ defmodule MessagingWeb.MentionPushTest do
       %{"_id" => @channel_id, "server_id" => @server_id, "name" => "general", "kind" => "text"}
     end)
 
-    stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _, _, _ -> {:ok, true} end)
-    stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _, _, _ -> {:ok, true} end)
+    stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _ ->
+      {:ok, true}
+    end)
+
+    stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _ ->
+      {:ok, true}
+    end)
+
     stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
     :ok
   end
@@ -52,7 +58,12 @@ defmodule MessagingWeb.MentionPushTest do
   end
 
   test "the mentioned member gets a `mention` push on their own topic" do
-    expect(Messaging.Chat.MentionsClientMock, :resolve, fn @server_id, @channel_id, query, _jwt ->
+    expect(Messaging.Chat.MentionResolverMock, :resolve, fn %{
+                                                              server_id: @server_id,
+                                                              channel_id: @channel_id
+                                                            },
+                                                            query,
+                                                            _actor ->
       assert query == %{user_ids: [@ana], role_ids: [], everyone: false}
       {:ok, %{Mentions.none() | user_ids: [@ana], recipient_ids: [@ana]}}
     end)
@@ -77,7 +88,7 @@ defmodule MessagingWeb.MentionPushTest do
   end
 
   test "@everyone with permission reaches everyone servers lists, each on their own topic" do
-    expect(Messaging.Chat.MentionsClientMock, :resolve, fn _sid, _cid, _query, _jwt ->
+    expect(Messaging.Chat.MentionResolverMock, :resolve, fn _channel, _query, _actor ->
       {:ok, %{Mentions.none() | everyone: true, recipient_ids: [@ana, @bob]}}
     end)
 
@@ -97,7 +108,7 @@ defmodule MessagingWeb.MentionPushTest do
   end
 
   test "CA4 over the socket: no permission means the message arrives as text and nobody is pinged" do
-    expect(Messaging.Chat.MentionsClientMock, :resolve, fn _sid, _cid, _query, _jwt ->
+    expect(Messaging.Chat.MentionResolverMock, :resolve, fn _channel, _query, _actor ->
       {:ok, Mentions.none()}
     end)
 
@@ -112,7 +123,7 @@ defmodule MessagingWeb.MentionPushTest do
   end
 
   test "if servers is down the author gets MENTIONS_UNAVAILABLE and nothing is sent" do
-    expect(Messaging.Chat.MentionsClientMock, :resolve, fn _sid, _cid, _query, _jwt ->
+    expect(Messaging.Chat.MentionResolverMock, :resolve, fn _channel, _query, _actor ->
       {:error, :timeout}
     end)
 

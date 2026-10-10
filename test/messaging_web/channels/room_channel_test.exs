@@ -28,11 +28,11 @@ defmodule MessagingWeb.RoomChannelTest do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
-    stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+    stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
       {:ok, true}
     end)
 
-    stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+    stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
       {:ok, true}
     end)
 
@@ -67,7 +67,7 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   test "rejects join without VIEW_CHANNELS permission" do
-    stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+    stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
       {:ok, false}
     end)
 
@@ -81,7 +81,7 @@ defmodule MessagingWeb.RoomChannelTest do
     socket = join_socket("user-a")
     {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
 
-    stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+    stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
       {:ok, false}
     end)
 
@@ -107,7 +107,7 @@ defmodule MessagingWeb.RoomChannelTest do
   end
 
   test "a member who can view but not send joins and receives, but cannot send" do
-    stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+    stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
       {:ok, false}
     end)
 
@@ -225,7 +225,7 @@ defmodule MessagingWeb.RoomChannelTest do
       stub_stored()
       author = join_as("user-a")
 
-      stub(Messaging.Chat.PermissionsClientMock, :can_send_messages?, fn _sid, _uid, _jwt ->
+      stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
         {:ok, false}
       end)
 
@@ -318,7 +318,7 @@ defmodule MessagingWeb.RoomChannelTest do
     test "CA2: a member with MANAGE_MESSAGES deletes someone else's message" do
       stub_deletable()
 
-      stub(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+      stub(Messaging.Chat.PermissionsStoreMock, :can_manage_messages?, fn _channel, _uid ->
         {:ok, true}
       end)
 
@@ -333,7 +333,7 @@ defmodule MessagingWeb.RoomChannelTest do
     test "CA3: someone without authorship or moderation is rejected and nobody sees a change" do
       stub_deletable()
 
-      stub(Messaging.Chat.PermissionsClientMock, :can_manage_messages?, fn _sid, _uid, _jwt ->
+      stub(Messaging.Chat.PermissionsStoreMock, :can_manage_messages?, fn _channel, _uid ->
         {:ok, false}
       end)
 
@@ -370,7 +370,7 @@ defmodule MessagingWeb.RoomChannelTest do
       stub_deletable()
       author = join_as("user-a")
 
-      stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _sid, _uid, _jwt ->
+      stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
         {:ok, false}
       end)
 
@@ -489,7 +489,7 @@ defmodule MessagingWeb.RoomChannelTest do
     end
 
     test "a revoked user who tries to come back is refused at the join" do
-      stub(Messaging.Chat.PermissionsClientMock, :can_view_channel?, fn _c, _u, _jwt ->
+      stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _u ->
         {:ok, false}
       end)
 

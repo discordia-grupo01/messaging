@@ -572,14 +572,13 @@ if mongo_url do
 
     test "the whole flow: first message, unread for the recipient, read, unread again" do
       {a, b} = dm_users()
-      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      for user <- [a, b], do: {:ok, _} = Repo.apply_profile(user, 1)
 
       assert {:ok, channel, first} =
                Chat.send_direct_message(%{
                  sender_id: a,
                  recipient_id: b,
-                 content: "hola",
-                 raw_jwt: "jwt"
+                 content: "hola"
                })
 
       assert {:ok, [%{unread: unread_for_b}]} = list_for(b)
@@ -595,8 +594,7 @@ if mongo_url do
                Chat.send_direct_message(%{
                  sender_id: a,
                  recipient_id: b,
-                 content: "otra",
-                 raw_jwt: "jwt"
+                 content: "otra"
                })
 
       assert {:ok, [%{unread: true, last_message: %{content: "otra"}}]} = list_for(b)
@@ -672,21 +670,20 @@ if mongo_url do
 
     test "the whole block flow with real data: CA1, CA2 and CA3 of both stories" do
       {a, b} = dm_users()
-      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      for user <- [a, b], do: {:ok, _} = Repo.apply_profile(user, 1)
 
       send = fn from, to, text ->
         Chat.send_direct_message(%{
           sender_id: from,
           recipient_id: to,
-          content: text,
-          raw_jwt: "jwt"
+          content: text
         })
       end
 
       assert {:ok, channel, _} = send.(a, b, "antes del bloqueo")
       assert {:ok, _, _} = send.(b, a, "respuesta")
 
-      assert :ok = Blocks.block(b, a, "jwt")
+      assert :ok = Blocks.block(b, a)
 
       assert {:error, :dm_not_delivered} = send.(a, b, "bloqueado")
       assert {:error, :user_blocked} = send.(b, a, "yo la bloquee")
@@ -704,15 +701,14 @@ if mongo_url do
 
     test "a blocked first message creates no conversation and stores nothing" do
       {a, b} = dm_users()
-      Mox.stub(Messaging.Chat.UsersClientMock, :user_exists?, fn _id, _jwt -> {:ok, true} end)
+      for user <- [a, b], do: {:ok, _} = Repo.apply_profile(user, 1)
       :ok = Repo.put_block(block_doc(b, a))
 
       assert {:error, :dm_not_delivered} =
                Chat.send_direct_message(%{
                  sender_id: a,
                  recipient_id: b,
-                 content: "hola",
-                 raw_jwt: "jwt"
+                 content: "hola"
                })
 
       assert Repo.get_channel(Conversation.id(a, b)) == nil

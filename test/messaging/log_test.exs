@@ -9,8 +9,10 @@ defmodule Messaging.LogTest do
   end
 
   test "an exception only shows its module and its atom reason, never its payload" do
-    assert Log.reason(%Req.TransportError{reason: :timeout}) =~
-             "Req.TransportError reason=timeout"
+    reason = Log.reason(%File.Error{reason: :enoent, action: "read", path: "/private/secret.txt"})
+
+    assert reason =~ "File.Error reason=enoent"
+    refute reason =~ "secret"
 
     {:error, error} = Jason.decode("{\"content\": \"private text\" oops")
     reason = Log.reason(error)

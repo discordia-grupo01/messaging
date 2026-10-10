@@ -15,13 +15,12 @@ defmodule MessagingWeb.RoomChannel do
   @impl true
   def join("channel:" <> channel_id, params, socket) do
     user_id = socket.assigns.user_id
-    raw_jwt = socket.assigns.raw_jwt
     last_message_id = Map.get(params, "last_message_id")
 
     with :ok <- validate_cursor(last_message_id),
          {:ok, changes_since} <- parse_changes_since(Map.get(params, "changes_since")),
          {:ok, channel} <- Chat.channel_exists?(channel_id),
-         {:ok, true} <- Chat.can_view_channel?(channel, user_id, raw_jwt) do
+         {:ok, true} <- Chat.can_view_channel?(channel, user_id) do
       socket = assign(socket, channel_id: channel_id)
       send(self(), {:after_join, last_message_id, changes_since})
       {:ok, %{"server_time" => Chat.server_time()}, socket}
@@ -65,8 +64,7 @@ defmodule MessagingWeb.RoomChannel do
     params = %{
       channel_id: socket.assigns.channel_id,
       user_id: socket.assigns.user_id,
-      content: content,
-      raw_jwt: socket.assigns.raw_jwt
+      content: content
     }
 
     case Chat.send_message(params) do
@@ -84,8 +82,7 @@ defmodule MessagingWeb.RoomChannel do
       channel_id: socket.assigns.channel_id,
       message_id: message_id,
       user_id: socket.assigns.user_id,
-      content: content,
-      raw_jwt: socket.assigns.raw_jwt
+      content: content
     }
 
     case Chat.edit_message(params) do
@@ -105,8 +102,7 @@ defmodule MessagingWeb.RoomChannel do
     params = %{
       channel_id: socket.assigns.channel_id,
       message_id: message_id,
-      user_id: socket.assigns.user_id,
-      raw_jwt: socket.assigns.raw_jwt
+      user_id: socket.assigns.user_id
     }
 
     case Chat.delete_message(params) do

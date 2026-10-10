@@ -9,8 +9,8 @@ defmodule MessagingWeb.UserSocket do
   @impl true
   def connect(%{"ticket" => ticket}, socket, _connect_info) when is_binary(ticket) do
     case SocketTicket.redeem(ticket) do
-      {:ok, %{user_id: user_id, raw_jwt: raw_jwt}} ->
-        {:ok, assign(socket, user_id: user_id, raw_jwt: raw_jwt)}
+      {:ok, %{user_id: user_id}} ->
+        {:ok, assign(socket, user_id: user_id)}
 
       {:error, :invalid_ticket} ->
         :error

@@ -16,7 +16,6 @@ defmodule Messaging.AuthFixtures do
     %{
       "_id" => "ticket-hash",
       "user_id" => user_id,
-      "raw_jwt" => token_for(user_id),
       "expires_at" => DateTime.add(DateTime.utc_now(), ttl, :second)
     }
   end

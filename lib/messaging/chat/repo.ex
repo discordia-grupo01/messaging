@@ -64,6 +64,47 @@ defmodule Messaging.Chat.Repo do
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}
   @callback delete_server_data(server_id :: String.t(), channel_ids :: [String.t()]) ::
               :ok | {:error, term()}
+  @callback apply_server_owner(
+              server_id :: String.t(),
+              owner_id :: String.t(),
+              at :: DateTime.t()
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_role(
+              server_id :: String.t(),
+              role_id :: String.t(),
+              permissions :: [String.t()],
+              is_everyone :: boolean(),
+              at :: DateTime.t()
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback delete_role(server_id :: String.t(), role_id :: String.t(), at :: DateTime.t()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_member_roles(
+              server_id :: String.t(),
+              user_id :: String.t(),
+              role_ids :: [String.t()],
+              at :: DateTime.t()
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback delete_member(server_id :: String.t(), user_id :: String.t(), at :: DateTime.t()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_channel_overrides(
+              server_id :: String.t(),
+              channel_id :: String.t(),
+              overrides :: [map()],
+              at :: DateTime.t()
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_profile(user_id :: String.t(), version :: pos_integer()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback get_server_owner(server_id :: String.t()) ::
+              String.t() | nil | {:error, term()}
+  @callback get_member(server_id :: String.t(), user_id :: String.t()) ::
+              map() | nil | {:error, term()}
+  @callback get_members(server_id :: String.t(), user_ids :: [String.t()]) ::
+              {:ok, [map()]} | {:error, term()}
+  @callback list_members(server_id :: String.t()) :: {:ok, [map()]} | {:error, term()}
+  @callback list_roles(server_id :: String.t()) :: {:ok, [map()]} | {:error, term()}
+  @callback get_channel_overrides(channel_id :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+  @callback user_known?(user_id :: String.t()) :: boolean() | {:error, term()}
   @callback ping() :: :ok | {:error, term()}
   @callback ensure_indexes() :: :ok | {:error, term()}
 end

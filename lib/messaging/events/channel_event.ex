@@ -39,6 +39,36 @@ defmodule Messaging.Events.ChannelEvent do
     defstruct [:event_id, :occurred_at, :server_id, :channel_id, :user_ids]
   end
 
+  defmodule RoleUpdated do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :role_id, :permissions, :is_everyone]
+    defstruct [:event_id, :occurred_at, :server_id, :role_id, :permissions, :is_everyone]
+  end
+
+  defmodule RoleDeleted do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :role_id]
+    defstruct [:event_id, :occurred_at, :server_id, :role_id]
+  end
+
+  defmodule MemberRolesUpdated do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :user_id, :role_ids]
+    defstruct [:event_id, :occurred_at, :server_id, :user_id, :role_ids]
+  end
+
+  defmodule ChannelOverridesUpdated do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :channel_id, :overrides]
+    defstruct [:event_id, :occurred_at, :server_id, :channel_id, :overrides]
+  end
+
+  defmodule OwnerUpdated do
+    @enforce_keys [:event_id, :occurred_at, :server_id, :owner_id]
+    defstruct [:event_id, :occurred_at, :server_id, :owner_id]
+  end
+
+  defmodule ProfileUpdated do
+    @enforce_keys [:event_id, :occurred_at, :user_id, :version]
+    defstruct [:event_id, :occurred_at, :user_id, :version]
+  end
+
   @routing_key_channel_created "servers.channel_created"
   @routing_key_channel_deleted "servers.channel_deleted"
   @routing_key_server_deleted "servers.server_deleted"
@@ -47,6 +77,12 @@ defmodule Messaging.Events.ChannelEvent do
   @routing_key_member_muted "servers.member_muted"
   @routing_key_member_unmuted "servers.member_unmuted"
   @routing_key_channel_access_revoked "servers.channel_access_revoked"
+  @routing_key_role_updated "servers.role_updated"
+  @routing_key_role_deleted "servers.role_deleted"
+  @routing_key_member_roles_updated "servers.member_roles_updated"
+  @routing_key_channel_overrides_updated "servers.channel_overrides_updated"
+  @routing_key_owner_updated "servers.owner_updated"
+  @routing_key_profile_updated "users.profile_updated"
 
   def routing_key_channel_created, do: @routing_key_channel_created
   def routing_key_channel_deleted, do: @routing_key_channel_deleted
@@ -56,6 +92,12 @@ defmodule Messaging.Events.ChannelEvent do
   def routing_key_member_muted, do: @routing_key_member_muted
   def routing_key_member_unmuted, do: @routing_key_member_unmuted
   def routing_key_channel_access_revoked, do: @routing_key_channel_access_revoked
+  def routing_key_role_updated, do: @routing_key_role_updated
+  def routing_key_role_deleted, do: @routing_key_role_deleted
+  def routing_key_member_roles_updated, do: @routing_key_member_roles_updated
+  def routing_key_channel_overrides_updated, do: @routing_key_channel_overrides_updated
+  def routing_key_owner_updated, do: @routing_key_owner_updated
+  def routing_key_profile_updated, do: @routing_key_profile_updated
 
   @spec parse(String.t(), map()) ::
           {:ok, struct()} | {:error, :unknown_routing_key | :invalid_payload}
@@ -276,7 +318,188 @@ defmodule Messaging.Events.ChannelEvent do
     end
   end
 
+  defp do_parse(@routing_key_role_updated, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "role_id" => role_id,
+        "permissions" => permissions,
+        "is_everyone" => is_everyone
+      }
+      when is_boolean(is_everyone) ->
+        if strings?([event_id, server_id, role_id]) and string_list?(permissions) do
+          {:ok,
+           %RoleUpdated{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             server_id: server_id,
+             role_id: role_id,
+             permissions: Enum.uniq(permissions),
+             is_everyone: is_everyone
+           }}
+        else
+          {:error, :invalid_payload}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_role_deleted, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "role_id" => role_id
+      } ->
+        if strings?([event_id, server_id, role_id]) do
+          {:ok,
+           %RoleDeleted{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             server_id: server_id,
+             role_id: role_id
+           }}
+        else
+          {:error, :invalid_payload}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_member_roles_updated, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "user_id" => user_id,
+        "role_ids" => role_ids
+      } ->
+        if strings?([event_id, server_id, user_id]) and string_list?(role_ids) do
+          {:ok,
+           %MemberRolesUpdated{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             server_id: server_id,
+             user_id: user_id,
+             role_ids: Enum.uniq(role_ids)
+           }}
+        else
+          {:error, :invalid_payload}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_channel_overrides_updated, payload) do
+    with %{
+           "event_id" => event_id,
+           "occurred_at" => occurred_at,
+           "server_id" => server_id,
+           "channel_id" => channel_id,
+           "overrides" => raw_overrides
+         } <- payload,
+         true <- strings?([event_id, server_id, channel_id]),
+         {:ok, overrides} <- parse_overrides(raw_overrides) do
+      {:ok,
+       %ChannelOverridesUpdated{
+         event_id: event_id,
+         occurred_at: occurred_at,
+         server_id: server_id,
+         channel_id: channel_id,
+         overrides: overrides
+       }}
+    else
+      _other -> {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_owner_updated, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "server_id" => server_id,
+        "owner_id" => owner_id
+      } ->
+        if strings?([event_id, server_id, owner_id]) do
+          {:ok,
+           %OwnerUpdated{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             server_id: server_id,
+             owner_id: owner_id
+           }}
+        else
+          {:error, :invalid_payload}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
+  defp do_parse(@routing_key_profile_updated, payload) do
+    case payload do
+      %{
+        "event_id" => event_id,
+        "occurred_at" => occurred_at,
+        "user_id" => user_id,
+        "version" => version
+      }
+      when is_integer(version) and version > 0 ->
+        if strings?([event_id, user_id]) do
+          {:ok,
+           %ProfileUpdated{
+             event_id: event_id,
+             occurred_at: occurred_at,
+             user_id: user_id,
+             version: version
+           }}
+        else
+          {:error, :invalid_payload}
+        end
+
+      _other ->
+        {:error, :invalid_payload}
+    end
+  end
+
   defp do_parse(_other_key, _payload), do: {:error, :unknown_routing_key}
+
+  defp parse_overrides(raw) when is_list(raw) do
+    Enum.reduce_while(raw, {:ok, []}, fn
+      %{"role_id" => role_id, "allow" => allow, "deny" => deny}, {:ok, acc} ->
+        if strings?([role_id]) and string_list?(allow) and string_list?(deny) do
+          override = %{role_id: role_id, allow: Enum.uniq(allow), deny: Enum.uniq(deny)}
+          {:cont, {:ok, [override | acc]}}
+        else
+          {:halt, :error}
+        end
+
+      _other, _acc ->
+        {:halt, :error}
+    end)
+    |> case do
+      {:ok, overrides} -> {:ok, Enum.reverse(overrides)}
+      :error -> :error
+    end
+  end
+
+  defp parse_overrides(_other), do: :error
+
+  defp strings?(values), do: Enum.all?(values, &non_empty_string?/1)
+
+  defp string_list?(values), do: is_list(values) and Enum.all?(values, &is_binary/1)
 
   defp non_empty_string?(value), do: is_binary(value) and value != ""
 end
