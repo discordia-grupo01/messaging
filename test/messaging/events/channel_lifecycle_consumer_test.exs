@@ -505,6 +505,92 @@ if rabbitmq_url && mongo_url do
       end
     end
 
+    describe "permission replica" do
+      alias Messaging.Chat.PermissionsStore.Replica
+
+      defp publish_event(chan, key, fields) do
+        body =
+          Map.merge(
+            %{
+              "event_id" => Messaging.UUID.generate(),
+              "occurred_at" => DateTime.to_iso8601(DateTime.utc_now())
+            },
+            fields
+          )
+
+        :ok = AMQP.Basic.publish(chan, @exchange, key, Jason.encode!(body), persistent: true)
+      end
+
+      test "the events of servers are enough to decide who can write, with no call to servers", %{
+        chan: chan
+      } do
+        unique = Messaging.UUID.generate()
+        server = "srv-#{unique}"
+        channel = "chan-#{unique}"
+        everyone = "everyone-#{unique}"
+        user = "user-#{unique}"
+
+        :ok =
+          Chat.upsert_channel(%Messaging.Chat.ChannelCache{
+            channel_id: channel,
+            server_id: server,
+            name: "general",
+            kind: "text"
+          })
+
+        {:ok, channel_cache} = Chat.channel_exists?(channel)
+
+        publish_event(chan, "servers.owner_updated", %{
+          "server_id" => server,
+          "owner_id" => "owner-#{unique}"
+        })
+
+        publish_event(chan, "servers.role_updated", %{
+          "server_id" => server,
+          "role_id" => everyone,
+          "permissions" => ["VIEW_CHANNELS", "SEND_MESSAGES"],
+          "is_everyone" => true
+        })
+
+        publish_event(chan, "servers.member_roles_updated", %{
+          "server_id" => server,
+          "user_id" => user,
+          "role_ids" => [everyone]
+        })
+
+        assert wait_until(fn -> Replica.can_send_messages?(channel_cache, user) == {:ok, true} end)
+
+        publish_event(chan, "servers.channel_overrides_updated", %{
+          "server_id" => server,
+          "channel_id" => channel,
+          "overrides" => [%{"role_id" => everyone, "allow" => [], "deny" => ["SEND_MESSAGES"]}]
+        })
+
+        assert wait_until(fn ->
+                 Replica.can_send_messages?(channel_cache, user) == {:ok, false}
+               end)
+
+        assert {:ok, true} = Replica.can_view_channel?(channel_cache, user)
+      end
+
+      test "a profile makes the user known to the DM and block checks", %{chan: chan} do
+        user = "user-#{Messaging.UUID.generate()}"
+        assert Messaging.Chat.Repo.Mongo.user_known?(user) == false
+
+        publish_event(chan, "users.profile_updated", %{
+          "user_id" => user,
+          "version" => 1,
+          "name" => "Ana",
+          "avatar_url" => "",
+          "description" => "",
+          "status_text" => "",
+          "status_emoji" => ""
+        })
+
+        assert wait_until(fn -> Messaging.Chat.Repo.Mongo.user_known?(user) == true end)
+      end
+    end
+
     defp consumed_event(event_id),
       do: Mongo.find_one(Messaging.Mongo, "consumed_events", %{"_id" => event_id})
 
