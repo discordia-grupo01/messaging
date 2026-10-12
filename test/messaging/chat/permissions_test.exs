@@ -43,6 +43,11 @@ defmodule Messaging.Chat.PermissionsTest do
     test "a role with ADMINISTRATOR can do everything" do
       assert effective([@everyone, "admin"]) == Permissions.all()
     end
+
+    test "everything includes the whole servers catalog, CONNECT included" do
+      assert Permissions.can?(Permissions.all(), "CONNECT")
+      assert MapSet.size(Permissions.all()) == 13
+    end
   end
 
   describe "effective/4 with overrides" do
