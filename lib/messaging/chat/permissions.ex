@@ -2,6 +2,7 @@ defmodule Messaging.Chat.Permissions do
   @all ~w(
     VIEW_CHANNELS SEND_MESSAGES MANAGE_CHANNELS MANAGE_ROLES KICK_MEMBERS BAN_MEMBERS
     MANAGE_SERVER ADMINISTRATOR CREATE_INVITE MANAGE_MESSAGES MENTION_EVERYONE ADD_REACTIONS
+    CONNECT
   )
 
   @type role :: %{permissions: [String.t()], is_everyone: boolean()}
