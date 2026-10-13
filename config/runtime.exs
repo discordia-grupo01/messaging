@@ -27,6 +27,11 @@ config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
 
+config :messaging, :cloudinary,
+  url: System.get_env("CLOUDINARY_URL"),
+  folder: System.get_env("CLOUDINARY_FOLDER", "discordia/attachments"),
+  api_base: System.get_env("CLOUDINARY_API_BASE_URL", "https://api.cloudinary.com")
+
 if config_env() == :prod do
   allowed_origins =
     System.get_env(
