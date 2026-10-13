@@ -116,6 +116,21 @@ defmodule Messaging.Chat.Repo do
   @callback get_channel_overrides(channel_id :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
   @callback user_known?(user_id :: String.t()) :: boolean() | {:error, term()}
+  @callback insert_attachment(doc :: map()) :: :ok | {:error, term()}
+  @callback count_pending_attachments(user_id :: String.t()) ::
+              {:ok, non_neg_integer()} | {:error, term()}
+  @callback claim_attachments(
+              ids :: [String.t()],
+              user_id :: String.t(),
+              channel_id :: String.t(),
+              message_id :: String.t()
+            ) :: {:ok, [map()]} | {:error, :invalid_attachment | term()}
+  @callback release_attachments(message_id :: String.t()) :: :ok | {:error, term()}
+  @callback orphan_message_attachments(message_id :: String.t(), at :: DateTime.t()) ::
+              :ok | {:error, term()}
+  @callback list_cleanable_attachments(pending_before :: DateTime.t(), limit :: pos_integer()) ::
+              {:ok, [map()]} | {:error, term()}
+  @callback delete_attachments(ids :: [String.t()]) :: :ok | {:error, term()}
   @callback ping() :: :ok | {:error, term()}
   @callback ensure_indexes() :: :ok | {:error, term()}
 end

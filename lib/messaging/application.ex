@@ -18,10 +18,29 @@ defmodule Messaging.Application do
       [
         {Phoenix.PubSub, name: Messaging.PubSub},
         {Mongo, Messaging.MongoOptions.build(mongo_url)}
-      ] ++ index_children() ++ amqp_children() ++ [MessagingWeb.Endpoint]
+      ] ++
+        index_children() ++
+        amqp_children() ++ cleaner_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp cleaner_children do
+    if Application.get_env(:messaging, :start_attachment_cleaner, true) do
+      warn_if_storage_missing()
+      [Messaging.Chat.AttachmentCleaner]
+    else
+      []
+    end
+  end
+
+  defp warn_if_storage_missing do
+    storage = Application.get_env(:messaging, :storage, Messaging.Storage.Cloudinary)
+
+    if storage == Messaging.Storage.Cloudinary and not Messaging.Storage.Cloudinary.configured?() do
+      Logger.warning("attachments_storage_not_configured", hint: "set CLOUDINARY_URL")
+    end
   end
 
   defp index_children do

@@ -12,6 +12,8 @@ config :messaging, :chat_repo, Messaging.Chat.RepoMock
 config :messaging, :permissions_store, Messaging.Chat.PermissionsStoreMock
 config :messaging, :mention_resolver, Messaging.Chat.MentionResolverMock
 config :messaging, :ticket_store, Messaging.Auth.TicketStoreMock
+config :messaging, :storage, Messaging.StorageMock
+config :messaging, :start_attachment_cleaner, false
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
 
 config :logger, level: :warning
