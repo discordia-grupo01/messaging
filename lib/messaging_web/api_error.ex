@@ -23,6 +23,13 @@ defmodule MessagingWeb.ApiError do
           | {:banned_word, [String.t()]}
           | :invalid_emoji
           | :too_many_reactions
+          | :file_too_large
+          | :unsupported_file_type
+          | :empty_file
+          | :too_many_attachments
+          | :invalid_attachment
+          | :too_many_pending_attachments
+          | :storage_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -94,6 +101,37 @@ defmodule MessagingWeb.ApiError do
       {"TOO_MANY_REACTIONS",
        "El mensaje ya tiene el máximo de #{Messaging.Chat.Reaction.max_per_message()} reacciones distintas."}
 
+  def describe(:file_too_large),
+    do:
+      {"FILE_TOO_LARGE",
+       "El archivo supera el tamaño máximo permitido (#{div(Messaging.Chat.Attachment.max_bytes(), 1_048_576)} MB)."}
+
+  def describe(:unsupported_file_type),
+    do:
+      {"UNSUPPORTED_FILE_TYPE",
+       "Formato no soportado. Solo se aceptan imágenes JPEG, PNG o WebP y archivos PDF."}
+
+  def describe(:empty_file),
+    do: {"EMPTY_FILE", "El archivo está vacío: mandalo como cuerpo binario del pedido."}
+
+  def describe(:too_many_attachments),
+    do:
+      {"TOO_MANY_ATTACHMENTS",
+       "Un mensaje puede tener hasta #{Messaging.Chat.Attachment.max_per_message()} adjuntos."}
+
+  def describe(:invalid_attachment),
+    do:
+      {"INVALID_ATTACHMENT",
+       "Algún adjunto no existe, ya se usó en otro mensaje, es de otro canal o no es tuyo."}
+
+  def describe(:too_many_pending_attachments),
+    do:
+      {"TOO_MANY_PENDING_ATTACHMENTS",
+       "Tenés demasiados adjuntos subidos sin enviar (máximo #{Messaging.Chat.Attachment.max_pending_per_user()}). Enviá los mensajes o esperá un rato."}
+
+  def describe(:storage_unavailable),
+    do: {"STORAGE_UNAVAILABLE", "No se pudo guardar el archivo, intentá de nuevo en un momento."}
+
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
@@ -110,7 +148,7 @@ defmodule MessagingWeb.ApiError do
     %{error: %{code: code, message: message, details: details}}
   end
 
-  @spec http_status(reason()) :: 400 | 403 | 404 | 503
+  @spec http_status(reason()) :: 400 | 403 | 404 | 413 | 415 | 429 | 503
   def http_status(:forbidden), do: 403
   def http_status(:member_muted), do: 403
   def http_status(:not_message_author), do: 403
@@ -124,5 +162,9 @@ defmodule MessagingWeb.ApiError do
   def http_status(:users_unavailable), do: 503
   def http_status(:mentions_unavailable), do: 503
   def http_status(:ticket_unavailable), do: 503
+  def http_status(:storage_unavailable), do: 503
+  def http_status(:file_too_large), do: 413
+  def http_status(:unsupported_file_type), do: 415
+  def http_status(:too_many_pending_attachments), do: 429
   def http_status(_other), do: 400
 end

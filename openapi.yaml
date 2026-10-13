@@ -2,6 +2,49 @@
 components:
   responses: {}
   schemas:
+    Attachment:
+      properties:
+        content_type:
+          description: Detectado por el contenido real del archivo, no por el que declaró el cliente
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+            - application/pdf
+          type: string
+          x-struct:
+          x-validate:
+        id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        name:
+          description: Nombre original, ya saneado
+          type: string
+          x-struct:
+          x-validate:
+        size:
+          description: Tamaño en bytes
+          type: integer
+          x-struct:
+          x-validate:
+        url:
+          description: URL pública del archivo en el almacenamiento (Supabase Storage)
+          format: uri
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - id
+        - url
+        - name
+        - content_type
+        - size
+      title: Attachment
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.Attachment
+      x-validate:
     BlockList:
       properties:
         blocks:
@@ -214,6 +257,13 @@ components:
       x-validate:
     Message:
       properties:
+        attachments:
+          description: Archivos adjuntos del mensaje (vacío si no tiene)
+          items:
+            $ref: '#/components/schemas/Attachment'
+          type: array
+          x-struct:
+          x-validate:
         channel_id:
           format: uuid
           type: string
@@ -319,6 +369,7 @@ components:
         - mentions
         - mention_roles
         - mention_everyone
+        - attachments
       title: Message
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.Message
@@ -411,6 +462,104 @@ paths:
       summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo)
       tags:
         - ops
+  /v1/attachments:
+    post:
+      callbacks: {}
+      description: El cuerpo del pedido es el archivo en binario (no multipart ni base64). Se acepta JPEG, PNG, WebP o PDF de hasta 10 MB; el formato se reconoce por el contenido real del archivo, no por la extensión ni por el `Content-Type`. Indicá el destino con `channel_id` (canal de un servidor) o con `to` (id del usuario, para un mensaje directo), nunca los dos. Hay que tener permiso de escribir ahí. La respuesta trae el `id` que se manda después en `attachment_ids` al enviar el mensaje por el WebSocket (`new_message` o `send_dm`). Un archivo que no se adjunta a ningún mensaje en 24 horas se borra solo. Se pueden adjuntar hasta 5 archivos por mensaje.
+      operationId: MessagingWeb.AttachmentController.create
+      parameters:
+        - description: Canal de texto de un servidor donde se va a enviar el mensaje
+          in: query
+          name: channel_id
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Id del usuario destinatario de un mensaje directo
+          in: query
+          name: to
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Nombre con el que se muestra el archivo (máx 100 caracteres)
+          in: query
+          name: filename
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              format: binary
+              type: string
+              x-struct:
+              x-validate:
+        description: Contenido del archivo
+        required: false
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+          description: Archivo subido
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Archivo vacío, destino mal indicado, o demasiados archivos sin enviar
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Sin permiso para escribir en ese canal, silenciado, o bloqueado en el mensaje directo
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal o el destinatario no existen
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El archivo supera el máximo permitido
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Formato no soportado
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Demasiados archivos subidos sin enviar
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo guardar el archivo
+      summary: Subir un archivo para adjuntarlo a un mensaje
+      tags:
+        - attachments
   /v1/blocks:
     get:
       callbacks: {}

@@ -555,6 +555,79 @@ duplican). Reaccionar mueve el `changed_at` del mensaje, así quien vuelve de un
 desconexión recibe el mensaje en `changed_messages` con sus reacciones al día. Se
 borran junto con el mensaje, el canal o el servidor.
 
+## Adjuntar archivos
+Se puede adjuntar a un mensaje (de un canal o directo) una imagen JPEG, PNG o WebP, o un PDF, de
+hasta **10 MB** cada uno y hasta **5 por mensaje**. Los archivos viven en **Cloudinary**; en
+`messaging` (Mongo) solo se guarda la URL y los metadatos, nunca los bytes, y el archivo tampoco
+se escribe en el disco del servidor.
+
+Es en dos pasos, porque los mensajes viajan por WebSocket y los archivos son binarios:
+
+1. **Subir el archivo** por REST: `POST /v1/attachments?channel_id=<id>` (canal de un servidor) o
+   `POST /v1/attachments?to=<user_id>` (mensaje directo), con el archivo como **cuerpo binario**
+   del pedido (no multipart ni base64) y `?filename=` opcional con el nombre a mostrar.
+   ```js
+   const res = await fetch(`${API}/v1/attachments?channel_id=${channelId}&filename=${file.name}`, {
+     method: 'POST',
+     headers: { Authorization: `Bearer ${jwt}` },
+     body: file,
+   })
+   const attachment = await res.json()
+   ```
+   Responde `201` con `{ id, url, name, content_type, size }`. Para subir hay que poder escribir
+   ahí (`SEND_MESSAGES`, no estar silenciado, no estar bloqueado en el DM).
+2. **Enviar el mensaje** con los ids, por el mismo WebSocket de siempre:
+   ```json
+   ["1","7","channel:<id>","new_message",{"content":"mirá esto","attachment_ids":["<id>"]}]
+   ["1","8","user:<mi_id>","send_dm",{"to":"<user_id>","attachment_ids":["<id>"]}]
+   ```
+   `content` puede faltar o ir vacío si hay al menos un adjunto. El mensaje que reciben todos (y el
+   historial) trae `attachments: [{ id, url, name, content_type, size }]`, siempre presente
+   (`[]` si no tiene). Un adjunto se puede usar una sola vez, solo en el canal para el que se subió
+   y solo por quien lo subió.
+
+**Reglas (CA1 a CA3)**
+- El formato se reconoce por el **contenido real** del archivo (sus primeros bytes), no por la
+  extensión ni por el `Content-Type` que declare el cliente: un `.png` que en realidad es un GIF o
+  un ejecutable se rechaza.
+- `415 UNSUPPORTED_FILE_TYPE`: "Formato no soportado. Solo se aceptan imágenes JPEG, PNG o WebP y
+  archivos PDF."
+- `413 FILE_TOO_LARGE`: "El archivo supera el tamaño máximo permitido (10 MB)." Si el pedido
+  declara un `Content-Length` mayor, se rechaza sin leer el cuerpo.
+- `400 EMPTY_FILE`, `400 INVALID_PAYLOAD` (hay que indicar `channel_id` o `to`, no los dos),
+  `400 TOO_MANY_ATTACHMENTS`, `400 INVALID_ATTACHMENT` (no existe, ya se usó, es de otro canal o de
+  otro usuario), `429 TOO_MANY_PENDING_ATTACHMENTS` (más de 20 subidos sin enviar) y
+  `503 STORAGE_UNAVAILABLE`.
+- Primero se chequean los permisos y después se lee el cuerpo, así que quien no puede escribir no
+  hace que se lea un archivo entero.
+- Los archivos tienen URL pública de Cloudinary (`secure_url`) con un identificador aleatorio
+  `<carpeta>/<canal>/<id>`: el nombre original nunca forma parte de la ruta.
+
+**Editar** un mensaje no cambia sus adjuntos; si tiene adjuntos, se puede dejar el texto vacío.
+
+**Huérfanos.** Cada subida queda registrada en la colección `attachments`. Un proceso
+(`Messaging.Chat.AttachmentCleaner`, cada 10 minutos y apenas se borra un mensaje) borra del bucket
+y de Mongo: los archivos subidos que no se adjuntaron a ningún mensaje en **24 horas**, los de un
+mensaje eliminado, y los de un canal o servidor eliminado. Si Cloudinary falla, el registro queda y
+se reintenta en la próxima vuelta. Con varias instancias corren todas: borrar dos veces es
+inofensivo.
+
+**Variables de entorno**
+
+| Variable | Qué es |
+|---|---|
+| `CLOUDINARY_URL` | `cloudinary://<API_KEY>:<API_SECRET>@<CLOUD_NAME>`, tal cual la muestra el Dashboard de Cloudinary (Settings > API Keys). El secreto es solo del servidor, nunca al navegador |
+| `CLOUDINARY_FOLDER` | Carpeta donde se guardan los archivos (default `discordia/attachments`) |
+| `CLOUDINARY_API_BASE_URL` | Solo para apuntar a otro host (default `https://api.cloudinary.com`) |
+
+Si falta `CLOUDINARY_URL`, `messaging` arranca igual (loguea `attachments_storage_not_configured`) y
+solo `POST /v1/attachments` responde `503`. La ruta está en Kong (`messaging-attachments`, con JWT).
+
+**Cloudinary y los PDF.** Las cuentas nuevas pueden traer bloqueada la entrega de PDF y ZIP (la URL
+responde 401): se habilita en Settings > Security > "PDF and ZIP files delivery". La subida se hace
+con `resource_type=auto`, y `messaging` guarda en `path` el tipo que Cloudinary asignó
+(`image/<public_id>`, `raw/<public_id>`) para poder borrar el archivo después.
+
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),
 `Messaging.MongoOptions` arma el driver con `verify: :verify_peer`, los

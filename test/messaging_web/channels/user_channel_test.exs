@@ -225,6 +225,38 @@ defmodule MessagingWeb.UserChannelTest do
       assert_reply ref, :error, %{error: %{code: "CANNOT_MESSAGE_SELF"}}
     end
 
+    test "CA1: a direct message can carry attachments, with or without text" do
+      stub_new_conversation(@ana, @beto)
+      conversation = dm_id(@ana, @beto)
+
+      stub(Messaging.Chat.RepoMock, :claim_attachments, fn ["a1"], @ana, ^conversation, _id ->
+        {:ok,
+         [
+           %{
+             "_id" => "a1",
+             "url" => "https://cdn.test/a1.pdf",
+             "name" => "cv.pdf",
+             "content_type" => "application/pdf",
+             "size" => 10
+           }
+         ]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+      ana = join_own(@ana)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "attachment_ids" => ["a1"]})
+
+      assert_reply ref, :ok, %{
+        "message" => %{
+          "content" => "",
+          "attachments" => [
+            %{"id" => "a1", "name" => "cv.pdf", "content_type" => "application/pdf"}
+          ]
+        }
+      }
+    end
+
     test "empty and over-long content are rejected" do
       ana = join_own(@ana)
 

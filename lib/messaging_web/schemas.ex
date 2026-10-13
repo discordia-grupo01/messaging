@@ -1,6 +1,32 @@
 defmodule MessagingWeb.Schemas do
   alias OpenApiSpex.Schema
 
+  defmodule Attachment do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "Attachment",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        url: %Schema{
+          type: :string,
+          format: :uri,
+          description: "URL pública del archivo en el almacenamiento (Supabase Storage)"
+        },
+        name: %Schema{type: :string, description: "Nombre original, ya saneado"},
+        content_type: %Schema{
+          type: :string,
+          enum: ["image/jpeg", "image/png", "image/webp", "application/pdf"],
+          description:
+            "Detectado por el contenido real del archivo, no por el que declaró el cliente"
+        },
+        size: %Schema{type: :integer, description: "Tamaño en bytes"}
+      },
+      required: [:id, :url, :name, :content_type, :size]
+    })
+  end
+
   defmodule Message do
     require OpenApiSpex
 
@@ -50,6 +76,11 @@ defmodule MessagingWeb.Schemas do
           description:
             "true si el mensaje mencionó `@everyone` y el autor tiene MENTION_EVERYONE; si no, queda como texto"
         },
+        attachments: %Schema{
+          type: :array,
+          items: Attachment,
+          description: "Archivos adjuntos del mensaje (vacío si no tiene)"
+        },
         reactions: %Schema{
           type: :array,
           description:
@@ -79,7 +110,8 @@ defmodule MessagingWeb.Schemas do
         :edited,
         :mentions,
         :mention_roles,
-        :mention_everyone
+        :mention_everyone,
+        :attachments
       ]
     })
   end

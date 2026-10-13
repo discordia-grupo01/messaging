@@ -7,6 +7,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @blocks "blocks"
   @clocks "event_clocks"
   @mentions "mentions"
+  @attachments "attachments"
   @reactions "reactions"
   @replica_servers "replica_servers"
   @replica_roles "replica_roles"
@@ -84,7 +85,12 @@ defmodule Messaging.Chat.Repo.Mongo do
     filter = live(%{"_id" => id, "channel_id" => channel_id})
 
     update = %{
-      "$set" => %{"content" => "", "deleted_at" => deleted_at, "changed_at" => deleted_at}
+      "$set" => %{
+        "content" => "",
+        "attachments" => [],
+        "deleted_at" => deleted_at,
+        "changed_at" => deleted_at
+      }
     }
 
     case Mongo.find_one_and_update(@conn, @messages, filter, update, return_document: :after) do
@@ -387,6 +393,7 @@ defmodule Messaging.Chat.Repo.Mongo do
          {:ok, _result} <- Mongo.delete_many(@conn, @mentions, %{"channel_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_many(@conn, @reactions, %{"channel_id" => channel_id}),
          {:ok, _result} <- Mongo.delete_one(@conn, @replica_overrides, %{"_id" => channel_id}),
+         :ok <- orphan_channel_attachments([channel_id]),
          {:ok, _result} <- Mongo.delete_one(@conn, @channels, %{"_id" => channel_id}) do
       :ok
     end
@@ -404,6 +411,7 @@ defmodule Messaging.Chat.Repo.Mongo do
          {:ok, _result} <-
            Mongo.delete_many(@conn, @reactions, %{"channel_id" => %{"$in" => all_ids}}),
          {:ok, _result} <- delete_replica(server_id),
+         :ok <- orphan_channel_attachments(all_ids),
          {:ok, _result} <- Mongo.delete_many(@conn, @channels, %{"server_id" => server_id}) do
       :ok
     else
@@ -411,6 +419,122 @@ defmodule Messaging.Chat.Repo.Mongo do
     end
   rescue
     error -> {:error, error}
+  end
+
+  defp orphan_channel_attachments(channel_ids) do
+    filter = %{"channel_id" => %{"$in" => channel_ids}, "orphaned_at" => nil}
+
+    update = %{
+      "$set" => %{"orphaned_at" => DateTime.utc_now() |> DateTime.truncate(:millisecond)}
+    }
+
+    case Mongo.update_many(@conn, @attachments, filter, update) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def insert_attachment(doc) do
+    case Mongo.insert_one(@conn, @attachments, doc) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def count_pending_attachments(user_id) do
+    case Mongo.count_documents(
+           @conn,
+           @attachments,
+           %{"user_id" => user_id, "message_id" => nil, "orphaned_at" => nil}
+         ) do
+      {:ok, count} -> {:ok, count}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def claim_attachments([], _user_id, _channel_id, _message_id), do: {:ok, []}
+
+  def claim_attachments(ids, user_id, channel_id, message_id) do
+    filter = %{
+      "_id" => %{"$in" => ids},
+      "user_id" => user_id,
+      "channel_id" => channel_id,
+      "message_id" => nil,
+      "orphaned_at" => nil
+    }
+
+    update = %{"$set" => %{"message_id" => message_id}}
+
+    with {:ok, %Mongo.UpdateResult{modified_count: count}} <-
+           Mongo.update_many(@conn, @attachments, filter, update),
+         :ok <- ensure_claimed(count, length(ids), message_id) do
+      docs = @conn |> Mongo.find(@attachments, %{"message_id" => message_id}) |> Enum.to_list()
+      by_id = Map.new(docs, &{&1["_id"], &1})
+      {:ok, Enum.map(ids, &Map.fetch!(by_id, &1))}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp ensure_claimed(count, count, _message_id), do: :ok
+
+  defp ensure_claimed(_count, _expected, message_id) do
+    _ = release_attachments(message_id)
+    {:error, :invalid_attachment}
+  end
+
+  @impl true
+  def release_attachments(message_id) do
+    case Mongo.update_many(
+           @conn,
+           @attachments,
+           %{"message_id" => message_id},
+           %{"$set" => %{"message_id" => nil}}
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def orphan_message_attachments(message_id, %DateTime{} = at) do
+    case Mongo.update_many(
+           @conn,
+           @attachments,
+           %{"message_id" => message_id},
+           %{"$set" => %{"orphaned_at" => at}}
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def list_cleanable_attachments(%DateTime{} = pending_before, limit) do
+    filter = %{
+      "$or" => [
+        %{"orphaned_at" => %{"$ne" => nil}},
+        %{"message_id" => nil, "uploaded_at" => %{"$lt" => pending_before}}
+      ]
+    }
+
+    case Mongo.find(@conn, @attachments, filter, limit: limit) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def delete_attachments(ids) do
+    case Mongo.delete_many(@conn, @attachments, %{"_id" => %{"$in" => ids}}) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp delete_replica(server_id) do
@@ -660,6 +784,17 @@ defmodule Messaging.Chat.Repo.Mongo do
       [name: "event_clocks_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]
     ]
 
+    attachment_indexes = [
+      [name: "attachments_user_message", key: [user_id: 1, message_id: 1]],
+      [name: "attachments_message", key: [message_id: 1]],
+      [name: "attachments_channel", key: [channel_id: 1]],
+      [
+        name: "attachments_orphaned_at",
+        key: [orphaned_at: 1],
+        partialFilterExpression: %{"orphaned_at" => %{"$exists" => true}}
+      ]
+    ]
+
     replica_ttl = [[name: "replica_expires_at_ttl", key: [expires_at: 1], expireAfterSeconds: 0]]
     replica_by_server = [[name: "replica_server", key: [server_id: 1]]]
 
@@ -667,6 +802,7 @@ defmodule Messaging.Chat.Repo.Mongo do
          :ok <- Mongo.create_indexes(@conn, @channels, channel_indexes),
          :ok <- Mongo.create_indexes(@conn, @blocks, block_indexes),
          :ok <- Mongo.create_indexes(@conn, @mentions, mention_indexes),
+         :ok <- Mongo.create_indexes(@conn, @attachments, attachment_indexes),
          :ok <- Mongo.create_indexes(@conn, @reactions, reaction_indexes),
          :ok <- Mongo.create_indexes(@conn, @replica_roles, replica_ttl ++ replica_by_server),
          :ok <- Mongo.create_indexes(@conn, @replica_members, replica_ttl ++ replica_by_server),

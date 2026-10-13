@@ -30,5 +30,6 @@ defmodule MessagingWeb.Router do
     post "/blocks", BlockController, :create
     delete "/blocks/:user_id", BlockController, :delete
     post "/socket-tickets", SocketTicketController, :create
+    post "/attachments", AttachmentController, :create
   end
 end

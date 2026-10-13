@@ -11,7 +11,8 @@ defmodule Messaging.Chat.Message do
     :deleted_at,
     mentions: [],
     mention_roles: [],
-    mention_everyone: false
+    mention_everyone: false,
+    attachments: []
   ]
 
   @type t :: %__MODULE__{
@@ -25,7 +26,8 @@ defmodule Messaging.Chat.Message do
           deleted_at: DateTime.t() | nil,
           mentions: [String.t()],
           mention_roles: [String.t()],
-          mention_everyone: boolean()
+          mention_everyone: boolean(),
+          attachments: [map()]
         }
 
   def from_doc(
@@ -49,7 +51,8 @@ defmodule Messaging.Chat.Message do
       deleted_at: Map.get(doc, "deleted_at"),
       mentions: Map.get(doc, "mentions") || [],
       mention_roles: Map.get(doc, "mention_roles") || [],
-      mention_everyone: Map.get(doc, "mention_everyone") == true
+      mention_everyone: Map.get(doc, "mention_everyone") == true,
+      attachments: Map.get(doc, "attachments") || []
     }
   end
 
@@ -69,7 +72,8 @@ defmodule Messaging.Chat.Message do
       "edited_at" => message.edited_at && iso8601_z(message.edited_at),
       "mentions" => message.mentions,
       "mention_roles" => message.mention_roles,
-      "mention_everyone" => message.mention_everyone
+      "mention_everyone" => message.mention_everyone,
+      "attachments" => message.attachments
     }
   end
 
