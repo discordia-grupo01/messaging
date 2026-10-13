@@ -7,6 +7,7 @@ defmodule MessagingWeb.RoomChannel do
   alias Messaging.Events.Broadcaster
   alias Messaging.Log
   alias MessagingWeb.ApiError
+  alias MessagingWeb.MessagePayload
 
   @dialyzer {:nowarn_function, handle_info: 2}
 
@@ -60,20 +61,27 @@ defmodule MessagingWeb.RoomChannel do
   end
 
   @impl true
-  def handle_in("new_message", %{"content" => content}, socket) do
-    params = %{
-      channel_id: socket.assigns.channel_id,
-      user_id: socket.assigns.user_id,
-      content: content
-    }
+  def handle_in("new_message", payload, socket) when is_map(payload) do
+    case MessagePayload.content(payload) do
+      {:ok, content} ->
+        params = %{
+          channel_id: socket.assigns.channel_id,
+          user_id: socket.assigns.user_id,
+          content: content,
+          attachment_ids: Map.get(payload, "attachment_ids")
+        }
 
-    case Chat.send_message(params) do
-      {:ok, message} ->
-        :ok = Broadcaster.publish("new_message", Message.to_api(message))
-        {:reply, :ok, socket}
+        case Chat.send_message(params) do
+          {:ok, message} ->
+            :ok = Broadcaster.publish("new_message", Message.to_api(message))
+            {:reply, :ok, socket}
 
-      {:error, reason} ->
-        {:reply, {:error, ApiError.payload(reason)}, socket}
+          {:error, reason} ->
+            {:reply, {:error, ApiError.payload(reason)}, socket}
+        end
+
+      :error ->
+        {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
     end
   end
 
