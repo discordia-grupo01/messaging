@@ -27,7 +27,13 @@ if rabbitmq_url do
         "inserted_at" => DateTime.to_iso8601(DateTime.utc_now())
       }
 
-      assert :ok = BroadcastPublisher.publish("channel:" <> channel_id, "new_message", payload)
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "channel:" <> channel_id,
+                 "new_message",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{event: "new_message", payload: ^payload}, 5_000
     end
@@ -45,7 +51,12 @@ if rabbitmq_url do
       }
 
       assert :ok =
-               BroadcastPublisher.publish("channel:" <> channel_id, "message_updated", payload)
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "channel:" <> channel_id,
+                 "message_updated",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{event: "message_updated", payload: ^payload},
                      5_000
@@ -63,7 +74,12 @@ if rabbitmq_url do
       }
 
       assert :ok =
-               BroadcastPublisher.publish("channel:" <> channel_id, "message_deleted", payload)
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "channel:" <> channel_id,
+                 "message_deleted",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{event: "message_deleted", payload: ^payload},
                      5_000
@@ -81,7 +97,13 @@ if rabbitmq_url do
         "message" => %{}
       }
 
-      assert :ok = BroadcastPublisher.publish("user:" <> user_id, "new_dm", payload)
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "user:" <> user_id,
+                 "new_dm",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{
                        topic: "user:" <> ^user_id,
@@ -103,7 +125,13 @@ if rabbitmq_url do
         "message" => %{"id" => "msg-1", "content" => "<@#{user_id}> hola"}
       }
 
-      assert :ok = BroadcastPublisher.publish("user:" <> user_id, "mention", payload)
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "user:" <> user_id,
+                 "mention",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{
                        topic: "user:" <> ^user_id,
@@ -134,9 +162,80 @@ if rabbitmq_url do
 
       payload = %{"channel_id" => channel_id, "reason" => "member_left", "user_id" => "user-1"}
 
-      assert :ok = BroadcastPublisher.publish("channel:" <> channel_id, "access_revoked", payload)
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "channel:" <> channel_id,
+                 "access_revoked",
+                 payload
+               )
 
       assert_receive %Phoenix.Socket.Broadcast{event: "access_revoked", payload: ^payload}, 5_000
+    end
+
+    test "events published while an instance was away are waiting for it when it comes back" do
+      stop_supervised!(BroadcastConsumer)
+      Process.sleep(200)
+
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "channel:" <> channel_id)
+
+      payload = %{
+        "id" => Messaging.UUID.generate(),
+        "channel_id" => channel_id,
+        "content" => "mientras no estabas"
+      }
+
+      queue = "messaging.broadcast.test-#{System.unique_integer([:positive])}"
+
+      start_supervised!({BroadcastConsumer, url: System.fetch_env!("RABBITMQ_URL"), queue: queue},
+        id: :first
+      )
+
+      Process.sleep(300)
+      stop_supervised!(:first)
+      Process.sleep(200)
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "channel:" <> channel_id,
+                 "new_message",
+                 payload
+               )
+
+      refute_receive %Phoenix.Socket.Broadcast{}, 300
+
+      start_supervised!({BroadcastConsumer, url: System.fetch_env!("RABBITMQ_URL"), queue: queue},
+        id: :second
+      )
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "new_message", payload: ^payload}, 5_000
+    end
+
+    test "the publisher waits for the broker to confirm and tags the message with the event id" do
+      {:ok, conn} = AMQP.Connection.open(System.fetch_env!("RABBITMQ_URL"))
+      {:ok, chan} = AMQP.Channel.open(conn)
+      {:ok, %{queue: queue}} = AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true)
+      :ok = AMQP.Queue.bind(chan, queue, "messaging.broadcast")
+      {:ok, _tag} = AMQP.Basic.consume(chan, queue, nil, no_ack: true)
+
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+      event_id = Messaging.UUID.generate()
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 event_id,
+                 "channel:" <> channel_id,
+                 "new_message",
+                 %{
+                   "channel_id" => channel_id
+                 }
+               )
+
+      assert_receive {:basic_deliver, body, %{message_id: ^event_id}}, 5_000
+      assert %{"event_id" => ^event_id, "event" => "new_message"} = Jason.decode!(body)
+      AMQP.Connection.close(conn)
     end
 
     test "a bare message from an older publisher is still delivered as new_message" do

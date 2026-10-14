@@ -7,7 +7,7 @@ if mongo_url do
     alias Messaging.Chat.{Message, UserMention}
     alias Messaging.Chat.Repo.Mongo, as: Repo
 
-    defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
+    defp unique(prefix), do: "#{prefix}-#{Messaging.UUID.generate()}"
 
     defp message(overrides \\ %{}) do
       struct!(

@@ -30,6 +30,7 @@ defmodule Messaging.MixProject do
       {:plug_cowboy, "~> 2.7"},
       {:cowlib, "~> 2.19.0", override: true},
       {:mongodb_driver, "~> 1.4"},
+      {:postgrex, "~> 0.19"},
       {:amqp, "~> 3.3"},
       {:req, "~> 0.5"},
       {:open_api_spex, "~> 3.21"},

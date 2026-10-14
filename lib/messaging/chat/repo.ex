@@ -19,6 +19,12 @@ defmodule Messaging.Chat.Repo do
               deleted_at :: DateTime.t()
             ) :: {:ok, map() | nil} | {:error, term()}
   @callback get_message(id :: String.t()) :: map() | nil | {:error, term()}
+  @callback upsert_message(doc :: map()) :: :ok | {:error, term()}
+  @callback apply_message_update(
+              id :: String.t(),
+              channel_id :: String.t(),
+              fields :: map()
+            ) :: :ok | {:error, term()}
   @callback list_changes(channel_id :: String.t(), since :: DateTime.t(), limit :: pos_integer()) ::
               {:ok, [map()]} | {:error, term()}
   @callback get_messages(ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}

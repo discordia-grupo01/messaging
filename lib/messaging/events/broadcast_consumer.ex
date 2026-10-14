@@ -16,6 +16,8 @@ defmodule Messaging.Events.BroadcastConsumer do
     "access_revoked"
   ]
   @topic_prefixes ["channel:", "user:"]
+  @queue_expires_ms 10 * 60 * 1000
+  @message_ttl_ms 5 * 60 * 1000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -23,13 +25,14 @@ defmodule Messaging.Events.BroadcastConsumer do
   def init(opts) do
     Process.flag(:trap_exit, true)
     url = Keyword.fetch!(opts, :url)
+    queue = Keyword.get(opts, :queue, "messaging.broadcast." <> Messaging.UUID.generate())
     send(self(), :connect)
-    {:ok, %{url: url, backoff: Backoff.initial(), conn: nil, chan: nil}}
+    {:ok, %{url: url, queue: queue, backoff: Backoff.initial(), conn: nil, chan: nil}}
   end
 
   @impl true
   def handle_info(:connect, state) do
-    case connect(state.url) do
+    case connect(state.url, state.queue) do
       {:ok, conn, chan} ->
         Process.monitor(conn.pid)
         Logger.info("broadcast_consumer_connected", exchange: @exchange)
@@ -108,12 +111,18 @@ defmodule Messaging.Events.BroadcastConsumer do
 
   defp topic_for(_decoded, _payload), do: :error
 
-  defp connect(url) do
+  defp connect(url, queue) do
     with {:ok, conn} <- AMQP.Connection.open(url),
          {:ok, chan} <- AMQP.Channel.open(conn),
          :ok <- AMQP.Exchange.declare(chan, @exchange, :fanout, durable: true),
-         {:ok, %{queue: queue}} <-
-           AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true),
+         {:ok, _info} <-
+           AMQP.Queue.declare(chan, queue,
+             durable: true,
+             arguments: [
+               {"x-expires", :signedint, @queue_expires_ms},
+               {"x-message-ttl", :signedint, @message_ttl_ms}
+             ]
+           ),
          :ok <- AMQP.Queue.bind(chan, queue, @exchange),
          {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
       {:ok, conn, chan}

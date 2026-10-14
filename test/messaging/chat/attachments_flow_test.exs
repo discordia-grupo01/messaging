@@ -10,6 +10,11 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
   setup :verify_on_exit!
 
   setup do
+    Messaging.OutboxHelper.stub_outbox()
+    :ok
+  end
+
+  setup do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     :ok
@@ -304,17 +309,17 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
       assert {:error, :invalid_attachment} = send_with("x", ["alien"])
     end
 
-    test "if the message cannot be saved the claim is released so they can be reused" do
+    test "if the message cannot be recorded the claim is released so they can be reused" do
       allow_upload()
+      Messaging.OutboxHelper.stub_outbox_failing()
 
       expect(Messaging.Chat.RepoMock, :claim_attachments, fn _, _, _, _ ->
         {:ok, [attachment_doc("a1")]}
       end)
 
-      expect(Messaging.Chat.RepoMock, :insert_message, fn _doc -> {:error, :timeout} end)
       expect(Messaging.Chat.RepoMock, :release_attachments, fn _message_id -> :ok end)
 
-      capture_log(fn -> assert {:error, :timeout} = send_with("x", ["a1"]) end)
+      capture_log(fn -> assert {:error, :messages_unavailable} = send_with("x", ["a1"]) end)
     end
 
     test "a user who cannot write there cannot use attachments either" do

@@ -19,11 +19,24 @@ defmodule Messaging.Application do
         {Phoenix.PubSub, name: Messaging.PubSub},
         {Mongo, Messaging.MongoOptions.build(mongo_url)}
       ] ++
+        postgres_children() ++
         index_children() ++
-        amqp_children() ++ cleaner_children() ++ [MessagingWeb.Endpoint]
+        amqp_children() ++ outbox_children() ++ cleaner_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp postgres_children do
+    if Application.get_env(:messaging, :start_postgres, true),
+      do: [Messaging.Postgres],
+      else: []
+  end
+
+  defp outbox_children do
+    if Application.get_env(:messaging, :start_outbox_poller, true),
+      do: [Messaging.Outbox.Poller],
+      else: []
   end
 
   defp cleaner_children do

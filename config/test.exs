@@ -14,6 +14,10 @@ config :messaging, :mention_resolver, Messaging.Chat.MentionResolverMock
 config :messaging, :ticket_store, Messaging.Auth.TicketStoreMock
 config :messaging, :storage, Messaging.StorageMock
 config :messaging, :start_attachment_cleaner, false
+config :messaging, :start_postgres, false
+config :messaging, :start_outbox_poller, false
+config :messaging, :outbox_store, Messaging.Outbox.StoreMock
+config :messaging, :event_publisher, Messaging.EventPublisherMock
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
 
 config :logger, level: :warning

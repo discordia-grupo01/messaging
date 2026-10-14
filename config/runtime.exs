@@ -27,6 +27,16 @@ config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
 
+config :messaging, :postgres,
+  host: System.get_env("DATABASE_HOST", "localhost"),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
+  database: System.get_env("DATABASE_NAME", "messaging"),
+  username: System.get_env("DATABASE_USER", "postgres"),
+  password: System.get_env("DATABASE_PASSWORD", "postgres"),
+  sslmode: System.get_env("DATABASE_SSLMODE", "disable"),
+  schema: System.get_env("DATABASE_SCHEMA", "public"),
+  pool_size: String.to_integer(System.get_env("DATABASE_POOL_SIZE", "5"))
+
 config :messaging, :cloudinary,
   url: System.get_env("CLOUDINARY_URL"),
   folder: System.get_env("CLOUDINARY_FOLDER", "discordia/attachments"),
@@ -52,4 +62,14 @@ if config_env() == :prod do
   config :messaging,
     mongo_url: System.fetch_env!("MONGO_URL"),
     rabbitmq_url: System.fetch_env!("RABBITMQ_URL")
+
+  config :messaging, :postgres,
+    host: System.fetch_env!("DATABASE_HOST"),
+    port: String.to_integer(System.fetch_env!("DATABASE_PORT")),
+    database: System.fetch_env!("DATABASE_NAME"),
+    username: System.fetch_env!("DATABASE_USER"),
+    password: System.fetch_env!("DATABASE_PASSWORD"),
+    sslmode: System.get_env("DATABASE_SSLMODE", "require"),
+    schema: System.fetch_env!("DATABASE_SCHEMA"),
+    pool_size: String.to_integer(System.get_env("DATABASE_POOL_SIZE", "5"))
 end

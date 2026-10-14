@@ -72,8 +72,7 @@ defmodule MessagingWeb.RoomChannel do
         }
 
         case Chat.send_message(params) do
-          {:ok, message} ->
-            :ok = Broadcaster.publish("new_message", Message.to_api(message))
+          {:ok, _message} ->
             {:reply, :ok, socket}
 
           {:error, reason} ->
@@ -94,11 +93,7 @@ defmodule MessagingWeb.RoomChannel do
     }
 
     case Chat.edit_message(params) do
-      {:ok, message, :updated} ->
-        publish_update(message)
-        {:reply, {:ok, Message.to_api(message)}, socket}
-
-      {:ok, message, :unchanged} ->
+      {:ok, message, _change} ->
         {:reply, {:ok, Message.to_api(message)}, socket}
 
       {:error, reason} ->
@@ -114,8 +109,7 @@ defmodule MessagingWeb.RoomChannel do
     }
 
     case Chat.delete_message(params) do
-      {:ok, message} ->
-        publish_deletion(message)
+      {:ok, _message} ->
         {:reply, :ok, socket}
 
       {:error, reason} ->
@@ -163,32 +157,6 @@ defmodule MessagingWeb.RoomChannel do
              "remove_reaction"
            ] do
     {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
-  end
-
-  defp publish_update(message) do
-    case Broadcaster.publish("message_updated", Message.to_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_updated_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
-  end
-
-  defp publish_deletion(message) do
-    case Broadcaster.publish("message_deleted", Message.to_deleted_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_deleted_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
   end
 
   defp publish_reaction(reaction, user_id, action) do

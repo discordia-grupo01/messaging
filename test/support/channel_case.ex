@@ -9,4 +9,10 @@ defmodule MessagingWeb.ChannelCase do
       @endpoint MessagingWeb.Endpoint
     end
   end
+
+  setup _tags do
+    Mox.set_mox_private()
+    Messaging.OutboxHelper.stub_outbox()
+    :ok
+  end
 end

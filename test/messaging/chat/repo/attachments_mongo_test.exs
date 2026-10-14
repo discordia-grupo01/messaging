@@ -40,7 +40,7 @@ if mongo_url do
 
     defp seed(user, channel, count) do
       for n <- 1..count do
-        id = "att-#{System.unique_integer([:positive])}-#{n}"
+        id = "att-#{Messaging.UUID.generate()}-#{n}"
         :ok = Repo.insert_attachment(doc(id, user, channel))
         id
       end
@@ -125,12 +125,12 @@ if mongo_url do
       {:ok, _} = Repo.claim_attachments([id], user, channel, "msg-1")
       long_ago = DateTime.add(DateTime.utc_now(), -7200, :second)
 
-      assert {:ok, docs} = Repo.list_cleanable_attachments(long_ago, 1000)
+      assert {:ok, docs} = Repo.list_cleanable_attachments(long_ago, 100_000)
       refute Enum.any?(docs, &(&1["_id"] == id))
 
       assert :ok = Repo.orphan_message_attachments("msg-1", DateTime.utc_now())
 
-      assert {:ok, docs} = Repo.list_cleanable_attachments(long_ago, 1000)
+      assert {:ok, docs} = Repo.list_cleanable_attachments(long_ago, 100_000)
       assert Enum.any?(docs, &(&1["_id"] == id))
     end
 
@@ -139,12 +139,12 @@ if mongo_url do
       channel: channel
     } do
       [fresh] = seed(user, channel, 1)
-      old_id = "old-#{System.unique_integer([:positive])}"
+      old_id = "old-#{Messaging.UUID.generate()}"
 
       old_at =
         DateTime.add(DateTime.utc_now(), -48 * 3600, :second) |> DateTime.truncate(:millisecond)
 
-      draft_id = "draft-#{System.unique_integer([:positive])}"
+      draft_id = "draft-#{Messaging.UUID.generate()}"
 
       draft_at =
         DateTime.add(DateTime.utc_now(), -23 * 3600, :second) |> DateTime.truncate(:millisecond)
@@ -153,7 +153,7 @@ if mongo_url do
       :ok = Repo.insert_attachment(doc(draft_id, user, channel, %{"uploaded_at" => draft_at}))
       day_ago = DateTime.add(DateTime.utc_now(), -24 * 3600, :second)
 
-      assert {:ok, docs} = Repo.list_cleanable_attachments(day_ago, 1000)
+      assert {:ok, docs} = Repo.list_cleanable_attachments(day_ago, 100_000)
       ids = Enum.map(docs, & &1["_id"])
 
       assert old_id in ids
@@ -165,7 +165,7 @@ if mongo_url do
       user: user,
       channel: channel
     } do
-      id = "used-#{System.unique_integer([:positive])}"
+      id = "used-#{Messaging.UUID.generate()}"
 
       old_at =
         DateTime.add(DateTime.utc_now(), -86_400, :second) |> DateTime.truncate(:millisecond)
@@ -173,7 +173,7 @@ if mongo_url do
       :ok = Repo.insert_attachment(doc(id, user, channel, %{"uploaded_at" => old_at}))
       {:ok, _} = Repo.claim_attachments([id], user, channel, "msg-1")
 
-      assert {:ok, docs} = Repo.list_cleanable_attachments(DateTime.utc_now(), 1000)
+      assert {:ok, docs} = Repo.list_cleanable_attachments(DateTime.utc_now(), 100_000)
       refute Enum.any?(docs, &(&1["_id"] == id))
     end
 

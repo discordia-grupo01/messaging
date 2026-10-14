@@ -30,6 +30,7 @@ defmodule MessagingWeb.ApiError do
           | :invalid_attachment
           | :too_many_pending_attachments
           | :storage_unavailable
+          | :messages_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -132,6 +133,10 @@ defmodule MessagingWeb.ApiError do
   def describe(:storage_unavailable),
     do: {"STORAGE_UNAVAILABLE", "No se pudo guardar el archivo, intentá de nuevo en un momento."}
 
+  def describe(:messages_unavailable),
+    do:
+      {"MESSAGES_UNAVAILABLE", "No se pudo registrar el mensaje, intentá de nuevo en un momento."}
+
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
@@ -163,6 +168,7 @@ defmodule MessagingWeb.ApiError do
   def http_status(:mentions_unavailable), do: 503
   def http_status(:ticket_unavailable), do: 503
   def http_status(:storage_unavailable), do: 503
+  def http_status(:messages_unavailable), do: 503
   def http_status(:file_too_large), do: 413
   def http_status(:unsupported_file_type), do: 415
   def http_status(:too_many_pending_attachments), do: 429

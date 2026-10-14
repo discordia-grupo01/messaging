@@ -3,9 +3,7 @@ defmodule MessagingWeb.UserChannel do
   require Logger
 
   alias Messaging.Chat
-  alias Messaging.Chat.{ChannelCache, Message}
-  alias Messaging.Events.Broadcaster
-  alias Messaging.Log
+  alias Messaging.Chat.Message
   alias MessagingWeb.ApiError
   alias MessagingWeb.MessagePayload
 
@@ -40,46 +38,12 @@ defmodule MessagingWeb.UserChannel do
 
     case Chat.send_direct_message(params) do
       {:ok, channel, message} ->
-        publish_direct(channel, message)
-
         {:reply,
          {:ok, %{"conversation_id" => channel.channel_id, "message" => Message.to_api(message)}},
          socket}
 
       {:error, reason} ->
         {:reply, {:error, ApiError.payload(reason)}, socket}
-    end
-  end
-
-  defp publish_direct(%ChannelCache{} = channel, %Message{} = message) do
-    payload = Message.to_api(message)
-
-    broadcast("channel:" <> channel.channel_id, "new_message", payload, message.id)
-
-    for user_id <- channel.participants do
-      notification = %{
-        "conversation_id" => channel.channel_id,
-        "partner_id" => Enum.find(channel.participants, &(&1 != user_id)),
-        "message" => payload
-      }
-
-      broadcast("user:" <> user_id, "new_dm", notification, message.id)
-    end
-
-    :ok
-  end
-
-  defp broadcast(topic, event, payload, message_id) do
-    case Broadcaster.publish_to(topic, event, payload) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("dm_broadcast_failed",
-          broadcast_event: event,
-          message_id: message_id,
-          reason: Log.reason(reason)
-        )
     end
   end
 end
