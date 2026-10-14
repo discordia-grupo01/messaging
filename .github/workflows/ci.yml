@@ -19,6 +19,16 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       rabbitmq:
         image: rabbitmq:3.13-management-alpine
         ports: ["5672:5672", "15672:15672"]
@@ -63,11 +73,26 @@ jobs:
           commit_message: "docs(openapi): regenerate openapi.yaml [skip ci]"
           file_pattern: openapi.yaml
 
-      - name: Tests (unitarios + integracion contra Mongo y RabbitMQ reales; falla si la cobertura < 70%)
+      - name: Migraciones contra el Postgres del CI (comprueba que se aplican de cero)
+        env:
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_NAME: postgres
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DATABASE_SSLMODE: disable
+        run: make -s migrate
+
+      - name: Tests (unitarios + integracion contra Mongo, Postgres y RabbitMQ reales; falla si la cobertura < 70%)
         env:
           MIX_ENV: test
           MONGO_URL: mongodb://localhost:27017/messaging_test
           RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_NAME: postgres
+          DATABASE_USER: postgres
+          DATABASE_PASSWORD: postgres
         run: mix coveralls
 
       - name: Analisis estatico (Dialyzer)
@@ -90,8 +115,37 @@ jobs:
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
-  deploy:
+  migrate:
     needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: migrate-messaging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar migraciones en produccion
+        env:
+          DATABASE_HOST: ${{ secrets.PROD_DATABASE_HOST }}
+          DATABASE_PORT: ${{ secrets.PROD_DATABASE_PORT }}
+          DATABASE_NAME: ${{ secrets.PROD_DATABASE_NAME }}
+          DATABASE_USER: ${{ secrets.PROD_DATABASE_USER }}
+          DATABASE_PASSWORD: ${{ secrets.PROD_DATABASE_PASSWORD }}
+          DATABASE_SSLMODE: ${{ secrets.PROD_DATABASE_SSLMODE }}
+          DATABASE_SCHEMA: ${{ secrets.PROD_DATABASE_SCHEMA }}
+        run: |
+          if [ -z "$DATABASE_HOST" ] || [ -z "$DATABASE_PASSWORD" ]; then
+            echo "Faltan los secrets PROD_DATABASE_* (ver README, seccion Postgres y outbox)" >&2
+            exit 1
+          fi
+          ENCODED=$(jq -rn --arg p "$DATABASE_PASSWORD" '$p|@uri')
+          echo "::add-mask::$ENCODED"
+          DATABASE_PASSWORD="$ENCODED" make -s migrate
+
+  deploy:
+    needs: [publish, migrate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:

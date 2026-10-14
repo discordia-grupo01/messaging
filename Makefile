@@ -1,4 +1,14 @@
-.PHONY: setup format lint test dialyzer openapi ci clean
+.PHONY: setup format lint test dialyzer openapi migrate ci clean
+
+-include .env
+export
+
+DATABASE_HOST ?= localhost
+DATABASE_PORT ?= 5432
+DATABASE_NAME ?= postgres
+DATABASE_USER ?= postgres
+DATABASE_PASSWORD ?= postgres
+DATABASE_SSLMODE ?= disable
 
 setup:
 	mix local.hex --force
@@ -19,6 +29,12 @@ dialyzer:
 
 openapi:
 	mix openapi.spec.yaml --spec MessagingWeb.ApiSpec openapi.yaml
+
+migrate: ## aplica migrations/*.up.sql en la base que indique .env (solo corre las nuevas)
+	docker run --rm -v $(shell pwd)/migrations:/migrations --net=host migrate/migrate \
+		-path=/migrations \
+		-database "postgres://$(DATABASE_USER):$(DATABASE_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)?sslmode=$(DATABASE_SSLMODE)$(if $(DATABASE_SCHEMA),&search_path=$(DATABASE_SCHEMA),)" \
+		up
 
 ci: ## corre lo mismo que el pipeline de CI, en local
 	@echo "--- format ---"
