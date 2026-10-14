@@ -2,7 +2,7 @@ defmodule Messaging.Events.BroadcastPublisher do
   use GenServer
   require Logger
 
-  @behaviour Messaging.Events.Broadcaster
+  @behaviour Messaging.Events.EventPublisher
 
   alias Messaging.Events.Backoff
   alias Messaging.Log
@@ -11,9 +11,14 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @impl Messaging.Events.Broadcaster
-  def publish(topic, event, payload),
-    do: GenServer.call(__MODULE__, {:publish, topic, event, payload})
+  @confirm_timeout_ms 5_000
+
+  @impl Messaging.Events.EventPublisher
+  def publish_event(id, topic, event, payload) do
+    GenServer.call(__MODULE__, {:publish, id, topic, event, payload}, @confirm_timeout_ms * 2)
+  catch
+    :exit, reason -> {:error, reason}
+  end
 
   @impl GenServer
   def init(opts) do
@@ -24,13 +29,19 @@ defmodule Messaging.Events.BroadcastPublisher do
   end
 
   @impl GenServer
-  def handle_call({:publish, _topic, _event, _payload}, _from, %{chan: nil} = state) do
+  def handle_call({:publish, _id, _topic, _event, _payload}, _from, %{chan: nil} = state) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:publish, topic, event, payload}, _from, state) do
-    body = Jason.encode!(%{"topic" => topic, "event" => event, "payload" => payload})
-    result = AMQP.Basic.publish(state.chan, @exchange, "", body, persistent: true)
+  def handle_call({:publish, id, topic, event, payload}, _from, state) do
+    body =
+      Jason.encode!(%{"event_id" => id, "topic" => topic, "event" => event, "payload" => payload})
+
+    result =
+      with :ok <-
+             AMQP.Basic.publish(state.chan, @exchange, "", body, persistent: true, message_id: id) do
+        confirm(state.chan)
+      end
 
     {:reply, result, state}
   end
@@ -80,8 +91,17 @@ defmodule Messaging.Events.BroadcastPublisher do
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),
          {:ok, chan} <- AMQP.Channel.open(conn),
-         :ok <- AMQP.Exchange.declare(chan, @exchange, :fanout, durable: true) do
+         :ok <- AMQP.Exchange.declare(chan, @exchange, :fanout, durable: true),
+         :ok <- AMQP.Confirm.select(chan) do
       {:ok, conn, chan}
+    end
+  end
+
+  defp confirm(chan) do
+    case AMQP.Confirm.wait_for_confirms(chan, @confirm_timeout_ms) do
+      true -> :ok
+      false -> {:error, :not_confirmed}
+      :timeout -> {:error, :confirm_timeout}
     end
   end
 end

@@ -12,6 +12,8 @@ defmodule MessagingWeb.ConnCase do
   end
 
   setup _tags do
+    Mox.set_mox_private()
+    Messaging.OutboxHelper.stub_outbox()
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end

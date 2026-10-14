@@ -13,8 +13,24 @@ defmodule Messaging.Events.BroadcastConsumerUnitTest do
     assert backoff > 0
   end
 
+  test "init/1 gives each instance its own queue name, kept across reconnections" do
+    {:ok, %{queue: first}} = BroadcastConsumer.init(url: @unreachable_url)
+    {:ok, %{queue: second}} = BroadcastConsumer.init(url: @unreachable_url)
+
+    assert String.starts_with?(first, "messaging.broadcast.")
+    assert first != second
+
+    {:noreply, %{queue: after_down}} =
+      BroadcastConsumer.handle_info(
+        {:DOWN, make_ref(), :process, self(), :shutdown},
+        %{url: @unreachable_url, queue: first, backoff: 1_000, conn: :c, chan: :ch}
+      )
+
+    assert after_down == first
+  end
+
   test "handle_info(:connect, ...) backs off and stays disconnected when the broker is unreachable" do
-    state = %{url: @unreachable_url, backoff: 50, conn: nil, chan: nil}
+    state = %{url: @unreachable_url, queue: "q", backoff: 50, conn: nil, chan: nil}
 
     assert {:noreply, %{conn: nil, chan: nil, backoff: 100}} =
              BroadcastConsumer.handle_info(:connect, state)
@@ -23,7 +39,13 @@ defmodule Messaging.Events.BroadcastConsumerUnitTest do
   end
 
   test "handle_info({:DOWN, ...}) resets state and retries" do
-    state = %{url: @unreachable_url, backoff: 30_000, conn: :fake_conn, chan: :fake_chan}
+    state = %{
+      url: @unreachable_url,
+      queue: "q",
+      backoff: 30_000,
+      conn: :fake_conn,
+      chan: :fake_chan
+    }
 
     assert {:noreply, %{conn: nil, chan: nil, backoff: backoff}} =
              BroadcastConsumer.handle_info(
@@ -36,22 +58,28 @@ defmodule Messaging.Events.BroadcastConsumerUnitTest do
   end
 
   test "handle_info({:basic_consume_ok, ...}) is a no-op" do
-    state = %{url: @unreachable_url, backoff: 1_000, conn: nil, chan: nil}
+    state = %{url: @unreachable_url, queue: "q", backoff: 1_000, conn: nil, chan: nil}
     assert {:noreply, ^state} = BroadcastConsumer.handle_info({:basic_consume_ok, %{}}, state)
   end
 
   test "handle_info({:basic_cancel, ...}) stops the GenServer" do
-    state = %{url: @unreachable_url, backoff: 1_000, conn: nil, chan: nil}
+    state = %{url: @unreachable_url, queue: "q", backoff: 1_000, conn: nil, chan: nil}
     assert {:stop, :normal, ^state} = BroadcastConsumer.handle_info({:basic_cancel, %{}}, state)
   end
 
   test "handle_info({:basic_cancel_ok, ...}) is a no-op" do
-    state = %{url: @unreachable_url, backoff: 1_000, conn: nil, chan: nil}
+    state = %{url: @unreachable_url, queue: "q", backoff: 1_000, conn: nil, chan: nil}
     assert {:noreply, ^state} = BroadcastConsumer.handle_info({:basic_cancel_ok, %{}}, state)
   end
 
   test "handle_info({:EXIT, ...}) is ignored so the DOWN handler can reconnect" do
-    state = %{url: @unreachable_url, backoff: 1_000, conn: :fake_conn, chan: :fake_chan}
+    state = %{
+      url: @unreachable_url,
+      queue: "q",
+      backoff: 1_000,
+      conn: :fake_conn,
+      chan: :fake_chan
+    }
 
     assert {:noreply, ^state} = BroadcastConsumer.handle_info({:EXIT, self(), :killed}, state)
   end

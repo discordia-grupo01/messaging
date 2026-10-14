@@ -8,6 +8,11 @@ defmodule Messaging.ChatTest do
   setup :verify_on_exit!
 
   setup do
+    Messaging.OutboxHelper.stub_outbox()
+    :ok
+  end
+
+  setup do
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :list_reactions, fn _ids -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :delete_reactions, fn _id -> :ok end)
@@ -132,7 +137,7 @@ defmodule Messaging.ChatTest do
       assert {:error, :channel_not_text} = Chat.send_message(send_params())
     end
 
-    test "propagates a repo insert failure instead of pretending success" do
+    test "if only Mongo fails the message is already in the outbox, so it is accepted" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
 
       expect(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _uid ->
@@ -141,7 +146,8 @@ defmodule Messaging.ChatTest do
 
       expect(Messaging.Chat.RepoMock, :insert_message, fn _doc -> {:error, :timeout} end)
 
-      assert {:error, :timeout} = Chat.send_message(send_params())
+      assert {:ok, %Message{content: "hola"}} =
+               ExUnit.CaptureLog.with_log(fn -> Chat.send_message(send_params()) end) |> elem(0)
     end
   end
 
@@ -370,7 +376,7 @@ defmodule Messaging.ChatTest do
       assert {:error, :message_not_found} = Chat.edit_message(edit_params())
     end
 
-    test "a repository failure on update is propagated" do
+    test "if only Mongo fails the edit is already in the outbox, so it is accepted" do
       allow_edit()
 
       expect(Messaging.Chat.RepoMock, :update_message, fn _id,
@@ -382,7 +388,10 @@ defmodule Messaging.ChatTest do
         {:error, :timeout}
       end)
 
-      assert {:error, :timeout} = Chat.edit_message(edit_params())
+      {result, _log} = ExUnit.CaptureLog.with_log(fn -> Chat.edit_message(edit_params()) end)
+
+      assert {:ok, %Message{content: "texto corregido", edited_at: %DateTime{}}, :updated} =
+               result
     end
   end
 
@@ -543,12 +552,14 @@ defmodule Messaging.ChatTest do
       assert {:error, :message_not_found} = Chat.delete_message(delete_params())
     end
 
-    test "a repository failure on delete is propagated" do
+    test "if only Mongo fails the deletion is already in the outbox, so it is accepted" do
       allow_delete_lookup(stored_doc())
 
       expect(Messaging.Chat.RepoMock, :delete_message, fn _id, _cid, _at -> {:error, :timeout} end)
 
-      assert {:error, :timeout} = Chat.delete_message(delete_params())
+      {result, _log} = ExUnit.CaptureLog.with_log(fn -> Chat.delete_message(delete_params()) end)
+
+      assert {:ok, %Message{content: "", deleted_at: %DateTime{}}} = result
     end
   end
 
@@ -809,11 +820,14 @@ defmodule Messaging.ChatTest do
       assert {:error, :timeout} = Chat.send_direct_message(dm_params())
     end
 
-    test "a failure storing the message is propagated and the conversation is not updated" do
+    test "if only Mongo fails the direct message is already in the outbox, so it is accepted" do
       expect(Messaging.Chat.RepoMock, :get_channel, fn _id -> dm_doc() end)
       expect(Messaging.Chat.RepoMock, :insert_message, fn _doc -> {:error, :timeout} end)
+      stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
 
-      assert {:error, :timeout} = Chat.send_direct_message(dm_params())
+      {result, _log} = ExUnit.CaptureLog.with_log(fn -> Chat.send_direct_message(dm_params()) end)
+
+      assert {:ok, _channel, %Message{content: "hola"}} = result
     end
 
     test "if only the conversation update fails the message is still delivered" do

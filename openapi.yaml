@@ -458,8 +458,8 @@ paths:
                 type: object
                 x-struct:
                 x-validate:
-          description: Mongo no responde
-      summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo)
+          description: Mongo o Postgres no responden
+      summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo y Postgres)
       tags:
         - ops
   /v1/attachments:

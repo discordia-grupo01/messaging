@@ -13,18 +13,23 @@ defmodule MessagingWeb.HealthController do
   end
 
   operation :readyz,
-    summary: "Readiness -- confirma que el servicio puede operar (pinguea Mongo)",
+    summary: "Readiness -- confirma que el servicio puede operar (pinguea Mongo y Postgres)",
     responses: [
       ok: {"ready", "application/json", %OpenApiSpex.Schema{type: :object}},
       service_unavailable:
-        {"Mongo no responde", "application/json", %OpenApiSpex.Schema{type: :object}}
+        {"Mongo o Postgres no responden", "application/json", %OpenApiSpex.Schema{type: :object}}
     ]
 
   def readyz(conn, _params) do
-    if Messaging.Chat.mongo_ready?() do
-      json(conn, %{status: "ready"})
-    else
-      conn |> put_status(503) |> json(%{status: "unavailable", detail: "mongo"})
+    cond do
+      not Messaging.Chat.mongo_ready?() ->
+        conn |> put_status(503) |> json(%{status: "unavailable", detail: "mongo"})
+
+      Messaging.Outbox.Store.ping() != :ok ->
+        conn |> put_status(503) |> json(%{status: "unavailable", detail: "postgres"})
+
+      true ->
+        json(conn, %{status: "ready"})
     end
   end
 end

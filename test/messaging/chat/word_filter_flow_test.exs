@@ -7,6 +7,11 @@ defmodule Messaging.Chat.WordFilterFlowTest do
 
   setup :verify_on_exit!
 
+  setup do
+    Messaging.OutboxHelper.stub_outbox()
+    :ok
+  end
+
   @channel_id "chan-1"
   @server_id "srv-1"
   @user_id "user-1"

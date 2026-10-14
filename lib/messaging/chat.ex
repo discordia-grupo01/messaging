@@ -16,6 +16,8 @@ defmodule Messaging.Chat do
 
   alias Messaging.Events.MentionNotifier
   alias Messaging.Log
+  alias Messaging.Outbox
+  alias Messaging.Outbox.Applier
   alias Messaging.Storage
   alias Messaging.UUID
 
@@ -682,7 +684,7 @@ defmodule Messaging.Chat do
         attachments: Enum.map(attachment_docs, &Attachment.embed/1)
       }
 
-      insert_message(message, mentions, attachment_ids)
+      insert_message(message, mentions, attachment_ids, channel)
     end
   end
 
@@ -691,7 +693,7 @@ defmodule Messaging.Chat do
   defp claim_attachments(ids, user_id, %ChannelCache{channel_id: channel_id}, message_id),
     do: repo().claim_attachments(ids, user_id, channel_id, message_id)
 
-  defp insert_message(%Message{} = message, mentions, attachment_ids) do
+  defp insert_message(%Message{} = message, mentions, attachment_ids, %ChannelCache{} = channel) do
     doc =
       %{
         "_id" => message.id,
@@ -704,27 +706,80 @@ defmodule Messaging.Chat do
       |> with_mention_fields(message, mentions)
       |> with_attachment_field(message)
 
-    case repo().insert_message(doc) do
-      {:ok, _doc} ->
-        Logger.info("message_sent",
-          channel_id: message.channel_id,
-          user_id: message.user_id,
-          message_id: message.id,
-          attachments: length(message.attachments)
-        )
+    case Outbox.enqueue(created_entries(message, doc, channel)) do
+      :ok ->
+        store_message(message, doc)
 
-        {:ok, message}
-
-      {:error, reason} = error ->
-        Logger.error("message_insert_failed",
+      {:error, reason} ->
+        Logger.error("message_enqueue_failed",
           channel_id: message.channel_id,
           reason: Log.reason(reason)
         )
 
         if attachment_ids != [], do: repo().release_attachments(message.id)
-        error
+        {:error, :messages_unavailable}
     end
   end
+
+  defp store_message(%Message{} = message, doc) do
+    case repo().insert_message(doc) do
+      {:ok, _doc} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("message_insert_deferred",
+          channel_id: message.channel_id,
+          message_id: message.id,
+          reason: Log.reason(reason)
+        )
+    end
+
+    Logger.info("message_sent",
+      channel_id: message.channel_id,
+      user_id: message.user_id,
+      message_id: message.id,
+      attachments: length(message.attachments)
+    )
+
+    {:ok, message}
+  end
+
+  defp created_entries(%Message{} = message, doc, %ChannelCache{} = channel) do
+    payload = Message.to_api(message)
+
+    created = %{
+      event: "new_message",
+      topic: "channel:" <> message.channel_id,
+      payload: payload,
+      apply: %{"op" => "insert_message", "doc" => Applier.encode_dates(doc)},
+      message_id: message.id,
+      channel_id: message.channel_id
+    }
+
+    [created | direct_entries(channel, message, payload)]
+  end
+
+  defp direct_entries(
+         %ChannelCache{kind: "dm", participants: participants} = channel,
+         message,
+         payload
+       ) do
+    for user_id <- participants do
+      %{
+        event: "new_dm",
+        topic: "user:" <> user_id,
+        payload: %{
+          "conversation_id" => channel.channel_id,
+          "partner_id" => Enum.find(participants, &(&1 != user_id)),
+          "message" => payload
+        },
+        message_id: message.id,
+        channel_id: message.channel_id
+      }
+    end
+  end
+
+  defp direct_entries(%ChannelCache{}, _message, _payload), do: []
 
   defp with_attachment_field(doc, %Message{attachments: []}), do: doc
 
@@ -770,6 +825,41 @@ defmodule Messaging.Chat do
   defp apply_delete(%Message{} = message, actor_id) do
     deleted_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
+    with :ok <- enqueue_deleted(message, deleted_at) do
+      write_delete(message, actor_id, deleted_at)
+    end
+  end
+
+  defp enqueue_deleted(%Message{} = message, deleted_at) do
+    entry = %{
+      event: "message_deleted",
+      topic: "channel:" <> message.channel_id,
+      payload: Message.to_deleted_api(%{message | deleted_at: deleted_at}),
+      apply: %{
+        "op" => "delete_message",
+        "id" => message.id,
+        "channel_id" => message.channel_id,
+        "deleted_at" => Message.iso8601_z(deleted_at)
+      },
+      message_id: message.id,
+      channel_id: message.channel_id
+    }
+
+    enqueue_or_unavailable([entry], message.channel_id)
+  end
+
+  defp enqueue_or_unavailable(entries, channel_id) do
+    case Outbox.enqueue(entries) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("message_enqueue_failed", channel_id: channel_id, reason: Log.reason(reason))
+        {:error, :messages_unavailable}
+    end
+  end
+
+  defp write_delete(%Message{} = message, actor_id, deleted_at) do
     case repo().delete_message(message.id, message.channel_id, deleted_at) do
       {:ok, nil} ->
         {:error, :message_not_found}
@@ -787,13 +877,14 @@ defmodule Messaging.Chat do
         forget_attachments(message)
         {:ok, Message.from_doc(doc)}
 
-      {:error, reason} = error ->
-        Logger.error("message_delete_failed",
+      {:error, reason} ->
+        Logger.warning("message_delete_deferred",
           channel_id: message.channel_id,
+          message_id: message.id,
           reason: Log.reason(reason)
         )
 
-        error
+        {:ok, %{message | content: "", attachments: [], deleted_at: deleted_at}}
     end
   end
 
@@ -855,14 +946,59 @@ defmodule Messaging.Chat do
 
   defp update_content(%Message{} = message, new_content, mentions) do
     edited_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+    mention_fields = Mentions.message_fields(mentions)
 
+    with :ok <- enqueue_updated(message, new_content, edited_at, mentions, mention_fields) do
+      write_update(message, new_content, edited_at, mentions, mention_fields)
+    end
+  end
+
+  defp enqueue_updated(%Message{} = message, new_content, edited_at, mentions, mention_fields) do
+    edited = edited_message(message, new_content, edited_at, mentions)
+
+    fields =
+      Map.merge(mention_fields, %{
+        "content" => new_content,
+        "edited_at" => Message.iso8601_z(edited_at),
+        "changed_at" => Message.iso8601_z(edited_at)
+      })
+
+    entry = %{
+      event: "message_updated",
+      topic: "channel:" <> message.channel_id,
+      payload: Message.to_api(edited),
+      apply: %{
+        "op" => "update_message",
+        "id" => message.id,
+        "channel_id" => message.channel_id,
+        "fields" => fields
+      },
+      message_id: message.id,
+      channel_id: message.channel_id
+    }
+
+    enqueue_or_unavailable([entry], message.channel_id)
+  end
+
+  defp edited_message(%Message{} = message, new_content, edited_at, mentions) do
+    %{
+      message
+      | content: new_content,
+        edited_at: edited_at,
+        mentions: mentions.user_ids,
+        mention_roles: mentions.role_ids,
+        mention_everyone: mentions.everyone
+    }
+  end
+
+  defp write_update(%Message{} = message, new_content, edited_at, mentions, mention_fields) do
     case repo().update_message(
            message.id,
            message.channel_id,
            message.user_id,
            new_content,
            edited_at,
-           Mentions.message_fields(mentions)
+           mention_fields
          ) do
       {:ok, nil} ->
         {:error, :message_not_found}
@@ -878,13 +1014,14 @@ defmodule Messaging.Chat do
         sync_mentions(message, edited, mentions.recipient_ids)
         {:ok, edited, :updated}
 
-      {:error, reason} = error ->
-        Logger.error("message_update_failed",
+      {:error, reason} ->
+        Logger.warning("message_update_deferred",
           channel_id: message.channel_id,
+          message_id: message.id,
           reason: Log.reason(reason)
         )
 
-        error
+        {:ok, edited_message(message, new_content, edited_at, mentions), :updated}
     end
   end
 
