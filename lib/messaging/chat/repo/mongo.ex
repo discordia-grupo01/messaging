@@ -103,6 +103,30 @@ defmodule Messaging.Chat.Repo.Mongo do
   def get_message(id), do: Mongo.find_one(@conn, @messages, %{"_id" => id})
 
   @impl true
+  def upsert_message(%{"_id" => id} = doc) do
+    case Mongo.update_one(
+           @conn,
+           @messages,
+           %{"_id" => id},
+           %{"$setOnInsert" => Map.delete(doc, "_id")},
+           upsert: true
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def apply_message_update(id, channel_id, fields) do
+    filter = live(%{"_id" => id, "channel_id" => channel_id})
+
+    case Mongo.update_one(@conn, @messages, filter, %{"$set" => fields}) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
   def list_changes(channel_id, %DateTime{} = since, limit) do
     filter = %{"channel_id" => channel_id, "changed_at" => %{"$gte" => since}}
 
