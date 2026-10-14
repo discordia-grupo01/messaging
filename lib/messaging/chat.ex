@@ -1,6 +1,8 @@
 defmodule Messaging.Chat do
   alias Messaging.Chat.{
     Access,
+    Attachment,
+    AttachmentCleaner,
     Blocks,
     ChannelCache,
     Conversation,
@@ -14,6 +16,7 @@ defmodule Messaging.Chat do
 
   alias Messaging.Events.MentionNotifier
   alias Messaging.Log
+  alias Messaging.Storage
   alias Messaging.UUID
 
   require Logger
@@ -30,25 +33,30 @@ defmodule Messaging.Chat do
   defp repo, do: Application.get_env(:messaging, :chat_repo, Messaging.Chat.Repo.Mongo)
 
   @type send_message_params :: %{
-          channel_id: String.t(),
-          user_id: String.t(),
-          content: String.t()
+          required(:channel_id) => String.t(),
+          required(:user_id) => String.t(),
+          required(:content) => String.t(),
+          optional(:attachment_ids) => term()
         }
 
   @spec send_message(send_message_params()) ::
           {:ok, Message.t()} | {:error, MessagingWeb.ApiError.reason()}
-  def send_message(%{
-        channel_id: channel_id,
-        user_id: user_id,
-        content: content
-      }) do
+  def send_message(
+        %{
+          channel_id: channel_id,
+          user_id: user_id,
+          content: content
+        } = params
+      ) do
     with {:ok, channel} <- fetch_text_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
-         {:ok, trimmed} <- validate_content(content),
+         {:ok, attachment_ids} <- validate_attachment_ids(Map.get(params, :attachment_ids)),
+         {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          {:ok, true} <- check_permission(channel, user_id),
          :ok <- check_word_filter(channel, trimmed),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
-         {:ok, message} <- persist_message(channel, user_id, trimmed, mentions) do
+         {:ok, message} <-
+           persist_message(channel, user_id, trimmed, mentions, attachment_ids) do
       record_mentions(message, mentions.recipient_ids)
       {:ok, message}
     else
@@ -77,7 +85,7 @@ defmodule Messaging.Chat do
          {:ok, true} <- check_permission(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- require_author(message, user_id),
-         {:ok, trimmed} <- validate_content(content) do
+         {:ok, trimmed} <- validate_content(content, message.attachments != []) do
       apply_edit(channel, message, trimmed, user_id)
     else
       {:ok, false} -> {:error, :forbidden}
@@ -206,25 +214,123 @@ defmodule Messaging.Chat do
   end
 
   @type send_direct_params :: %{
-          sender_id: String.t(),
-          recipient_id: term(),
-          content: String.t()
+          required(:sender_id) => String.t(),
+          required(:recipient_id) => term(),
+          required(:content) => String.t(),
+          optional(:attachment_ids) => term()
         }
 
   @spec send_direct_message(send_direct_params()) ::
           {:ok, ChannelCache.t(), Message.t()} | {:error, MessagingWeb.ApiError.reason()}
-  def send_direct_message(%{
-        sender_id: sender_id,
-        recipient_id: recipient_id,
-        content: content
-      }) do
+  def send_direct_message(
+        %{
+          sender_id: sender_id,
+          recipient_id: recipient_id,
+          content: content
+        } = params
+      ) do
     with :ok <- validate_recipient(sender_id, recipient_id),
-         {:ok, trimmed} <- validate_content(content),
+         {:ok, attachment_ids} <- validate_attachment_ids(Map.get(params, :attachment_ids)),
+         {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          :ok <- Blocks.check_contact(sender_id, recipient_id),
          {:ok, channel} <- ensure_conversation(sender_id, recipient_id),
-         {:ok, message} <- persist_message(channel, sender_id, trimmed) do
+         {:ok, message} <-
+           persist_message(channel, sender_id, trimmed, Mentions.none(), attachment_ids) do
       record_last_message(channel, message)
       {:ok, channel, message}
+    end
+  end
+
+  @type upload_target :: {:channel, String.t()} | {:direct, term()}
+
+  @spec prepare_upload(upload_target(), String.t()) ::
+          {:ok, String.t()} | {:error, MessagingWeb.ApiError.reason()}
+  def prepare_upload({:channel, channel_id}, user_id) do
+    with {:ok, channel} <- fetch_text_channel(channel_id),
+         :ok <- ensure_not_muted(channel, user_id),
+         {:ok, true} <- check_permission(channel, user_id) do
+      {:ok, channel.channel_id}
+    else
+      {:ok, false} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def prepare_upload({:direct, recipient_id}, user_id) do
+    with :ok <- validate_recipient(user_id, recipient_id),
+         :ok <- Blocks.check_contact(user_id, recipient_id),
+         :ok <- verify_recipient(recipient_id) do
+      {:ok, Conversation.id(user_id, recipient_id)}
+    end
+  end
+
+  @spec store_attachment(String.t(), String.t(), term(), binary()) ::
+          {:ok, Attachment.t()} | {:error, MessagingWeb.ApiError.reason()}
+  def store_attachment(channel_id, user_id, filename, binary) do
+    with {:ok, detected} <- Attachment.validate(binary),
+         :ok <- ensure_pending_room(user_id) do
+      id = UUID.generate_v7()
+
+      with {:ok, %{url: url, path: path}} <-
+             put_object(Attachment.object_key(channel_id, id), binary, detected.content_type) do
+        attachment = %Attachment{
+          id: id,
+          channel_id: channel_id,
+          user_id: user_id,
+          name: Attachment.sanitize_name(filename, detected.extension),
+          content_type: detected.content_type,
+          size: byte_size(binary),
+          path: path,
+          url: url
+        }
+
+        save_attachment(attachment)
+      end
+    end
+  end
+
+  defp ensure_pending_room(user_id) do
+    case repo().count_pending_attachments(user_id) do
+      {:ok, count} ->
+        if count < Attachment.max_pending_per_user(),
+          do: :ok,
+          else: {:error, :too_many_pending_attachments}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp put_object(key, binary, content_type) do
+    case Storage.put(key, binary, content_type) do
+      {:ok, %{url: _url, path: _path}} = ok ->
+        ok
+
+      {:error, reason} ->
+        Logger.error("attachment_upload_failed", reason: Log.reason(reason))
+        {:error, :storage_unavailable}
+    end
+  end
+
+  defp save_attachment(%Attachment{} = attachment) do
+    uploaded_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+    case repo().insert_attachment(Attachment.to_doc(attachment, uploaded_at)) do
+      :ok ->
+        Logger.info("attachment_uploaded",
+          channel_id: attachment.channel_id,
+          user_id: attachment.user_id,
+          attachment_id: attachment.id,
+          content_type: attachment.content_type,
+          size: attachment.size
+        )
+
+        {:ok, %{attachment | uploaded_at: uploaded_at}}
+
+      {:error, reason} = error ->
+        Logger.error("attachment_insert_failed", reason: Log.reason(reason))
+        _ = Storage.delete([attachment.path])
+        error
     end
   end
 
@@ -448,10 +554,23 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp validate_content(content) do
+  defp validate_attachment_ids(nil), do: {:ok, []}
+
+  defp validate_attachment_ids(ids) when is_list(ids) do
+    cond do
+      not Enum.all?(ids, &(is_binary(&1) and &1 != "")) -> {:error, :invalid_attachment}
+      length(Enum.uniq(ids)) > Attachment.max_per_message() -> {:error, :too_many_attachments}
+      true -> {:ok, Enum.uniq(ids)}
+    end
+  end
+
+  defp validate_attachment_ids(_other), do: {:error, :invalid_attachment}
+
+  defp validate_content(content, allow_empty?) do
     trimmed = content |> to_string() |> String.trim()
 
     cond do
+      trimmed == "" and allow_empty? -> {:ok, ""}
       trimmed == "" -> {:error, :empty_content}
       String.length(trimmed) > @max_message_length -> {:error, :message_too_long}
       true -> {:ok, trimmed}
@@ -540,19 +659,39 @@ defmodule Messaging.Chat do
     record_mentions(after_edit, recipient_ids)
   end
 
-  defp persist_message(%ChannelCache{} = channel, user_id, content, mentions \\ Mentions.none()) do
-    message = %Message{
-      id: UUID.generate_v7(),
-      channel_id: channel.channel_id,
-      server_id: channel.server_id,
-      user_id: user_id,
-      content: content,
-      inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond),
-      mentions: mentions.user_ids,
-      mention_roles: mentions.role_ids,
-      mention_everyone: mentions.everyone
-    }
+  defp persist_message(
+         %ChannelCache{} = channel,
+         user_id,
+         content,
+         mentions,
+         attachment_ids
+       ) do
+    id = UUID.generate_v7()
 
+    with {:ok, attachment_docs} <- claim_attachments(attachment_ids, user_id, channel, id) do
+      message = %Message{
+        id: id,
+        channel_id: channel.channel_id,
+        server_id: channel.server_id,
+        user_id: user_id,
+        content: content,
+        inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond),
+        mentions: mentions.user_ids,
+        mention_roles: mentions.role_ids,
+        mention_everyone: mentions.everyone,
+        attachments: Enum.map(attachment_docs, &Attachment.embed/1)
+      }
+
+      insert_message(message, mentions, attachment_ids)
+    end
+  end
+
+  defp claim_attachments([], _user_id, _channel, _message_id), do: {:ok, []}
+
+  defp claim_attachments(ids, user_id, %ChannelCache{channel_id: channel_id}, message_id),
+    do: repo().claim_attachments(ids, user_id, channel_id, message_id)
+
+  defp insert_message(%Message{} = message, mentions, attachment_ids) do
     doc =
       %{
         "_id" => message.id,
@@ -563,13 +702,15 @@ defmodule Messaging.Chat do
         "inserted_at" => message.inserted_at
       }
       |> with_mention_fields(message, mentions)
+      |> with_attachment_field(message)
 
     case repo().insert_message(doc) do
       {:ok, _doc} ->
         Logger.info("message_sent",
           channel_id: message.channel_id,
-          user_id: user_id,
-          message_id: message.id
+          user_id: message.user_id,
+          message_id: message.id,
+          attachments: length(message.attachments)
         )
 
         {:ok, message}
@@ -580,9 +721,15 @@ defmodule Messaging.Chat do
           reason: Log.reason(reason)
         )
 
+        if attachment_ids != [], do: repo().release_attachments(message.id)
         error
     end
   end
+
+  defp with_attachment_field(doc, %Message{attachments: []}), do: doc
+
+  defp with_attachment_field(doc, %Message{attachments: attachments}),
+    do: Map.put(doc, "attachments", attachments)
 
   # Only messages with mentions carry the fields, so the rest stay as before.
   defp with_mention_fields(doc, message, mentions) do
@@ -637,6 +784,7 @@ defmodule Messaging.Chat do
 
         forget_mentions(message)
         forget_reactions(message)
+        forget_attachments(message)
         {:ok, Message.from_doc(doc)}
 
       {:error, reason} = error ->
@@ -662,6 +810,23 @@ defmodule Messaging.Chat do
             reason: Log.reason(reason)
           )
       end
+    end
+  end
+
+  defp forget_attachments(%Message{attachments: []}), do: :ok
+
+  defp forget_attachments(%Message{} = message) do
+    at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+    case repo().orphan_message_attachments(message.id, at) do
+      :ok ->
+        AttachmentCleaner.trigger()
+
+      {:error, reason} ->
+        Logger.warning("attachments_orphan_failed",
+          message_id: message.id,
+          reason: Log.reason(reason)
+        )
     end
   end
 

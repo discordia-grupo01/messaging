@@ -61,6 +61,84 @@ defmodule MessagingWeb.RoomChannelTest do
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
   end
 
+  describe "attachments" do
+    defp attachment_doc(id),
+      do: %{
+        "_id" => id,
+        "url" => "https://cdn.test/#{id}.png",
+        "name" => "#{id}.png",
+        "content_type" => "image/png",
+        "size" => 10
+      }
+
+    test "CA1: a message with attachments is delivered to everyone, with the files next to it" do
+      stub(Messaging.Chat.RepoMock, :claim_attachments, fn ["a1"], "user-a", @channel_id, _id ->
+        {:ok, [attachment_doc("a1")]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      sender = join_socket("user-a")
+      receiver = join_socket("user-b")
+      {:ok, _reply, sender} = subscribe_and_join(sender, RoomChannel, "channel:" <> @channel_id)
+
+      {:ok, _reply, _receiver} =
+        subscribe_and_join(receiver, RoomChannel, "channel:" <> @channel_id)
+
+      ref =
+        push(sender, "new_message", %{"content" => "mirá esto", "attachment_ids" => ["a1"]})
+
+      assert_reply ref, :ok
+
+      assert_push "new_message", %{
+        "content" => "mirá esto",
+        "attachments" => [
+          %{"id" => "a1", "url" => "https://cdn.test/a1.png", "content_type" => "image/png"}
+        ]
+      }
+    end
+
+    test "a message may carry only the file, with no content key at all" do
+      stub(Messaging.Chat.RepoMock, :claim_attachments, fn _, _, _, _ ->
+        {:ok, [attachment_doc("a1")]}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      socket = join_socket("user-a")
+      {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+
+      ref = push(socket, "new_message", %{"attachment_ids" => ["a1"]})
+      assert_reply ref, :ok
+      assert_push "new_message", %{"content" => "", "attachments" => [_one]}
+    end
+
+    test "an attachment that cannot be used is refused and nobody receives anything" do
+      stub(Messaging.Chat.RepoMock, :claim_attachments, fn _, _, _, _ ->
+        {:error, :invalid_attachment}
+      end)
+
+      socket = join_socket("user-a")
+      {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+
+      ref = push(socket, "new_message", %{"content" => "x", "attachment_ids" => ["alien"]})
+
+      assert_reply ref, :error, %{error: %{code: "INVALID_ATTACHMENT"}}
+      refute_push "new_message", _payload
+    end
+
+    test "attachment_ids that is not a list is an invalid attachment, and no content is an invalid payload" do
+      socket = join_socket("user-a")
+      {:ok, _reply, socket} = subscribe_and_join(socket, RoomChannel, "channel:" <> @channel_id)
+
+      ref = push(socket, "new_message", %{"content" => "x", "attachment_ids" => "a1"})
+      assert_reply ref, :error, %{error: %{code: "INVALID_ATTACHMENT"}}
+
+      ref = push(socket, "new_message", %{"attachment_ids" => "a1"})
+      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+    end
+  end
+
   test "a message with a banned word is rejected with the words, and nobody receives it" do
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn @server_id -> {:ok, ["tonto"]} end)
 

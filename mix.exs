@@ -31,6 +31,7 @@ defmodule Messaging.MixProject do
       {:cowlib, "~> 2.19.0", override: true},
       {:mongodb_driver, "~> 1.4"},
       {:amqp, "~> 3.3"},
+      {:req, "~> 0.5"},
       {:open_api_spex, "~> 3.21"},
       {:ymlr, "~> 5.0", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},

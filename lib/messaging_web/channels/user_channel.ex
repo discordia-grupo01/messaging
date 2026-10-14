@@ -7,6 +7,7 @@ defmodule MessagingWeb.UserChannel do
   alias Messaging.Events.Broadcaster
   alias Messaging.Log
   alias MessagingWeb.ApiError
+  alias MessagingWeb.MessagePayload
 
   @impl true
   def join("user:" <> user_id, _params, %{assigns: %{user_id: user_id}} = socket),
@@ -15,12 +16,26 @@ defmodule MessagingWeb.UserChannel do
   def join("user:" <> _other, _params, _socket), do: {:error, ApiError.payload(:forbidden)}
 
   @impl true
-  def handle_in("send_dm", %{"to" => recipient_id, "content" => content}, socket)
-      when is_binary(content) do
+  def handle_in("send_dm", %{"to" => recipient_id} = payload, socket) do
+    case MessagePayload.content(payload) do
+      {:ok, content} ->
+        send_direct(socket, recipient_id, content, Map.get(payload, "attachment_ids"))
+
+      :error ->
+        {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+    end
+  end
+
+  def handle_in("send_dm", _payload, socket) do
+    {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+  end
+
+  defp send_direct(socket, recipient_id, content, attachment_ids) do
     params = %{
       sender_id: socket.assigns.user_id,
       recipient_id: recipient_id,
-      content: content
+      content: content,
+      attachment_ids: attachment_ids
     }
 
     case Chat.send_direct_message(params) do
@@ -34,10 +49,6 @@ defmodule MessagingWeb.UserChannel do
       {:error, reason} ->
         {:reply, {:error, ApiError.payload(reason)}, socket}
     end
-  end
-
-  def handle_in("send_dm", _payload, socket) do
-    {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
   end
 
   defp publish_direct(%ChannelCache{} = channel, %Message{} = message) do
