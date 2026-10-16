@@ -11,7 +11,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
   use GenServer
   require Logger
 
-  alias Messaging.Events.{Audit, Backoff}
+  alias Messaging.Events.{Audit, Backoff, EventPublisher}
   alias Messaging.Log
   alias Messaging.Suspension
   alias Messaging.Suspension.Signature
@@ -173,6 +173,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
 
     case Suspension.apply_event(event.user_id, suspended, event.version) do
       {:ok, :applied} ->
+        if suspended, do: disconnect_sockets(event.user_id)
         audit(event.event_id, event.routing_key, payload, :processed, nil)
         :ack
 
@@ -188,6 +189,28 @@ defmodule Messaging.Events.AdminEventsConsumer do
         )
 
         :retry
+    end
+  end
+
+  # Cuts every open socket of the user in all the instances: the event goes through
+  # the broadcast fanout and each instance runs `Endpoint.broadcast!` locally, which
+  # Phoenix turns into the close of the sockets whose `id/1` matches the topic. If it
+  # is lost the socket is still stopped by the check in `handle_in` and in `Chat`.
+  defp disconnect_sockets(user_id) do
+    case EventPublisher.publish_event(
+           Messaging.UUID.generate(),
+           "user_socket:" <> user_id,
+           "disconnect",
+           %{}
+         ) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("admin_events_consumer_disconnect_failed",
+          user_id: user_id,
+          reason: Log.reason(reason)
+        )
     end
   end
 

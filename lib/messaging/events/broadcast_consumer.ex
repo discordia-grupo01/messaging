@@ -13,9 +13,10 @@ defmodule Messaging.Events.BroadcastConsumer do
     "reaction_updated",
     "new_dm",
     "mention",
-    "access_revoked"
+    "access_revoked",
+    "disconnect"
   ]
-  @topic_prefixes ["channel:", "user:"]
+  @topic_prefixes ["channel:", "user:", "user_socket:"]
   @queue_expires_ms 10 * 60 * 1000
   @message_ttl_ms 5 * 60 * 1000
 

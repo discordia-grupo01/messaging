@@ -4,6 +4,8 @@ mongo_url = System.get_env("MONGO_URL")
 if rabbitmq_url && mongo_url do
   defmodule Messaging.Events.AdminEventsConsumerTest do
     use ExUnit.Case, async: false
+    import ExUnit.CaptureLog
+    import Mox
 
     alias Messaging.Chat.Repo.Mongo, as: Repo
     alias Messaging.Suspension
@@ -14,7 +16,14 @@ if rabbitmq_url && mongo_url do
     @suspended "admin.user_suspended"
     @reactivated "admin.user_reactivated"
 
+    setup :set_mox_global
+    setup :verify_on_exit!
+
     setup do
+      stub(Messaging.EventPublisherMock, :publish_event, fn _id, _topic, _event, _payload ->
+        :ok
+      end)
+
       previous_repo = Application.get_env(:messaging, :chat_repo)
       Application.put_env(:messaging, :chat_repo, Repo)
       on_exit(fn -> Application.put_env(:messaging, :chat_repo, previous_repo) end)
@@ -59,6 +68,72 @@ if rabbitmq_url && mongo_url do
 
       assert wait_until(fn -> Suspension.suspended?(user) == {:ok, true} end)
       assert wait_until(fn -> match?(%{"status" => "processed"}, consumed(event.event_id)) end)
+    end
+
+    test "a suspension cuts the sockets of the user through the broadcast fanout", %{
+      chan: chan,
+      user: user
+    } do
+      test_pid = self()
+      topic = "user_socket:" <> user
+
+      expect(Messaging.EventPublisherMock, :publish_event, fn id, ^topic, "disconnect", %{} ->
+        send(test_pid, {:disconnect_published, id})
+        :ok
+      end)
+
+      publish(chan, @suspended, event(@suspended, user, 1))
+
+      assert_receive {:disconnect_published, id} when is_binary(id), 5_000
+    end
+
+    test "a reactivation, a repeated event and a rejected one cut nothing", %{
+      chan: chan,
+      user: user
+    } do
+      test_pid = self()
+
+      stub(Messaging.EventPublisherMock, :publish_event, fn _id, topic, event, _payload ->
+        send(test_pid, {:published, topic, event})
+        :ok
+      end)
+
+      publish(chan, @suspended, event(@suspended, user, 3))
+      assert_receive {:published, _topic, "disconnect"}, 5_000
+
+      repeated = event(@suspended, user, 3)
+      reactivation = event(@reactivated, user, 4)
+      forged = %{event(@suspended, user, 9) | signature: String.duplicate("0", 64)}
+      publish(chan, @suspended, repeated)
+      publish(chan, @reactivated, reactivation)
+      publish(chan, @suspended, forged)
+
+      for event <- [repeated, reactivation, forged] do
+        assert wait_until(fn -> consumed(event.event_id) != nil end)
+      end
+
+      refute_received {:published, _topic, _event}
+    end
+
+    test "if the fanout is down the suspension still holds and the event is acknowledged", %{
+      chan: chan,
+      user: user
+    } do
+      stub(Messaging.EventPublisherMock, :publish_event, fn _id, _topic, _event, _payload ->
+        {:error, :not_connected}
+      end)
+
+      event = event(@suspended, user, 1)
+
+      log =
+        capture_log(fn ->
+          publish(chan, @suspended, event)
+
+          assert wait_until(fn -> match?(%{"status" => "processed"}, consumed(event.event_id)) end)
+        end)
+
+      assert log =~ "admin_events_consumer_disconnect_failed"
+      assert Suspension.suspended?(user) == {:ok, true}
     end
 
     test "a reactivation lifts the suspension", %{chan: chan, user: user} do
