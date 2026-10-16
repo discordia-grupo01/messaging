@@ -18,6 +18,8 @@ if mongo_url do
           else: Application.delete_env(:messaging, :chat_repo)
       end)
 
+      Messaging.OutboxHelper.stub_outbox()
+
       {:ok, channel_id: "chan-" <> Messaging.UUID.generate()}
     end
 

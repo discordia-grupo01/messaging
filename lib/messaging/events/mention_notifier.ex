@@ -25,18 +25,16 @@ defmodule Messaging.Events.MentionNotifier do
       "message" => Message.to_api(message)
     }
 
-    Enum.each(user_ids, &publish(&1, payload, message.id))
-  end
+    events = Enum.map(user_ids, &{"user:" <> &1, @event, payload})
 
-  defp publish(user_id, payload, message_id) do
-    case Broadcaster.publish_to("user:" <> user_id, @event, payload) do
+    case Broadcaster.publish_many(events) do
       :ok ->
         :ok
 
       {:error, reason} ->
         Logger.warning("mention_broadcast_failed",
-          message_id: message_id,
-          user_id: user_id,
+          message_id: message.id,
+          users: length(user_ids),
           reason: Log.reason(reason)
         )
     end

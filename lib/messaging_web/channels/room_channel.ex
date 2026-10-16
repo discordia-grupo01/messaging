@@ -6,6 +6,7 @@ defmodule MessagingWeb.RoomChannel do
   alias Messaging.Chat.Message
   alias Messaging.Events.Broadcaster
   alias Messaging.Log
+  alias Messaging.Suspension
   alias MessagingWeb.ApiError
   alias MessagingWeb.MessagePayload
 
@@ -18,7 +19,8 @@ defmodule MessagingWeb.RoomChannel do
     user_id = socket.assigns.user_id
     last_message_id = Map.get(params, "last_message_id")
 
-    with :ok <- validate_cursor(last_message_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         :ok <- validate_cursor(last_message_id),
          {:ok, changes_since} <- parse_changes_since(Map.get(params, "changes_since")),
          {:ok, channel} <- Chat.channel_exists?(channel_id),
          {:ok, true} <- Chat.can_view_channel?(channel, user_id) do
@@ -61,7 +63,14 @@ defmodule MessagingWeb.RoomChannel do
   end
 
   @impl true
-  def handle_in("new_message", payload, socket) when is_map(payload) do
+  def handle_in(event, payload, socket) do
+    case Suspension.ensure_active(socket.assigns.user_id) do
+      :ok -> dispatch(event, payload, socket)
+      {:error, reason} -> {:reply, {:error, ApiError.payload(reason)}, socket}
+    end
+  end
+
+  defp dispatch("new_message", payload, socket) when is_map(payload) do
     case MessagePayload.content(payload) do
       {:ok, content} ->
         params = %{
@@ -72,8 +81,7 @@ defmodule MessagingWeb.RoomChannel do
         }
 
         case Chat.send_message(params) do
-          {:ok, message} ->
-            :ok = Broadcaster.publish("new_message", Message.to_api(message))
+          {:ok, _message} ->
             {:reply, :ok, socket}
 
           {:error, reason} ->
@@ -85,7 +93,7 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
-  def handle_in("edit_message", %{"id" => message_id, "content" => content}, socket) do
+  defp dispatch("edit_message", %{"id" => message_id, "content" => content}, socket) do
     params = %{
       channel_id: socket.assigns.channel_id,
       message_id: message_id,
@@ -94,11 +102,7 @@ defmodule MessagingWeb.RoomChannel do
     }
 
     case Chat.edit_message(params) do
-      {:ok, message, :updated} ->
-        publish_update(message)
-        {:reply, {:ok, Message.to_api(message)}, socket}
-
-      {:ok, message, :unchanged} ->
+      {:ok, message, _change} ->
         {:reply, {:ok, Message.to_api(message)}, socket}
 
       {:error, reason} ->
@@ -106,7 +110,7 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
-  def handle_in("delete_message", %{"id" => message_id}, socket) do
+  defp dispatch("delete_message", %{"id" => message_id}, socket) do
     params = %{
       channel_id: socket.assigns.channel_id,
       message_id: message_id,
@@ -114,8 +118,7 @@ defmodule MessagingWeb.RoomChannel do
     }
 
     case Chat.delete_message(params) do
-      {:ok, message} ->
-        publish_deletion(message)
+      {:ok, _message} ->
         {:reply, :ok, socket}
 
       {:error, reason} ->
@@ -123,8 +126,8 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
-  def handle_in(event, %{"message_id" => message_id, "emoji" => emoji}, socket)
-      when event in ["add_reaction", "remove_reaction"] do
+  defp dispatch(event, %{"message_id" => message_id, "emoji" => emoji}, socket)
+       when event in ["add_reaction", "remove_reaction"] do
     params = %{
       channel_id: socket.assigns.channel_id,
       message_id: message_id,
@@ -154,41 +157,15 @@ defmodule MessagingWeb.RoomChannel do
     end
   end
 
-  def handle_in(event, _payload, socket)
-      when event in [
-             "new_message",
-             "edit_message",
-             "delete_message",
-             "add_reaction",
-             "remove_reaction"
-           ] do
+  defp dispatch(event, _payload, socket)
+       when event in [
+              "new_message",
+              "edit_message",
+              "delete_message",
+              "add_reaction",
+              "remove_reaction"
+            ] do
     {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
-  end
-
-  defp publish_update(message) do
-    case Broadcaster.publish("message_updated", Message.to_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_updated_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
-  end
-
-  defp publish_deletion(message) do
-    case Broadcaster.publish("message_deleted", Message.to_deleted_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_deleted_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
   end
 
   defp publish_reaction(reaction, user_id, action) do

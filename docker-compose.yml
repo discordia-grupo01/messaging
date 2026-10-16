@@ -7,10 +7,46 @@ services:
     environment:
       MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/messaging_dev}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_SCHEMA: public
+      DATABASE_SSLMODE: disable
     depends_on:
       mongo:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
       rabbitmq:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-discordia_messaging}
+      POSTGRES_USER: ${DATABASE_USER:-discordia}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-discordia}
+    ports:
+      - "${DATABASE_PORT:-5435}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-discordia} -d ${DATABASE_NAME:-discordia_messaging}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrations:
+    image: migrate/migrate
+    command:
+      - -path=/migrations
+      - -database=postgres://${DATABASE_USER:-discordia}:${DATABASE_PASSWORD:-discordia}@postgres:5432/${DATABASE_NAME:-discordia_messaging}?sslmode=disable
+      - up
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
         condition: service_healthy
 
   mongo:
@@ -40,4 +76,5 @@ services:
 
 volumes:
   mongo_data:
+  postgres_data:
   rabbitmq_data:

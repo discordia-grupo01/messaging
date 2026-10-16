@@ -64,6 +64,21 @@ if mongo_url do
                })
     end
 
+    test "records an event whose signature did not verify" do
+      event_id = Messaging.UUID.generate()
+
+      :ok =
+        Audit.record(%{
+          event_id: event_id,
+          routing_key: "admin.user_suspended",
+          raw_body: "{}",
+          status: :discarded_invalid_signature,
+          error: "invalid signature"
+        })
+
+      assert %{"status" => "discarded_invalid_signature"} = fetch(event_id)
+    end
+
     defp fetch(event_id),
       do: Mongo.find_one(Messaging.Mongo, "consumed_events", %{"_id" => event_id})
   end

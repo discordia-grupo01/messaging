@@ -15,6 +15,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @replica_overrides "replica_overrides"
   @replica_users "replica_users"
   @replica_word_filters "replica_word_filters"
+  @suspended_users "suspended_users"
   @tombstone_ttl_seconds 7 * 24 * 60 * 60
 
   @impl true
@@ -101,6 +102,30 @@ defmodule Messaging.Chat.Repo.Mongo do
 
   @impl true
   def get_message(id), do: Mongo.find_one(@conn, @messages, %{"_id" => id})
+
+  @impl true
+  def upsert_message(%{"_id" => id} = doc) do
+    case Mongo.update_one(
+           @conn,
+           @messages,
+           %{"_id" => id},
+           %{"$setOnInsert" => Map.delete(doc, "_id")},
+           upsert: true
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def apply_message_update(id, channel_id, fields) do
+    filter = live(%{"_id" => id, "channel_id" => channel_id})
+
+    case Mongo.update_one(@conn, @messages, filter, %{"$set" => fields}) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @impl true
   def list_changes(channel_id, %DateTime{} = since, limit) do
@@ -635,6 +660,33 @@ defmodule Messaging.Chat.Repo.Mongo do
          ) do
       {:ok, _result} -> {:ok, :applied}
       {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def apply_suspension(user_id, suspended, version) do
+    filter = %{"_id" => user_id, "version" => %{"$lt" => version}}
+
+    update = %{
+      "$set" => %{
+        "suspended" => suspended,
+        "version" => version,
+        "updated_at" => DateTime.utc_now()
+      }
+    }
+
+    case Mongo.update_one(@conn, @suspended_users, filter, update, upsert: true) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def suspended?(user_id) do
+    case Mongo.find_one(@conn, @suspended_users, %{"_id" => user_id}) do
+      %{"suspended" => suspended} -> suspended
+      nil -> false
+      {:error, _reason} = error -> error
     end
   end
 

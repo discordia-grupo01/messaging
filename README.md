@@ -9,12 +9,13 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
 
 ## Stack
 - Lenguaje: Elixir / Phoenix (Channels para WS, controllers para REST)
-- BDD: MongoDB (`mongodb_driver`)
+- BDD: MongoDB (`mongodb_driver`) para mensajes, conversaciones, bloqueos, menciones y la
+  réplica local; **Postgres** (`postgrex`, Supabase en producción) solo para el outbox
 - Event bus: RabbitMQ (`amqp`) -- tanto para consumir eventos de dominio de
   `discordia.events` como para la propagación entre instancias (ver ADR más abajo)
 - Auth: Kong valida el JWT; `messaging` confía y solo lee el claim `sub` del
   payload (sin verificar la firma, igual que `servers`)
-- HTTP client: `req` (llamada a `servers` para el chequeo de permisos)
+- HTTP client: `req` (solo para subir y borrar archivos en Cloudinary)
 - OpenAPI: `open_api_spex`, generado automáticamente desde las anotaciones
   `operation` de los controllers
 
@@ -45,8 +46,12 @@ pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
   registrado no existe para `messaging` hasta que llega su evento (unos segundos).
 - **Propagación entre instancias**: RabbitMQ, exchange fanout propio
   `messaging.broadcast` (`Messaging.Events.BroadcastPublisher`/
-  `BroadcastConsumer`), separado de `discordia.events`
-  
+  `BroadcastConsumer`), separado de `discordia.events`. Cada instancia tiene su propia cola
+  **durable** (`messaging.broadcast.<id>`) que vence a los 10 minutos sin consumidor y
+  descarta mensajes de más de 5, así que si RabbitMQ se reinicia o la instancia se
+  reconecta tarde, lo publicado mientras tanto la espera. Todo lo que se publica sale del
+  outbox (ver "Outbox").
+
 ## Eventos que consume
 - `servers.channel_created` -- upsert en la caché local de canales. Se descarta si
   llega después de borrarse ese canal o su servidor.
@@ -154,10 +159,116 @@ Definidos en
 documentados en
 [`docs/asyncapi/channels.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/channels.yaml).
 
+## Usuarios suspendidos
+Cuando el staff suspende una cuenta, `discordia-admin` publica `admin.user_suspended` (y
+`admin.user_reactivated` al levantarla). Como en Discord, **un suspendido no puede hacer nada**
+en mensajería: ni enviar, editar ni borrar mensajes, ni reaccionar, ni adjuntar archivos, ni
+mandar DM, ni leer su historial, ni pedir tickets de socket ni abrir o mantener sockets. Sus
+mensajes anteriores siguen visibles para los demás.
+
+- **Consumidor.** `Messaging.Events.AdminEventsConsumer` lee la cola durable
+  `messaging.admin_events` (ack manual, una sola instancia recibe cada evento). Verifica la firma
+  `HMAC-SHA256(ADMIN_EVENTS_HMAC_SECRET, texto)` en hexadecimal minúsculas, donde el texto son
+  `routing_key`, `event_id`, `user_id`, `version` y `occurred_at` unidos por saltos de línea, con
+  `occurred_at` tal cual llegó (admin lo firma en UTC). Sin firma o con firma
+  inválida (o de otra routing key) el evento **no cambia nada**: se descarta sin reencolar, se
+  loguea `admin_events_consumer_invalid_signature` y queda en `consumed_events` como
+  `discarded_invalid_signature`.
+- **Estado.** Colección Mongo `suspended_users`: `{_id: user_id, suspended, version, updated_at}`.
+  Un evento se aplica solo si su `version` es mayor a la guardada, así que los duplicados, los
+  reordenados y los viejos no cambian nada (`ignored_stale`). Vive en Mongo, no en memoria:
+  reiniciar no pierde las suspensiones. `Messaging.Suspension.suspended?/1` lo lee con una caché
+  ETS de 5 s que se invalida al aplicar un evento.
+- **Rechazo en capas.** El plug `Authenticate` responde `403 ACCOUNT_SUSPENDED` en toda la API
+  REST; `UserSocket.connect` rechaza el ticket (aunque se haya emitido antes de la suspensión);
+  `join` y `handle_in` de `RoomChannel` y `UserChannel` responden el mismo error; y las
+  escrituras de `Messaging.Chat` lo verifican, así que el bloqueo vale por cualquier camino.
+- **Corte de sockets abiertos.** Al suspender, el consumidor publica `disconnect` por el
+  fanout `messaging.broadcast` al topic `user_socket:<user_id>` (el `id/1` de `UserSocket`) y cada
+  instancia hace el `Endpoint.broadcast!` local: Phoenix cierra los sockets de ese usuario
+  (`1001`), en **todas** las instancias. Si el aviso se perdiera, la siguiente acción igual
+  queda frenada por los chequeos de arriba.
+- **Si no se puede leer el estado** (Mongo caído) no se deja pasar a nadie: la API responde
+  `503 SUSPENSION_UNAVAILABLE`, el socket se rechaza y `Chat` devuelve el mismo error.
+- **Reactivar** (evento con `version` mayor) devuelve todas las capacidades.
+- **Arranque.** `ADMIN_EVENTS_HMAC_SECRET` tiene que ser el mismo valor que en admin. Si está
+  vacía, el consumidor **no arranca** y se loguea `admin_events_consumer_not_started`: nunca se
+  aceptan eventos que no se pueden verificar. Si `messaging` se despliega con la cola vacía y ya
+  había suspendidos, hay que correr `make republish-suspensions` en `discordia-admin` una vez.
+
+| Variable | Qué es |
+|---|---|
+| `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
+
 ## Eventos que publica
 Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
 detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
-dominio para otros servicios.
+dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
+`message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
+`access_revoked`, y todo sale por el outbox. La excepción es `disconnect` (corte de los
+sockets de un usuario suspendido, ver "Usuarios suspendidos"), que sale directo al fanout.
+
+## Outbox
+Antes, guardar un mensaje en Mongo y avisarle a las demás instancias por RabbitMQ eran dos
+pasos sueltos: si el proceso moría, o RabbitMQ no respondía, entre uno y otro, el aviso se
+perdía (y un fallo de RabbitMQ al enviar hasta cerraba el canal). Ahora el aviso queda
+anotado primero en Postgres y un poller lo publica.
+
+```
+enviar mensaje ──▶ 1. anota el evento en Postgres (outbox_events)   ← si falla: MESSAGES_UNAVAILABLE (503)
+                   2. escribe el mensaje en Mongo
+                   3. responde OK al cliente
+poller (cada 1 s, o apenas se anota) ──▶ completa Mongo si hace falta ──▶ publica en RabbitMQ
+                                         ──▶ espera la confirmación del broker ──▶ marca publicado
+```
+
+- **Qué pasa si algo se corta.** Proceso muerto entre 1 y 2: el poller ve la fila pendiente,
+  hace el upsert del mensaje en Mongo (idempotente) y lo publica. RabbitMQ caído: los mensajes
+  se siguen aceptando, quedan pendientes y salen en orden cuando vuelve (sin gastar
+  reintentos). Mongo caído después de anotar: el mensaje ya está aceptado y el poller lo
+  completa. Postgres caído: no se acepta el mensaje (`503 MESSAGES_UNAVAILABLE`) y no queda
+  nada a medias; `/readyz` responde 503 con `detail: postgres`.
+- **Garantía: al menos una vez.** Si el proceso muere justo entre publicar y marcar, el evento
+  se publica dos veces con el mismo `id`. Los clientes deduplican por el `id` del mensaje; el
+  servidor no guarda estado en memoria para esto.
+- **Varias instancias.** Cada poller toma un lote con `FOR UPDATE SKIP LOCKED`, así que dos
+  instancias nunca toman la misma fila. Dos eventos del mismo mensaje (editar, borrar) nunca
+  salen juntos: el segundo espera a que el primero esté publicado, así llegan en orden.
+- **Qué se guarda.** Tabla `outbox_events` (`migrations/0001_outbox_events.up.sql`): `id`
+  (UUIDv7), `event`, `topic`, `payload` y `apply` (JSONB), `message_id`, `channel_id`,
+  `created_at`, `published_at`, `attempts` y `last_error`. **Las filas no se borran** (auditoría).
+  Al publicar se vacían `payload` y `apply`, así el texto de los mensajes no queda en Postgres;
+  quedan el tipo de evento, los ids, las fechas, los intentos y el último error.
+- **Reintentos.** Un RabbitMQ que no responde o no confirma se reintenta sin límite y sin contar.
+  Una fila que no se puede interpretar cuenta un intento; a los 10 deja de intentarse (queda
+  visible en la tabla para revisarla).
+
+### Postgres y Supabase
+Local (`docker compose` de `infrastructure`): un Postgres propio en el puerto 5435, con las
+migraciones aplicadas por el servicio `messaging-migrations`. Para correrlo en el host:
+```bash
+cp .env.example .env     # trae DATABASE_* para el Postgres local
+make migrate             # aplica migrations/*.up.sql (golang-migrate en Docker)
+```
+Producción (Supabase), una sola vez:
+1. En el SQL Editor: `CREATE SCHEMA IF NOT EXISTS messaging;`. Que `messaging` **no** esté en
+   Settings > API > Exposed schemas.
+2. Botón **Connect**, pestaña **Session pooler** (no "Direct connection", que solo resuelve por
+   IPv6, ni "Transaction pooler", que no sostiene el `search_path`): host
+   `aws-0-<región>.pooler.supabase.com`, puerto `5432`, base `postgres`, usuario
+   `postgres.<project-ref>`.
+3. Secrets del repo (Settings > Secrets and variables > Actions): `PROD_DATABASE_HOST`,
+   `PROD_DATABASE_PORT`, `PROD_DATABASE_NAME`, `PROD_DATABASE_USER`, `PROD_DATABASE_PASSWORD`,
+   `PROD_DATABASE_SSLMODE=require` y `PROD_DATABASE_SCHEMA=messaging`. En cada push a `main` el
+   CI corre `make migrate` contra producción (job `migrate`, después de publicar la imagen y
+   **antes** del deploy: si una migración falla, no se despliega).
+4. En la VM, `~/messaging.env`: `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`,
+   `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_SSLMODE=require` y `DATABASE_SCHEMA=messaging`.
+   Hay que recrear el contenedor (el próximo deploy lo hace).
+
+Como la migración corre antes del deploy, si el smoke test falla y `deploy.sh` vuelve a la
+imagen anterior, esa imagen corre contra el schema nuevo: las migraciones tienen que ser
+compatibles con la versión anterior (agregar, no renombrar ni borrar).
 
 ## Endpoints / Channels
 - WS `/socket`, channel `"channel:" <> channel_id` (`MessagingWeb.RoomChannel`):
@@ -718,7 +829,8 @@ cp .env.example .env
 asdf install   # fija erlang 26.2.1 / elixir 1.16.2-otp-26, ver .tool-versions
 mix local.hex --force && mix local.rebar --force
 mix deps.get
-docker compose up -d mongo rabbitmq
+docker compose up -d mongo rabbitmq postgres
+make migrate   # Postgres del outbox (DATABASE_* del .env)
 mix phx.server
 ```
 
@@ -741,10 +853,11 @@ Algunos tests de integración sí necesitan infraestructura real y se saltan sol
 si no está (mismo patrón que `servers`/`identify-service` con
 `DATABASE_HOST`):
 ```bash
-docker compose up -d mongo   # en este repo
-# + RabbitMQ del repo rabbit-mq
+docker compose up -d mongo rabbitmq postgres   # en este repo
 export MONGO_URL=mongodb://localhost:27017/messaging_test
-export RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+export RABBITMQ_URL=amqp://guest:guest@localhost:5672
+export DATABASE_HOST=localhost DATABASE_PORT=5435 DATABASE_NAME=discordia_messaging \
+  DATABASE_USER=discordia DATABASE_PASSWORD=discordia
 mix test
 ```
 - `test/messaging/events/channel_lifecycle_consumer_test.exs`: publica un
@@ -752,7 +865,13 @@ mix test
 - `test/messaging/chat/repo/mongo_test.exs`: paginación hacia atrás y hacia
   adelante contra Mongo real, con mensajes del mismo milisegundo y el índice.
 - `test/messaging/events/broadcast_test.exs`: el camino real
-  `BroadcastPublisher` -> RabbitMQ -> `BroadcastConsumer` -> PubSub local.
+  `BroadcastPublisher` -> RabbitMQ -> `BroadcastConsumer` -> PubSub local, con la
+  confirmación del broker y la cola durable de cada instancia.
+- `test/messaging/outbox/store/postgres_test.exs` (necesita `DATABASE_HOST`): contra un
+  Postgres real, el orden de los eventos, que dos pollers no tomen la misma fila
+  (`SKIP LOCKED`), que dos eventos del mismo mensaje salgan en orden, el vaciado del contenido al
+  publicar, los reintentos y que una instancia que muere deje sus filas pendientes. Crea y
+  borra su propio schema (`outbox_test`).
 
 ## OpenAPI
 ```bash

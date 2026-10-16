@@ -10,7 +10,9 @@ defmodule MessagingWeb.ApiSpec do
       info: %Info{
         title: "Discordia — Messaging",
         description:
-          "Mensajes de canal en tiempo real (envío por WebSocket, historial por REST).",
+          "Mensajes de canal en tiempo real (envío por WebSocket, historial por REST). " <>
+            "Todos los endpoints responden 403 ACCOUNT_SUSPENDED a una cuenta suspendida por el staff " <>
+            "y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado.",
         version: "0.1.0"
       },
       paths: Paths.from_router(MessagingWeb.Router)

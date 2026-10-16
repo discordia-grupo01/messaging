@@ -6,8 +6,6 @@ defmodule MessagingWeb.MessageController do
 
   alias Messaging.Chat
   alias Messaging.Chat.Message
-  alias Messaging.Events.Broadcaster
-  alias Messaging.Log
   alias MessagingWeb.ApiError
   alias MessagingWeb.Schemas
 
@@ -110,14 +108,13 @@ defmodule MessagingWeb.MessageController do
 
   def update(conn, %{"channel_id" => channel_id, "message_id" => message_id} = params) do
     with {:ok, content} <- fetch_content(params),
-         {:ok, message, change} <-
+         {:ok, message, _change} <-
            Chat.edit_message(%{
              channel_id: channel_id,
              message_id: message_id,
              user_id: conn.assigns.user_id,
              content: content
            }) do
-      if change == :updated, do: publish_update(message)
       json(conn, Message.to_api(message))
     else
       {:error, reason} ->
@@ -157,8 +154,7 @@ defmodule MessagingWeb.MessageController do
            message_id: message_id,
            user_id: conn.assigns.user_id
          }) do
-      {:ok, message} ->
-        publish_deletion(message)
+      {:ok, _message} ->
         send_resp(conn, 204, "")
 
       {:error, reason} ->
@@ -168,32 +164,6 @@ defmodule MessagingWeb.MessageController do
 
   defp fetch_content(%{"content" => content}) when is_binary(content), do: {:ok, content}
   defp fetch_content(_params), do: {:error, :invalid_payload}
-
-  defp publish_update(message) do
-    case Broadcaster.publish("message_updated", Message.to_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_updated_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
-  end
-
-  defp publish_deletion(message) do
-    case Broadcaster.publish("message_deleted", Message.to_deleted_api(message)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("message_deleted_broadcast_failed",
-          message_id: message.id,
-          reason: Log.reason(reason)
-        )
-    end
-  end
 
   defp parse_limit(nil), do: nil
 
