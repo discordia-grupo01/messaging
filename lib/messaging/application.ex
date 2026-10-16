@@ -7,6 +7,7 @@ defmodule Messaging.Application do
   def start(_type, _args) do
     mongo_url = Application.fetch_env!(:messaging, :mongo_url)
     Messaging.UUID.init()
+    Messaging.Suspension.init()
     Messaging.Log.Telemetry.attach()
 
     Logger.info("service_started",
@@ -70,9 +71,20 @@ defmodule Messaging.Application do
         {Messaging.Events.ChannelLifecycleConsumer, url: rabbitmq_url},
         {Messaging.Events.BroadcastPublisher, url: rabbitmq_url},
         {Messaging.Events.BroadcastConsumer, url: rabbitmq_url}
-      ]
+      ] ++ admin_events_children(rabbitmq_url)
     else
       []
+    end
+  end
+
+  defp admin_events_children(rabbitmq_url) do
+    case Application.get_env(:messaging, :admin_events_hmac_secret) do
+      secret when secret in [nil, ""] ->
+        Logger.error("admin_events_consumer_not_started", reason: "empty_hmac_secret")
+        []
+
+      _secret ->
+        [{Messaging.Events.AdminEventsConsumer, url: rabbitmq_url}]
     end
   end
 

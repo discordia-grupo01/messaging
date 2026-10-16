@@ -111,6 +111,9 @@ defmodule Messaging.Chat.Repo do
   @callback get_word_filter(server_id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback apply_profile(user_id :: String.t(), version :: pos_integer()) ::
               {:ok, :applied | :stale} | {:error, term()}
+  @callback apply_suspension(user_id :: String.t(), suspended :: boolean(), version :: integer()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback suspended?(user_id :: String.t()) :: boolean() | {:error, term()}
   @callback get_server_owner(server_id :: String.t()) ::
               String.t() | nil | {:error, term()}
   @callback get_member(server_id :: String.t(), user_id :: String.t()) ::

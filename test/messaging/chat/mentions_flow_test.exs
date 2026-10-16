@@ -10,6 +10,7 @@ defmodule Messaging.Chat.MentionsFlowTest do
 
   setup do
     Messaging.OutboxHelper.stub_outbox()
+    Messaging.SuspensionHelper.stub_active()
     :ok
   end
 

@@ -19,6 +19,7 @@ config :messaging, :start_outbox_poller, false
 config :messaging, :outbox_store, Messaging.Outbox.StoreMock
 config :messaging, :event_publisher, Messaging.EventPublisherMock
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
+config :messaging, :suspension_cache_ttl_ms, 0
 
 config :logger, level: :warning
 config :logger, :console, colors: [enabled: false]

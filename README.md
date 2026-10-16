@@ -159,12 +159,54 @@ Definidos en
 documentados en
 [`docs/asyncapi/channels.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/channels.yaml).
 
+## Usuarios suspendidos
+Cuando el staff suspende una cuenta, `discordia-admin` publica `admin.user_suspended` (y
+`admin.user_reactivated` al levantarla). Como en Discord, **un suspendido no puede hacer nada**
+en mensajería: ni enviar, editar ni borrar mensajes, ni reaccionar, ni adjuntar archivos, ni
+mandar DM, ni leer su historial, ni pedir tickets de socket ni abrir o mantener sockets. Sus
+mensajes anteriores siguen visibles para los demás.
+
+- **Consumidor.** `Messaging.Events.AdminEventsConsumer` lee la cola durable
+  `messaging.admin_events` (ack manual, una sola instancia recibe cada evento). Verifica la firma
+  `HMAC-SHA256(ADMIN_EVENTS_HMAC_SECRET, texto)` en hexadecimal minúsculas, donde el texto son
+  `routing_key`, `event_id`, `user_id`, `version` y `occurred_at` unidos por saltos de línea, con
+  `occurred_at` tal cual llegó (admin lo firma en UTC). Sin firma o con firma
+  inválida (o de otra routing key) el evento **no cambia nada**: se descarta sin reencolar, se
+  loguea `admin_events_consumer_invalid_signature` y queda en `consumed_events` como
+  `discarded_invalid_signature`.
+- **Estado.** Colección Mongo `suspended_users`: `{_id: user_id, suspended, version, updated_at}`.
+  Un evento se aplica solo si su `version` es mayor a la guardada, así que los duplicados, los
+  reordenados y los viejos no cambian nada (`ignored_stale`). Vive en Mongo, no en memoria:
+  reiniciar no pierde las suspensiones. `Messaging.Suspension.suspended?/1` lo lee con una caché
+  ETS de 5 s que se invalida al aplicar un evento.
+- **Rechazo en capas.** El plug `Authenticate` responde `403 ACCOUNT_SUSPENDED` en toda la API
+  REST; `UserSocket.connect` rechaza el ticket (aunque se haya emitido antes de la suspensión);
+  `join` y `handle_in` de `RoomChannel` y `UserChannel` responden el mismo error; y las
+  escrituras de `Messaging.Chat` lo verifican, así que el bloqueo vale por cualquier camino.
+- **Corte de sockets abiertos.** Al suspender, el consumidor publica `disconnect` por el
+  fanout `messaging.broadcast` al topic `user_socket:<user_id>` (el `id/1` de `UserSocket`) y cada
+  instancia hace el `Endpoint.broadcast!` local: Phoenix cierra los sockets de ese usuario
+  (`1001`), en **todas** las instancias. Si el aviso se perdiera, la siguiente acción igual
+  queda frenada por los chequeos de arriba.
+- **Si no se puede leer el estado** (Mongo caído) no se deja pasar a nadie: la API responde
+  `503 SUSPENSION_UNAVAILABLE`, el socket se rechaza y `Chat` devuelve el mismo error.
+- **Reactivar** (evento con `version` mayor) devuelve todas las capacidades.
+- **Arranque.** `ADMIN_EVENTS_HMAC_SECRET` tiene que ser el mismo valor que en admin. Si está
+  vacía, el consumidor **no arranca** y se loguea `admin_events_consumer_not_started`: nunca se
+  aceptan eventos que no se pueden verificar. Si `messaging` se despliega con la cola vacía y ya
+  había suspendidos, hay que correr `make republish-suspensions` en `discordia-admin` una vez.
+
+| Variable | Qué es |
+|---|---|
+| `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
+
 ## Eventos que publica
 Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
 detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
 dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
 `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
-`access_revoked`, y todo sale por el outbox.
+`access_revoked`, y todo sale por el outbox. La excepción es `disconnect` (corte de los
+sockets de un usuario suspendido, ver "Usuarios suspendidos"), que sale directo al fanout.
 
 ## Outbox
 Antes, guardar un mensaje en Mongo y avisarle a las demás instancias por RabbitMQ eran dos

@@ -31,6 +31,8 @@ defmodule MessagingWeb.ApiError do
           | :too_many_pending_attachments
           | :storage_unavailable
           | :messages_unavailable
+          | :account_suspended
+          | :suspension_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -137,6 +139,14 @@ defmodule MessagingWeb.ApiError do
     do:
       {"MESSAGES_UNAVAILABLE", "No se pudo registrar el mensaje, intentá de nuevo en un momento."}
 
+  def describe(:account_suspended),
+    do: {"ACCOUNT_SUSPENDED", "Tu cuenta está suspendida: no podés realizar acciones."}
+
+  def describe(:suspension_unavailable),
+    do:
+      {"SUSPENSION_UNAVAILABLE",
+       "No se pudo verificar el estado de tu cuenta, intentá de nuevo en un momento."}
+
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
@@ -154,6 +164,8 @@ defmodule MessagingWeb.ApiError do
   end
 
   @spec http_status(reason()) :: 400 | 403 | 404 | 413 | 415 | 429 | 503
+  def http_status(:account_suspended), do: 403
+  def http_status(:suspension_unavailable), do: 503
   def http_status(:forbidden), do: 403
   def http_status(:member_muted), do: 403
   def http_status(:not_message_author), do: 403

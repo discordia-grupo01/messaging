@@ -141,6 +141,25 @@ if rabbitmq_url do
                      5_000
     end
 
+    test "a disconnect for the sockets of a user crosses instances through the fanout" do
+      user_id = "user-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user_socket:" <> user_id)
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "user_socket:" <> user_id,
+                 "disconnect",
+                 %{}
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       topic: "user_socket:" <> ^user_id,
+                       event: "disconnect"
+                     },
+                     5_000
+    end
+
     test "a topic outside channel: and user: is dropped" do
       Phoenix.PubSub.subscribe(Messaging.PubSub, "admin:all")
 

@@ -18,6 +18,7 @@ defmodule Messaging.Chat do
   alias Messaging.Log
   alias Messaging.Outbox
   alias Messaging.Outbox.Applier
+  alias Messaging.Suspension
   alias Messaging.Storage
   alias Messaging.UUID
 
@@ -50,7 +51,8 @@ defmodule Messaging.Chat do
           content: content
         } = params
       ) do
-    with {:ok, channel} <- fetch_text_channel(channel_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_text_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, attachment_ids} <- validate_attachment_ids(Map.get(params, :attachment_ids)),
          {:ok, trimmed} <- validate_content(content, attachment_ids != []),
@@ -82,7 +84,8 @@ defmodule Messaging.Chat do
         user_id: user_id,
         content: content
       }) do
-    with {:ok, channel} <- fetch_channel(channel_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, true} <- check_permission(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
@@ -108,7 +111,8 @@ defmodule Messaging.Chat do
         message_id: message_id,
         user_id: user_id
       }) do
-    with {:ok, channel} <- fetch_channel(channel_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_channel(channel_id),
          {:ok, true} <- Access.for_channel(channel).can_delete?(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- authorize_delete(channel, message, user_id) do
@@ -141,7 +145,8 @@ defmodule Messaging.Chat do
         user_id: user_id,
         emoji: emoji
       }) do
-    with {:ok, channel} <- fetch_channel(channel_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_channel(channel_id),
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, emoji} <- Reaction.validate_emoji(emoji),
          {:ok, true} <- Access.for_channel(channel).can_react?(channel, user_id),
@@ -164,7 +169,8 @@ defmodule Messaging.Chat do
         user_id: user_id,
         emoji: emoji
       }) do
-    with {:ok, channel} <- fetch_channel(channel_id),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_channel(channel_id),
          {:ok, emoji} <- Reaction.validate_emoji(emoji),
          {:ok, true} <- Access.for_channel(channel).can_view?(channel, user_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
@@ -231,7 +237,8 @@ defmodule Messaging.Chat do
           content: content
         } = params
       ) do
-    with :ok <- validate_recipient(sender_id, recipient_id),
+    with :ok <- Suspension.ensure_active(sender_id),
+         :ok <- validate_recipient(sender_id, recipient_id),
          {:ok, attachment_ids} <- validate_attachment_ids(Map.get(params, :attachment_ids)),
          {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          :ok <- Blocks.check_contact(sender_id, recipient_id),
@@ -269,7 +276,8 @@ defmodule Messaging.Chat do
   @spec store_attachment(String.t(), String.t(), term(), binary()) ::
           {:ok, Attachment.t()} | {:error, MessagingWeb.ApiError.reason()}
   def store_attachment(channel_id, user_id, filename, binary) do
-    with {:ok, detected} <- Attachment.validate(binary),
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, detected} <- Attachment.validate(binary),
          :ok <- ensure_pending_room(user_id) do
       id = UUID.generate_v7()
 

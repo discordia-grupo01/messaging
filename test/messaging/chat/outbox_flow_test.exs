@@ -9,6 +9,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
   setup :verify_on_exit!
 
   setup do
+    Messaging.SuspensionHelper.stub_active()
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)

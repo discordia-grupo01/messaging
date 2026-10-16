@@ -12,6 +12,8 @@ defmodule Messaging.Chat.ReactionsFlowTest do
   @user_id "user-1"
 
   setup do
+    Messaging.SuspensionHelper.stub_active()
+    Messaging.SuspensionHelper.stub_active()
     stub(RepoMock, :get_clock, fn _key -> nil end)
     stub(RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
     stub(RepoMock, :get_message, fn "msg-1" -> message_doc() end)

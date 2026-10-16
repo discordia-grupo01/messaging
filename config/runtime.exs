@@ -27,6 +27,11 @@ config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
 
+# Shared with discordia-admin, which signs the admin.* events. If it is empty the
+# consumer of those events does not start: an event that cannot be verified is
+# never accepted.
+config :messaging, :admin_events_hmac_secret, System.get_env("ADMIN_EVENTS_HMAC_SECRET")
+
 config :messaging, :postgres,
   host: System.get_env("DATABASE_HOST", "localhost"),
   port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
