@@ -9,11 +9,10 @@ defmodule Messaging.SuspensionTest do
 
   setup do
     previous = Application.get_env(:messaging, :suspension_cache_ttl_ms)
+    Application.put_env(:messaging, :suspension_cache_ttl_ms, 60_000)
 
     on_exit(fn ->
-      if previous,
-        do: Application.put_env(:messaging, :suspension_cache_ttl_ms, previous),
-        else: Application.delete_env(:messaging, :suspension_cache_ttl_ms)
+      Application.put_env(:messaging, :suspension_cache_ttl_ms, previous)
     end)
 
     {:ok, user: Messaging.UUID.generate()}
@@ -57,6 +56,31 @@ defmodule Messaging.SuspensionTest do
 
       assert {:ok, true} = Suspension.suspended?(user)
       assert {:ok, false} = Suspension.suspended?(other)
+    end
+  end
+
+  describe "ensure_active/1" do
+    test "lets an active user through", %{user: user} do
+      expect(Messaging.Chat.RepoMock, :suspended?, fn ^user -> false end)
+
+      assert :ok = Suspension.ensure_active(user)
+    end
+
+    test "refuses a suspended user", %{user: user} do
+      expect(Messaging.Chat.RepoMock, :suspended?, fn ^user -> true end)
+
+      assert {:error, :account_suspended} = Suspension.ensure_active(user)
+    end
+
+    test "fails closed and logs when the state cannot be read", %{user: user} do
+      expect(Messaging.Chat.RepoMock, :suspended?, fn ^user -> {:error, :timeout} end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :suspension_unavailable} = Suspension.ensure_active(user)
+        end)
+
+      assert log =~ "suspension_check_failed"
     end
   end
 

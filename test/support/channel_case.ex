@@ -13,6 +13,7 @@ defmodule MessagingWeb.ChannelCase do
   setup _tags do
     Mox.set_mox_private()
     Messaging.OutboxHelper.stub_outbox()
+    Messaging.SuspensionHelper.stub_active()
     :ok
   end
 end

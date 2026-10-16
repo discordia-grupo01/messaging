@@ -6,6 +6,9 @@ defmodule Messaging.Suspension do
   """
 
   alias Messaging.Chat.Repo
+  alias Messaging.Log
+
+  require Logger
 
   @table :messaging_suspension_cache
   @default_ttl_ms 5_000
@@ -25,6 +28,27 @@ defmodule Messaging.Suspension do
     case cached(user_id) do
       {:ok, _suspended} = hit -> hit
       :miss -> load(user_id)
+    end
+  end
+
+  @doc """
+  `:ok` when the user may act. A suspended user gets `:account_suspended`; if the
+  state cannot be read the answer is `:suspension_unavailable` (fail closed: an
+  action is never allowed on a guess).
+  """
+  @spec ensure_active(String.t()) ::
+          :ok | {:error, :account_suspended | :suspension_unavailable}
+  def ensure_active(user_id) do
+    case suspended?(user_id) do
+      {:ok, false} ->
+        :ok
+
+      {:ok, true} ->
+        {:error, :account_suspended}
+
+      {:error, reason} ->
+        Logger.error("suspension_check_failed", user_id: user_id, reason: Log.reason(reason))
+        {:error, :suspension_unavailable}
     end
   end
 

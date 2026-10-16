@@ -2,7 +2,7 @@ defmodule Messaging.Suspension.Signature do
   @moduledoc """
   HMAC signature of the `admin.*` events. The contract (the Go `Sign` in
   `events-contract/admin`) is
-  `hex(HMAC-SHA256(secret, routing_key \n event_id \n user_id \n version \n occurred_at))`.
+  `hex(HMAC-SHA256(secret, routing_key \\n event_id \\n user_id \\n version \\n occurred_at))`.
 
   `occurred_at` has to be the exact string that came in the JSON: admin signs it
   already in UTC, and parsing and formatting it again could change its digits.
