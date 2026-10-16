@@ -7,6 +7,7 @@ defmodule Messaging.Application do
   def start(_type, _args) do
     mongo_url = Application.fetch_env!(:messaging, :mongo_url)
     Messaging.UUID.init()
+    Messaging.Suspension.init()
     Messaging.Log.Telemetry.attach()
 
     Logger.info("service_started",

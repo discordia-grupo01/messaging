@@ -8,6 +8,7 @@ defmodule Messaging.Events.Audit do
           | :discarded_malformed_payload
           | :discarded_unknown_routing_key
           | :discarded_invalid_payload
+          | :discarded_invalid_signature
 
   @type attrs :: %{
           optional(:event_id) => String.t() | nil,
