@@ -5,7 +5,15 @@ defmodule Messaging.MongoOptionsTest do
 
   test "a plain local URL gets no TLS options" do
     assert MongoOptions.build("mongodb://localhost:27017/messaging_dev") ==
-             [name: Messaging.Mongo, url: "mongodb://localhost:27017/messaging_dev"]
+             [
+               name: Messaging.Mongo,
+               url: "mongodb://localhost:27017/messaging_dev",
+               pool_size: 10
+             ]
+  end
+
+  test "keeps a pool of connections, not the driver's single default one" do
+    assert MongoOptions.build("mongodb://localhost:27017/messaging_dev", 25)[:pool_size] == 25
   end
 
   for url <- [
@@ -28,6 +36,7 @@ defmodule Messaging.MongoOptionsTest do
   end
 
   test "does not mistake a password containing 'ssl=true' for a TLS flag" do
-    assert [name: _, url: _] = MongoOptions.build("mongodb://u:ssl=true@localhost:27017/db")
+    assert [name: _, url: _, pool_size: _] =
+             MongoOptions.build("mongodb://u:ssl=true@localhost:27017/db")
   end
 end

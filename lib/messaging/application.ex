@@ -18,7 +18,11 @@ defmodule Messaging.Application do
     children =
       [
         {Phoenix.PubSub, name: Messaging.PubSub},
-        {Mongo, Messaging.MongoOptions.build(mongo_url)}
+        {Mongo,
+         Messaging.MongoOptions.build(
+           mongo_url,
+           Application.fetch_env!(:messaging, :mongo_pool_size)
+         )}
       ] ++
         postgres_children() ++
         index_children() ++

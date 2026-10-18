@@ -1,7 +1,7 @@
 defmodule Messaging.MongoOptions do
-  @spec build(String.t()) :: keyword()
-  def build(url) do
-    [name: Messaging.Mongo, url: url] ++ ssl(url)
+  @spec build(String.t(), pos_integer()) :: keyword()
+  def build(url, pool_size \\ 10) do
+    [name: Messaging.Mongo, url: url, pool_size: pool_size] ++ ssl(url)
   end
 
   defp ssl(url) do
