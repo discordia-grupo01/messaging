@@ -25,6 +25,7 @@ config :logger, level: log_level
 
 config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
+  mongo_pool_size: String.to_integer(System.get_env("MONGO_POOL_SIZE", "10")),
   rabbitmq_url: System.get_env("RABBITMQ_URL", "amqp://guest:guest@localhost:5672")
 
 # Shared with discordia-admin, which signs the admin.* events. If it is empty the
