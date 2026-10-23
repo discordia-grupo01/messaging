@@ -72,7 +72,8 @@ defmodule Messaging.Chat.MessageTest do
     end
 
     test "a message without one does not carry the key" do
-      payload = @doc_with_client |> Map.delete("client_id") |> Message.from_doc() |> Message.to_api()
+      payload =
+        @doc_with_client |> Map.delete("client_id") |> Message.from_doc() |> Message.to_api()
 
       refute Map.has_key?(payload, "client_id")
     end

@@ -57,6 +57,40 @@ if mongo_url do
       if cursor, do: walk_forward(channel_id, cursor, acc), else: acc
     end
 
+    test "inserting a message id that already exists is an error, not an exception", %{
+      channel_id: channel_id
+    } do
+      doc = %{
+        "_id" => Messaging.UUID.generate(),
+        "channel_id" => channel_id,
+        "server_id" => "srv-1",
+        "user_id" => "user-1",
+        "content" => "uno",
+        "inserted_at" => ~U[2026-09-28 12:00:00.000Z]
+      }
+
+      assert {:ok, _doc} = Repo.insert_message(doc)
+      assert {:error, _reason} = Repo.insert_message(Map.put(doc, "content", "dos"))
+      assert %{"content" => "uno"} = Repo.get_message(doc["_id"])
+    end
+
+    test "the outbox upsert of an existing message id keeps the first document", %{
+      channel_id: channel_id
+    } do
+      doc = %{
+        "_id" => Messaging.UUID.generate(),
+        "channel_id" => channel_id,
+        "server_id" => "srv-1",
+        "user_id" => "user-1",
+        "content" => "uno",
+        "inserted_at" => ~U[2026-09-28 12:00:00.000Z]
+      }
+
+      assert {:ok, _doc} = Repo.insert_message(doc)
+      assert :ok = Repo.upsert_message(Map.put(doc, "content", "dos"))
+      assert %{"content" => "uno"} = Repo.get_message(doc["_id"])
+    end
+
     test "paging backwards visits every message once, in chronological order, even with equal timestamps",
          %{channel_id: channel_id} do
       expected = seed(channel_id, 40)
