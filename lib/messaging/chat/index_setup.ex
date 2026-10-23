@@ -14,7 +14,7 @@ defmodule Messaging.Chat.IndexSetup do
   def run(opts \\ []), do: attempt(1, Keyword.get(opts, :retry_ms, @default_retry_ms))
 
   defp attempt(n, retry_ms) do
-    case repo().ensure_indexes() do
+    case ensure_indexes() do
       :ok ->
         Logger.info("indexes_ready", attempts: n)
 
@@ -25,6 +25,12 @@ defmodule Messaging.Chat.IndexSetup do
 
       {:error, reason} ->
         Logger.error("indexes_failed", attempts: n, reason: Log.reason(reason))
+    end
+  end
+
+  defp ensure_indexes do
+    with :ok <- repo().ensure_indexes() do
+      Messaging.Presence.Store.impl().ensure_indexes()
     end
   end
 

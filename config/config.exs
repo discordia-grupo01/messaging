@@ -45,6 +45,7 @@ config :logger, :console,
     :result,
     :transport,
     :version,
+    :instance_id,
     :log_level
   ]
 

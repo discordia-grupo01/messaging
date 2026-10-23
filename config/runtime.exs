@@ -43,6 +43,13 @@ config :messaging, :postgres,
   schema: System.get_env("DATABASE_SCHEMA", "public"),
   pool_size: String.to_integer(System.get_env("DATABASE_POOL_SIZE", "5"))
 
+# Estado de actividad: inactividad tras la que el cliente se reporta ausente, cada cuánto
+# escribe cada instancia que sigue viva y cuánto sin escribir para darla por caída.
+config :messaging, :presence,
+  idle_after_ms: String.to_integer(System.get_env("PRESENCE_IDLE_MS", "300000")),
+  heartbeat_ms: String.to_integer(System.get_env("PRESENCE_INSTANCE_HEARTBEAT_MS", "10000")),
+  stale_after_ms: String.to_integer(System.get_env("PRESENCE_INSTANCE_STALE_MS", "30000"))
+
 config :messaging, :cloudinary,
   url: System.get_env("CLOUDINARY_URL"),
   folder: System.get_env("CLOUDINARY_FOLDER", "discordia/attachments"),

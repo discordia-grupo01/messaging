@@ -395,6 +395,50 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.MessageList
       x-validate:
+    Presence:
+      properties:
+        status:
+          description: 'Lo que ven los demás: `invisible` se ve como `offline`, y también quien tiene un bloqueo con vos (en cualquier dirección)'
+          enum:
+            - online
+            - idle
+            - dnd
+            - offline
+          type: string
+          x-struct:
+          x-validate:
+        user_id:
+          type: string
+          x-struct:
+          x-validate:
+        version:
+          description: Crece con cada cambio. Entre esta respuesta y los `presence_updated` del socket, vale el de versión más alta; 0 si el usuario nunca se conectó
+          type: integer
+          x-struct:
+          x-validate:
+      required:
+        - user_id
+        - status
+        - version
+      title: Presence
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.Presence
+      x-validate:
+    PresenceList:
+      properties:
+        presences:
+          description: Uno por cada id pedido, en el mismo orden
+          items:
+            $ref: '#/components/schemas/Presence'
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - presences
+      title: PresenceList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.PresenceList
+      x-validate:
     SocketTicket:
       properties:
         expires_in:
@@ -974,6 +1018,48 @@ paths:
       summary: Mis menciones sin leer
       tags:
         - mentions
+  /v1/presence:
+    get:
+      callbacks: {}
+      description: La foto inicial para la lista de mensajes directos o un perfil público; los cambios siguientes llegan por el socket (`presence_updated`). Para la lista de miembros de un servidor conviene unirse a `presence:<server_id>`, cuyo `join` ya trae la foto. `invisible` se ve como `offline`, igual que cualquiera con un bloqueo con quien pregunta, en cualquier dirección.
+      operationId: MessagingWeb.PresenceController.index
+      parameters:
+        - description: Ids separados por coma, hasta 100
+          in: query
+          name: user_ids
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresenceList'
+          description: Estado de cada usuario pedido
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Faltan los ids, son más de 100 o alguno no es válido
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo leer el estado de actividad
+      summary: Estado de actividad de varios usuarios
+      tags:
+        - presence
   /v1/socket-tickets:
     post:
       callbacks: {}

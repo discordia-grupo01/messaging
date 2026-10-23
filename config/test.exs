@@ -20,6 +20,8 @@ config :messaging, :outbox_store, Messaging.Outbox.StoreMock
 config :messaging, :event_publisher, Messaging.EventPublisherMock
 config :messaging, :broadcaster, Messaging.Events.LocalBroadcaster
 config :messaging, :suspension_cache_ttl_ms, 0
+config :messaging, :presence_store, Messaging.Presence.StoreMock
+config :messaging, :start_presence, false
 
 config :logger, level: :warning
 config :logger, :console, colors: [enabled: false]
