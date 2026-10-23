@@ -69,6 +69,24 @@ defmodule Messaging.Chat.Blocks do
     end
   end
 
+  @spec blocked_either(String.t(), [String.t()]) :: {:ok, MapSet.t(String.t())} | {:error, term()}
+  def blocked_either(user_id, other_ids) do
+    case other_ids |> Enum.uniq() |> Enum.reject(&(&1 == user_id)) do
+      [] ->
+        {:ok, MapSet.new()}
+
+      others ->
+        ids = Enum.flat_map(others, &[id(user_id, &1), id(&1, user_id)])
+
+        with {:ok, docs} <- repo().get_blocks(ids) do
+          {:ok, MapSet.new(docs, &counterpart(&1, user_id))}
+        end
+    end
+  end
+
+  defp counterpart(%{"blocker_id" => user_id, "blocked_id" => other}, user_id), do: other
+  defp counterpart(%{"blocker_id" => other}, _user_id), do: other
+
   defp validate_target(user_id, user_id), do: {:error, :cannot_block_self}
 
   defp validate_target(_blocker_id, blocked_id) do

@@ -33,6 +33,8 @@ defmodule MessagingWeb.ApiError do
           | :messages_unavailable
           | :account_suspended
           | :suspension_unavailable
+          | :invalid_status
+          | :presence_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -147,6 +149,14 @@ defmodule MessagingWeb.ApiError do
       {"SUSPENSION_UNAVAILABLE",
        "No se pudo verificar el estado de tu cuenta, intentá de nuevo en un momento."}
 
+  def describe(:invalid_status),
+    do: {"INVALID_STATUS", "El estado tiene que ser online, idle, dnd (no molestar) o invisible."}
+
+  def describe(:presence_unavailable),
+    do:
+      {"PRESENCE_UNAVAILABLE",
+       "No se pudo actualizar tu estado de actividad, intentá de nuevo en un momento."}
+
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
@@ -181,6 +191,7 @@ defmodule MessagingWeb.ApiError do
   def http_status(:ticket_unavailable), do: 503
   def http_status(:storage_unavailable), do: 503
   def http_status(:messages_unavailable), do: 503
+  def http_status(:presence_unavailable), do: 503
   def http_status(:file_too_large), do: 413
   def http_status(:unsupported_file_type), do: 415
   def http_status(:too_many_pending_attachments), do: 429

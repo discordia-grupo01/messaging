@@ -26,7 +26,9 @@ defmodule Messaging.Application do
       ] ++
         postgres_children() ++
         index_children() ++
-        amqp_children() ++ outbox_children() ++ cleaner_children() ++ [MessagingWeb.Endpoint]
+        amqp_children() ++
+        outbox_children() ++
+        cleaner_children() ++ presence_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
     Supervisor.start_link(children, opts)
@@ -41,6 +43,16 @@ defmodule Messaging.Application do
   defp outbox_children do
     if Application.get_env(:messaging, :start_outbox_poller, true),
       do: [Messaging.Outbox.Poller],
+      else: []
+  end
+
+  defp presence_children do
+    if Application.get_env(:messaging, :start_presence, true),
+      do: [
+        {Task.Supervisor, name: Messaging.Presence.TaskSupervisor},
+        Messaging.Presence.Tracker,
+        Messaging.Presence.Sweeper
+      ],
       else: []
   end
 

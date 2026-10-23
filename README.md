@@ -5,12 +5,12 @@ entrega en tiempo real. Cubre las historias **"Enviar mensaje en un canal"**
 (CA1 envío exitoso, CA2 mensaje vacío, CA3 sin permisos, CA4 mensaje muy
 largo) e **"Historial y reconexión"** (CA1 carga paginada, CA2 reconexión sin
 pérdida, CA3 orden cronológico). También cubre la parte de mensajería de
-**"Menciones"** (#46).
+**"Menciones"** (#46) y el **"Estado de actividad"** (#37).
 
 ## Stack
 - Lenguaje: Elixir / Phoenix (Channels para WS, controllers para REST)
-- BDD: MongoDB (`mongodb_driver`) para mensajes, conversaciones, bloqueos, menciones y la
-  réplica local; **Postgres** (`postgrex`, Supabase en producción) solo para el outbox
+- BDD: MongoDB (`mongodb_driver`) para mensajes, conversaciones, bloqueos, menciones, estado de
+  actividad y la réplica local; **Postgres** (`postgrex`, Supabase en producción) solo para el outbox
 - Event bus: RabbitMQ (`amqp`) -- tanto para consumir eventos de dominio de
   `discordia.events` como para la propagación entre instancias (ver ADR más abajo)
 - Auth: Kong valida el JWT; `messaging` confía y solo lee el claim `sub` del
@@ -201,25 +201,14 @@ mensajes anteriores siguen visibles para los demás.
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
 ## Eventos que publica
-En `discordia.events` publica **`messaging.message_created`** cada vez que se crea un mensaje en
-un canal de texto de un servidor, para que `notifications` arme los indicadores de no leído sin
-llamar a `messaging` (contrato en
-[`docs/asyncapi/messages.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/messages.yaml)).
-
-- **Qué lleva:** `event_id`, `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id` y
-  `mentioned_user_ids`, la lista de usuarios mencionados que `messaging` ya validó (miembros que
-  ven el canal; los roles y `@everyone` ya vienen resueltos; sin el autor). **Nunca lleva el texto.**
-- **Qué no se publica:** los mensajes directos (no pertenecen a un servidor) ni las ediciones y
-  borrados.
-- **Cómo sale:** por el mismo outbox que el resto, en la misma transacción que el aviso
-  `new_message` (`Messaging.Events.DomainEvent`). `Messaging.Events.BroadcastPublisher` lo
-  distingue por su topic `domain` y lo manda al exchange `discordia.events` con la routing key
-  del evento, con confirmación del broker; el `event_id` es el id de la fila del outbox.
-
-Todo lo demás que viaja es un detalle interno de escalado (`messaging.broadcast`, ver ADR): es
-siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
-`mention` y `access_revoked`, y todo sale por el outbox. La excepción es `disconnect` (corte de
-los sockets de un usuario suspendido, ver "Usuarios suspendidos"), que sale directo al fanout.
+Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
+detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
+dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
+`message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
+`access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+`disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
+`presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
+perderlo.
 
 ## Outbox
 Antes, guardar un mensaje en Mongo y avisarle a las demás instancias por RabbitMQ eran dos
@@ -303,6 +292,11 @@ compatibles con la versión anterior (agregar, no renombrar ni borrar).
   - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
     (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
   - Recibe `mention` cuando alguien te menciona (ver [Menciones](#menciones)).
+  - `handle_in("set_status", ...)` y `handle_in("activity", ...)`: ver
+    [Estado de actividad](#estado-de-actividad).
+- WS `/socket`, channel `"presence:" <> server_id` (`MessagingWeb.PresenceChannel`): ver
+  [Estado de actividad](#estado-de-actividad).
+- `GET /v1/presence?user_ids=a,b,c`: ver [Estado de actividad](#estado-de-actividad).
 - `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
   [Menciones](#menciones).
 - `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
@@ -551,6 +545,8 @@ llamada más entre servicios que pueda caerse.
   siguen funcionando para los dos.
 - Al desbloquear, los dos vuelven a poder escribirse, editar y borrar.
 
+**Efecto sobre el estado de actividad.** Ninguno de los dos ve al otro en línea.
+
 **Privacidad.** `DM_NOT_DELIVERED` no dice por qué. Hoy la única causa posible es el bloqueo, así que
 quien se fije puede deducirlo; es el mismo compromiso que hacen otras apps de mensajería. A cambio,
 el bloqueado nunca ve cuándo ni si el otro lo bloqueó, y no hay forma de listar quién te bloqueó.
@@ -565,6 +561,51 @@ bloqueado sí queda en esa línea. No revisé los logs de acceso de Kong.
 
 **Llamadas privadas.** La historia las menciona, pero todavía no existen. Cuando existan, la
 verificación es `Messaging.Chat.Blocks.check_contact/2`.
+
+## Estado de actividad
+Cada usuario se ve `online`, `idle`, `dnd` u `offline`, y los cambios llegan en tiempo real a quien
+mira la lista de miembros de un servidor o la lista de mensajes directos.
+
+**Qué ven los demás:**
+
+| Situación | Estado |
+|---|---|
+| Sin conexiones abiertas | `offline` |
+| Eligió `invisible` | `offline` |
+| Eligió `dnd` o `idle` | eso, aunque esté inactivo |
+| Eligió `online` y todas sus conexiones están inactivas | `idle` |
+| Eligió `online` y alguna conexión está activa | `online` |
+
+Lo elegido se guarda en Mongo (colección `presence`) y se conserva entre sesiones. Cada pestaña o
+celular conectado es una conexión aparte.
+
+**Canal `user:<id>`:**
+- El `join` registra la conexión y responde `{"status", "idle_after_ms"}`.
+- `set_status` con `online`, `idle`, `dnd` o `invisible`. Todas las sesiones del usuario reciben
+  `own_status_updated`.
+- `activity` con `{"state": "idle" | "active"}`: lo manda el cliente después de `idle_after_ms` sin
+  interacción, y cuando vuelve.
+- Recibe `presence_updated` de sus contactos de DM.
+
+**Canal `presence:<server_id>`:** solo para miembros. El `join` responde
+`{"presences": [{"user_id", "status", "version"}]}` con los que no están `offline`, y después llega
+`presence_updated` con cada cambio. Si el usuario sale del servidor, el canal se cierra.
+
+**`GET /v1/presence?user_ids=a,b,c`:** el estado de hasta 100 usuarios, en el mismo orden.
+
+Cada evento trae `version`: el cliente se queda con la más alta por usuario.
+
+**Desconexión.** `Messaging.Presence.Tracker` vigila el proceso de cada canal `user:<id>`: cuando
+termina, por el motivo que sea, la conexión se borra. Si se cae una instancia entera,
+`Messaging.Presence.Sweeper` borra sus conexiones cuando deja de escribir su heartbeat.
+
+**Bloqueos.** Dos usuarios con un bloqueo entre ellos se ven siempre `offline`.
+
+| Variable | Default | Qué es |
+|---|---|---|
+| `PRESENCE_IDLE_MS` | `300000` | Inactividad tras la que el cliente se reporta ausente |
+| `PRESENCE_INSTANCE_HEARTBEAT_MS` | `10000` | Cada cuánto escribe cada instancia que sigue viva |
+| `PRESENCE_INSTANCE_STALE_MS` | `30000` | Tiempo sin escribir para dar una instancia por caída |
 
 ## Menciones
 Historia #46. Las menciones van **dentro del texto** como tokens, que arma el
@@ -952,6 +993,15 @@ lib/
 │   │   ├── permissions_client.ex # Behaviour de permisos por canal (VIEW / SEND / MANAGE_MESSAGES)
 │   │   └── permissions_client/http.ex  # Implementacion real (Req -> servers)
 │   ├── chat.ex                   # API publica del context (hace de "Service")
+│   ├── presence.ex               # Context: estado de actividad (API publica)
+│   ├── presence/
+│   │   ├── status.ex             # Regla del estado efectivo y cambios sobre el documento (pura)
+│   │   ├── store.ex              # Behaviour de persistencia
+│   │   ├── store/mongo.ex        # Implementacion real (findAndModify atomico)
+│   │   ├── tracker.ex            # Monitorea los canales user:<id> y escribe el heartbeat de la instancia
+│   │   ├── sweeper.ex            # Limpia las conexiones de instancias caidas
+│   │   ├── audience.ex           # A que topics avisar (servidores y DM, sin bloqueos)
+│   │   └── notifier.ex           # Publica presence_updated / own_status_updated al fanout
 │   └── events/                   # Consumo/publicacion de eventos (discordia.events y messaging.broadcast)
 │       ├── channel_event.ex
 │       ├── channel_lifecycle_consumer.ex
@@ -976,7 +1026,9 @@ lib/
     │   └── authenticate.ex        # Authorization: Bearer <jwt> (REST), toma el sub
     └── channels/
         ├── user_socket.ex         # Punto de entrada de websockets (ticket por params)
-        └── room_channel.ex        # Channel de un canal de texto
+        ├── room_channel.ex        # Channel de un canal de texto
+        ├── user_channel.ex        # Channel personal: DM, menciones y estado de actividad
+        └── presence_channel.ex    # Estado de actividad de los miembros de un servidor
 ```
 
 ### Equivalencia con Spring Boot
