@@ -282,13 +282,15 @@ compatibles con la versión anterior (agregar, no renombrar ni borrar).
     ajeno con `MANAGE_MESSAGES` (ver [Eliminar mensajes](#eliminar-mensajes)).
   - `handle_in("delete_message", ...)` y `handle_in("edit_message", ...)` valen también en una
     conversación directa (ver [Mensajes directos](#mensajes-directos-dm)).
-  - `handle_in("new_message", %{"content" => "..."})` -- requiere
-    `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje").
+  - `handle_in("new_message", %{"content" => "...", "client_id" => "..."})` -- requiere
+    `SEND_MESSAGES` en cada envío (CA1-CA4 de "Enviar mensaje"). Responde `ok` con el mensaje
+    creado. `client_id` es opcional (ver [Reintentos sin duplicar](#reintentos-sin-duplicar)).
   - `handle_in("add_reaction" | "remove_reaction", %{"message_id" => "<id>", "emoji" => "👍"})`
     -- reacciona a un mensaje o saca la reacción propia (ver [Reacciones](#reacciones)).
 - WS `/socket`, channel `"user:" <> user_id` (`MessagingWeb.UserChannel`, solo el propio usuario):
-  - `handle_in("send_dm", %{"to" => "<user id>", "content" => "..."})` -- envía un mensaje directo
-    (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
+  - `handle_in("send_dm", %{"to" => "<user id>", "content" => "...", "client_id" => "..."})` --
+    envía un mensaje directo (ver [Mensajes directos](#mensajes-directos-dm)); emite `new_dm`.
+    `client_id` es opcional (ver [Reintentos sin duplicar](#reintentos-sin-duplicar)).
   - Recibe `mention` cuando alguien te menciona (ver [Menciones](#menciones)).
 - `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
   [Menciones](#menciones).
@@ -321,6 +323,29 @@ ticket lo emita una instancia y lo consuma otra. El JWT ya no viaja en la URL.
 
 `messaging` no verifica la firma del JWT: confía en que Kong lo validó. Por eso
 no debe quedar expuesto directo a internet (solo detrás del gateway).
+
+## Reintentos sin duplicar
+
+`new_message` y `send_dm` aceptan un `client_id` opcional (string de 1 a 64 caracteres): un id que
+genera el cliente para ese envío. Sirve para reintentar sin crear el mensaje dos veces cuando no se
+sabe si el primer intento llegó (por ejemplo, un timeout).
+
+- **Id determinístico.** Con `client_id`, el id del mensaje no se sortea: sale de un UUID v5 de
+  `channel_id`, `user_id` y `client_id`. El mismo envío siempre da el mismo `id`, y un `client_id`
+  ajeno nunca pisa mensajes de otro usuario ni de otro canal. Sin `client_id` todo sigue igual
+  (UUID v7).
+- **Reintento secuencial.** Antes de reclamar adjuntos se busca el mensaje por ese `id`: si ya
+  existe se devuelve tal cual y no se vuelve a anotar nada (ni `new_message`, ni `new_dm`, ni
+  menciones, ni `last_message`).
+- **Reintento a la vez que el primero.** Los dos pedidos calculan el mismo `id`. Mongo acepta un solo
+  insert por `_id` y el `upsert` del outbox es idempotente, así que queda un único documento. El
+  aviso puede salir dos veces con el mismo `id`; los clientes ya deduplican por `id`.
+- **Con adjuntos.** Los `attachment_ids` se reclaman una sola vez: un reintento concurrente con los
+  mismos adjuntos responde `INVALID_ATTACHMENT` mientras el primero sigue en curso.
+- **Se devuelve.** El mensaje incluye `client_id` en la respuesta, en `new_message`, `new_dm`, el
+  historial y `missed_messages`, para que quien envió reconozca su propio mensaje.
+- **Respuesta de `new_message`.** Es `ok` con el mensaje creado (igual que `send_dm`).
+- **Valor inválido** (no es string, vacío o de más de 64): `INVALID_PAYLOAD`.
 
 ## Editar mensajes
 Un mensaje se edita por REST (`PATCH /v1/channels/:channel_id/messages/:message_id`,
@@ -465,6 +490,8 @@ reply ok {"conversation_id": "...", "message": {...}}
   `[A-Za-z0-9_-]` (hasta 64): lo demás da `RECIPIENT_NOT_FOUND` sin llegar a ningún servicio.
 - **`new_message` en una conversación se rechaza** (`CHANNEL_NOT_TEXT`): los DM se envían siempre
   con `send_dm`, para que no haya dos puertas.
+- **Reintentos.** `send_dm` acepta el mismo `client_id` opcional que `new_message`
+  (ver [Reintentos sin duplicar](#reintentos-sin-duplicar)).
 
 **Recibir en tiempo real.** Cada envío emite:
 - `new_dm` a la sala personal de **los dos** participantes, con
