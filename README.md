@@ -201,12 +201,25 @@ mensajes anteriores siguen visibles para los demás.
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
 ## Eventos que publica
-Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
-detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
-dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
-`message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
-`access_revoked`, y todo sale por el outbox. La excepción es `disconnect` (corte de los
-sockets de un usuario suspendido, ver "Usuarios suspendidos"), que sale directo al fanout.
+En `discordia.events` publica **`messaging.message_created`** cada vez que se crea un mensaje en
+un canal de texto de un servidor, para que `notifications` arme los indicadores de no leído sin
+llamar a `messaging` (contrato en
+[`docs/asyncapi/messages.yaml`](https://github.com/discordia-grupo01/docs/blob/main/asyncapi/messages.yaml)).
+
+- **Qué lleva:** `event_id`, `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id` y
+  `mentioned_user_ids`, la lista de usuarios mencionados que `messaging` ya validó (miembros que
+  ven el canal; los roles y `@everyone` ya vienen resueltos; sin el autor). **Nunca lleva el texto.**
+- **Qué no se publica:** los mensajes directos (no pertenecen a un servidor) ni las ediciones y
+  borrados.
+- **Cómo sale:** por el mismo outbox que el resto, en la misma transacción que el aviso
+  `new_message` (`Messaging.Events.DomainEvent`). `Messaging.Events.BroadcastPublisher` lo
+  distingue por su topic `domain` y lo manda al exchange `discordia.events` con la routing key
+  del evento, con confirmación del broker; el `event_id` es el id de la fila del outbox.
+
+Todo lo demás que viaja es un detalle interno de escalado (`messaging.broadcast`, ver ADR): es
+siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
+`mention` y `access_revoked`, y todo sale por el outbox. La excepción es `disconnect` (corte de
+los sockets de un usuario suspendido, ver "Usuarios suspendidos"), que sale directo al fanout.
 
 ## Outbox
 Antes, guardar un mensaje en Mongo y avisarle a las demás instancias por RabbitMQ eran dos
