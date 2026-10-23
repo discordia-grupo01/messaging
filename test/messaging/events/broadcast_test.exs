@@ -160,6 +160,44 @@ if rabbitmq_url do
                      5_000
     end
 
+    test "a presence change reaches whoever looks at the server, from any instance" do
+      server_id = "srv-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "presence:" <> server_id)
+      payload = %{"user_id" => "user-1", "status" => "idle", "version" => 3}
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "presence:" <> server_id,
+                 "presence_updated",
+                 payload
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       topic: "presence:" <> ^server_id,
+                       event: "presence_updated",
+                       payload: ^payload
+                     },
+                     5_000
+    end
+
+    test "the status picked by hand reaches every session of the user" do
+      user_id = "user-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> user_id)
+      payload = %{"status" => "dnd", "version" => 4}
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "user:" <> user_id,
+                 "own_status_updated",
+                 payload
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "own_status_updated", payload: ^payload},
+                     5_000
+    end
+
     test "a topic outside channel: and user: is dropped" do
       Phoenix.PubSub.subscribe(Messaging.PubSub, "admin:all")
 
