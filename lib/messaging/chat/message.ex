@@ -9,6 +9,7 @@ defmodule Messaging.Chat.Message do
     :inserted_at,
     :edited_at,
     :deleted_at,
+    :client_id,
     mentions: [],
     mention_roles: [],
     mention_everyone: false,
@@ -24,6 +25,7 @@ defmodule Messaging.Chat.Message do
           inserted_at: DateTime.t(),
           edited_at: DateTime.t() | nil,
           deleted_at: DateTime.t() | nil,
+          client_id: String.t() | nil,
           mentions: [String.t()],
           mention_roles: [String.t()],
           mention_everyone: boolean(),
@@ -49,6 +51,7 @@ defmodule Messaging.Chat.Message do
       inserted_at: inserted_at,
       edited_at: Map.get(doc, "edited_at"),
       deleted_at: Map.get(doc, "deleted_at"),
+      client_id: Map.get(doc, "client_id"),
       mentions: Map.get(doc, "mentions") || [],
       mention_roles: Map.get(doc, "mention_roles") || [],
       mention_everyone: Map.get(doc, "mention_everyone") == true,
@@ -61,6 +64,13 @@ defmodule Messaging.Chat.Message do
   def mentions?(%__MODULE__{}), do: true
 
   def to_api(%__MODULE__{} = message) do
+    message |> base_api() |> put_client_id(message.client_id)
+  end
+
+  defp put_client_id(api, nil), do: api
+  defp put_client_id(api, client_id), do: Map.put(api, "client_id", client_id)
+
+  defp base_api(%__MODULE__{} = message) do
     %{
       "id" => message.id,
       "channel_id" => message.channel_id,

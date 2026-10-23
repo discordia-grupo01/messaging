@@ -27,12 +27,11 @@ defmodule MessagingWeb.UserChannel do
   end
 
   defp dispatch("send_dm", %{"to" => recipient_id} = payload, socket) do
-    case MessagePayload.content(payload) do
-      {:ok, content} ->
-        send_direct(socket, recipient_id, content, Map.get(payload, "attachment_ids"))
-
-      :error ->
-        {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+    with {:ok, content} <- MessagePayload.content(payload),
+         {:ok, client_id} <- MessagePayload.client_id(payload) do
+      send_direct(socket, recipient_id, content, Map.get(payload, "attachment_ids"), client_id)
+    else
+      :error -> {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
     end
   end
 
@@ -40,12 +39,13 @@ defmodule MessagingWeb.UserChannel do
     {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
   end
 
-  defp send_direct(socket, recipient_id, content, attachment_ids) do
+  defp send_direct(socket, recipient_id, content, attachment_ids, client_id) do
     params = %{
       sender_id: socket.assigns.user_id,
       recipient_id: recipient_id,
       content: content,
-      attachment_ids: attachment_ids
+      attachment_ids: attachment_ids,
+      client_id: client_id
     }
 
     case Chat.send_direct_message(params) do
