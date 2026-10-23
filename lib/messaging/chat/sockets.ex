@@ -3,11 +3,13 @@ defmodule Messaging.Chat.Sockets do
 
   alias Messaging.Chat.Repo
   alias Messaging.Events.Broadcaster
+  alias Messaging.Presence.Audience
 
   @spec revoke_member(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
   def revoke_member(server_id, user_id, reason) do
     with {:ok, channel_ids} <- Repo.impl().list_channel_ids(server_id),
-         :ok <- publish_all(channel_ids, reason, user_id) do
+         :ok <- publish_all(channel_ids, reason, user_id),
+         :ok <- revoke_presence(server_id, user_id, reason) do
       Logger.info("access_revoked",
         server_id: server_id,
         user_id: user_id,
@@ -33,6 +35,11 @@ defmodule Messaging.Chat.Sockets do
         reason: reason
       )
     end
+  end
+
+  defp revoke_presence(server_id, user_id, reason) do
+    payload = %{"server_id" => server_id, "reason" => reason, "user_id" => user_id}
+    Broadcaster.publish_to(Audience.server_topic(server_id), "access_revoked", payload)
   end
 
   defp publish_all(channel_ids, reason, user_id),
