@@ -114,6 +114,7 @@ defmodule MessagingWeb.RoomChannelTest do
 
     test "the same client id from another user makes another message", %{socket: socket} do
       other = join_socket("user-b")
+
       {:ok, _reply, other_socket} =
         subscribe_and_join(other, RoomChannel, "channel:" <> @channel_id)
 
