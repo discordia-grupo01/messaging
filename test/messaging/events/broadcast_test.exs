@@ -115,6 +115,58 @@ if rabbitmq_url do
       refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> ^other}, 300
     end
 
+    test "a domain event goes to discordia.events with its routing key and never to the instance fanout" do
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "domain")
+      {:ok, conn} = AMQP.Connection.open(System.fetch_env!("RABBITMQ_URL"))
+      {:ok, chan} = AMQP.Channel.open(conn)
+      :ok = AMQP.Exchange.declare(chan, "discordia.events", :topic, durable: true)
+      {:ok, %{queue: queue}} = AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true)
+
+      :ok =
+        AMQP.Queue.bind(chan, queue, "discordia.events", routing_key: "messaging.message_created")
+
+      id = Messaging.UUID.generate()
+
+      payload = %{
+        "occurred_at" => DateTime.to_iso8601(DateTime.utc_now()),
+        "server_id" => "srv-1",
+        "channel_id" => "chan-1",
+        "message_id" => Messaging.UUID.generate(),
+        "author_id" => "user-1",
+        "mentioned_user_ids" => ["user-2"]
+      }
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 id,
+                 "domain",
+                 "messaging.message_created",
+                 payload
+               )
+
+      assert {body, meta} = get_message(chan, queue, 50)
+      assert Jason.decode!(body) == Map.put(payload, "event_id", id)
+      assert meta.routing_key == "messaging.message_created"
+      assert meta.message_id == id
+      assert meta.content_type == "application/json"
+      refute_receive %Phoenix.Socket.Broadcast{}, 500
+
+      AMQP.Connection.close(conn)
+    end
+
+    defp get_message(_chan, _queue, 0), do: nil
+
+    defp get_message(chan, queue, attempts) do
+      case AMQP.Basic.get(chan, queue, no_ack: true) do
+        {:ok, body, meta} ->
+          {body, meta}
+
+        {:empty, _meta} ->
+          Process.sleep(100)
+          get_message(chan, queue, attempts - 1)
+      end
+    end
+
     test "a mention published by any instance reaches the mentioned user's local topic" do
       user_id = "user-#{System.unique_integer([:positive])}"
       Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> user_id)

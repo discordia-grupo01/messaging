@@ -87,7 +87,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       assert {:ok, %Message{id: id}} = send_hola()
 
-      assert_received {:outbox, [row]}
+      assert_received {:outbox, [row, _domain]}
       assert row.event == "new_message"
       assert row.topic == "channel:chan-1"
       assert row.message_id == id
@@ -98,6 +98,62 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert doc["_id"] == id
       assert doc["content"] == "hola"
       assert {:ok, _datetime, _offset} = DateTime.from_iso8601(doc["inserted_at"])
+    end
+
+    test "tells the other services about it, with ids only and never the text" do
+      record_outbox()
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      assert {:ok, %Message{id: id, inserted_at: inserted_at}} = send_hola()
+
+      assert_received {:outbox, [_created, domain]}
+      assert domain.event == "messaging.message_created"
+      assert domain.topic == "domain"
+      assert domain.message_id == id
+      assert domain.channel_id == "chan-1"
+      assert is_nil(Map.get(domain, :apply))
+
+      assert domain.payload == %{
+               "occurred_at" => DateTime.to_iso8601(inserted_at),
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => id,
+               "author_id" => @user,
+               "mentioned_user_ids" => []
+             }
+
+      refute inspect(domain.payload) =~ "hola"
+    end
+
+    test "carries the users it mentions, as already validated by the resolver" do
+      record_outbox()
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+
+      stub(Messaging.Chat.RepoMock, :insert_mentions, fn docs ->
+        {:ok, Enum.map(docs, & &1["_id"])}
+      end)
+
+      expect(Messaging.Chat.MentionResolverMock, :resolve, fn %{channel_id: "chan-1"},
+                                                              _query,
+                                                              _ ->
+        {:ok,
+         struct!(Messaging.Chat.Mentions.none(),
+           user_ids: ["user-2", "user-3"],
+           recipient_ids: ["user-2"]
+         )}
+      end)
+
+      assert {:ok, %Message{id: id}} =
+               Chat.send_message(%{
+                 channel_id: "chan-1",
+                 user_id: @user,
+                 content: "hola <@user-2> <@user-3>"
+               })
+
+      assert_received {:outbox, [_created, domain]}
+      assert domain.payload["message_id"] == id
+      assert domain.payload["mentioned_user_ids"] == ["user-2"]
+      refute inspect(domain.payload) =~ "hola"
     end
 
     test "the order really is outbox, then Mongo" do

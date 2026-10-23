@@ -14,7 +14,7 @@ defmodule Messaging.Chat do
     WordFilter
   }
 
-  alias Messaging.Events.MentionNotifier
+  alias Messaging.Events.{DomainEvent, MentionNotifier}
   alias Messaging.Log
   alias Messaging.Outbox
   alias Messaging.Outbox.Applier
@@ -714,7 +714,7 @@ defmodule Messaging.Chat do
       |> with_mention_fields(message, mentions)
       |> with_attachment_field(message)
 
-    case Outbox.enqueue(created_entries(message, doc, channel)) do
+    case Outbox.enqueue(created_entries(message, doc, channel, mentions)) do
       :ok ->
         store_message(message, doc)
 
@@ -752,7 +752,12 @@ defmodule Messaging.Chat do
     {:ok, message}
   end
 
-  defp created_entries(%Message{} = message, doc, %ChannelCache{} = channel) do
+  defp created_entries(
+         %Message{} = message,
+         doc,
+         %ChannelCache{} = channel,
+         %Mentions{} = mentions
+       ) do
     payload = Message.to_api(message)
 
     created = %{
@@ -764,8 +769,14 @@ defmodule Messaging.Chat do
       channel_id: message.channel_id
     }
 
-    [created | direct_entries(channel, message, payload)]
+    [created | direct_entries(channel, message, payload)] ++
+      domain_entries(channel, message, mentions)
   end
+
+  defp domain_entries(%ChannelCache{server_id: nil}, _message, _mentions), do: []
+
+  defp domain_entries(%ChannelCache{}, %Message{} = message, %Mentions{} = mentions),
+    do: [DomainEvent.message_created(message, mentions.recipient_ids)]
 
   defp direct_entries(
          %ChannelCache{kind: "dm", participants: participants} = channel,
