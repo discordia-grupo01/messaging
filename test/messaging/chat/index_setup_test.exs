@@ -8,6 +8,11 @@ defmodule Messaging.Chat.IndexSetupTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  setup do
+    stub(Messaging.Presence.StoreMock, :ensure_indexes, fn -> :ok end)
+    :ok
+  end
+
   test "runs once when the repo is ready" do
     expect(Messaging.Chat.RepoMock, :ensure_indexes, fn -> :ok end)
 
@@ -26,6 +31,21 @@ defmodule Messaging.Chat.IndexSetupTest do
 
     capture_log(fn -> assert :ok = IndexSetup.run(retry_ms: 1) end)
     assert Agent.get(calls, & &1) == 3
+  end
+
+  test "also creates the presence indexes, and retries while they fail" do
+    stub(Messaging.Chat.RepoMock, :ensure_indexes, fn -> :ok end)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    expect(Messaging.Presence.StoreMock, :ensure_indexes, 2, fn ->
+      case Agent.get_and_update(calls, &{&1 + 1, &1 + 1}) do
+        2 -> :ok
+        _ -> {:error, :not_connected}
+      end
+    end)
+
+    capture_log(fn -> assert :ok = IndexSetup.run(retry_ms: 1) end)
+    assert Agent.get(calls, & &1) == 2
   end
 
   test "gives up after the maximum attempts without crashing" do
