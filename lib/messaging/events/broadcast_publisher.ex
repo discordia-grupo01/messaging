@@ -4,10 +4,11 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   @behaviour Messaging.Events.EventPublisher
 
-  alias Messaging.Events.Backoff
+  alias Messaging.Events.{Backoff, DomainEvent}
   alias Messaging.Log
 
   @exchange "messaging.broadcast"
+  @events_exchange "discordia.events"
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -34,13 +35,12 @@ defmodule Messaging.Events.BroadcastPublisher do
   end
 
   def handle_call({:publish, id, topic, event, payload}, _from, state) do
-    body =
-      Jason.encode!(%{"event_id" => id, "topic" => topic, "event" => event, "payload" => payload})
+    domain_topic = DomainEvent.topic()
 
     result =
-      with :ok <-
-             AMQP.Basic.publish(state.chan, @exchange, "", body, persistent: true, message_id: id) do
-        confirm(state.chan)
+      case topic do
+        ^domain_topic -> publish_domain(state.chan, id, event, payload)
+        _channel_topic -> publish_broadcast(state.chan, id, topic, event, payload)
       end
 
     {:reply, result, state}
@@ -88,10 +88,33 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   def terminate(_reason, _state), do: :ok
 
+  defp publish_broadcast(chan, id, topic, event, payload) do
+    body =
+      Jason.encode!(%{"event_id" => id, "topic" => topic, "event" => event, "payload" => payload})
+
+    with :ok <- AMQP.Basic.publish(chan, @exchange, "", body, persistent: true, message_id: id) do
+      confirm(chan)
+    end
+  end
+
+  defp publish_domain(chan, id, routing_key, payload) do
+    body = payload |> Map.put("event_id", id) |> Jason.encode!()
+
+    with :ok <-
+           AMQP.Basic.publish(chan, @events_exchange, routing_key, body,
+             persistent: true,
+             message_id: id,
+             content_type: "application/json"
+           ) do
+      confirm(chan)
+    end
+  end
+
   defp connect(url) do
     with {:ok, conn} <- AMQP.Connection.open(url),
          {:ok, chan} <- AMQP.Channel.open(conn),
          :ok <- AMQP.Exchange.declare(chan, @exchange, :fanout, durable: true),
+         :ok <- AMQP.Exchange.declare(chan, @events_exchange, :topic, durable: true),
          :ok <- AMQP.Confirm.select(chan) do
       {:ok, conn, chan}
     end
