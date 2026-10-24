@@ -1241,6 +1241,72 @@ defmodule Messaging.ChatTest do
     end
   end
 
+  describe "list_messages_around/3" do
+    test "returns the message with up to limit/2 on each side, oldest first" do
+      at = ~U[2026-09-28 12:00:05Z]
+      expect(Messaging.Chat.RepoMock, :get_message, fn "e" -> doc("e", at) end)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, 2, fn @channel_id, opts ->
+        assert opts[:limit] == 3
+
+        case opts do
+          [before: {^at, "e"}, limit: 3] ->
+            {:ok,
+             [
+               doc("d", ~U[2026-09-28 12:00:04Z]),
+               doc("c", ~U[2026-09-28 12:00:03Z]),
+               doc("b", ~U[2026-09-28 12:00:02Z])
+             ]}
+
+          [after: {^at, "e"}, limit: 3] ->
+            {:ok, [doc("f", ~U[2026-09-28 12:00:06Z])]}
+        end
+      end)
+
+      assert {:ok, messages, "c", nil} = Chat.list_messages_around(@channel_id, "e", limit: 4)
+      assert Enum.map(messages, & &1.id) == ["c", "d", "e", "f"]
+    end
+
+    test "at the start of the channel there is no older cursor" do
+      at = ~U[2026-09-28 12:00:01Z]
+      expect(Messaging.Chat.RepoMock, :get_message, fn "a" -> doc("a", at) end)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, 2, fn @channel_id, opts ->
+        if opts[:before],
+          do: {:ok, []},
+          else: {:ok, for(id <- ~w(b c d), do: doc(id, ~U[2026-09-28 12:00:02Z]))}
+      end)
+
+      assert {:ok, messages, nil, "c"} = Chat.list_messages_around(@channel_id, "a", limit: 4)
+      assert Enum.map(messages, & &1.id) == ["a", "b", "c"]
+    end
+
+    test "a message that was deleted or is from another channel is not found" do
+      expect(Messaging.Chat.RepoMock, :get_message, fn "gone" ->
+        Map.put(doc("gone", ~U[2026-09-28 12:00:00Z]), "deleted_at", ~U[2026-09-28 13:00:00Z])
+      end)
+
+      expect(Messaging.Chat.RepoMock, :get_message, fn "x" ->
+        doc("x", ~U[2026-09-28 12:00:00Z], "other-channel")
+      end)
+
+      assert {:error, :message_not_found} = Chat.list_messages_around(@channel_id, "gone")
+      assert {:error, :message_not_found} = Chat.list_messages_around(@channel_id, "x")
+    end
+
+    test "a repo failure is propagated" do
+      expect(Messaging.Chat.RepoMock, :get_message, fn "e" ->
+        doc("e", ~U[2026-09-28 12:00:05Z])
+      end)
+
+      expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, _opts ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Chat.list_messages_around(@channel_id, "e")
+    end
+  end
+
   describe "can_view_channel?/3" do
     test "asks the permissions client about VIEW_CHANNELS in that channel (overrides included)" do
       expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn %{

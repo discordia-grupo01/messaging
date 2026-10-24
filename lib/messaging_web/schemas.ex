@@ -263,6 +263,12 @@ defmodule MessagingWeb.Schemas do
           nullable: true,
           description:
             "Hay más mensajes: id para pasar como `before` (o como `after` si se pidió con `after`). null si no hay más."
+        },
+        newer_cursor: %Schema{
+          type: :string,
+          nullable: true,
+          description:
+            "Solo con `around`: id para pasar como `after` mientras haya mensajes más nuevos. null si ya se llegó al presente."
         }
       },
       required: [:messages, :next_cursor]
@@ -343,6 +349,39 @@ defmodule MessagingWeb.Schemas do
         }
       },
       required: [:ticket, :expires_in]
+    })
+  end
+
+  defmodule MessageSearchResult do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MessageSearchResult",
+      description:
+        "Coincidencias de la búsqueda, de la más nueva a la más vieja. Sin coincidencias, " <>
+          "`messages` viene vacío (no es un error).",
+      type: :object,
+      properties: %{
+        messages: %Schema{type: :array, items: Message},
+        next_cursor: %Schema{
+          type: :string,
+          nullable: true,
+          description:
+            "Hay más coincidencias: id para pasar como `before` y traer las más viejas. null si no hay más."
+        },
+        total: %Schema{
+          type: :integer,
+          nullable: true,
+          description:
+            "Cuántas coincidencias hay en total (con tope de 1000). Solo en la primera página; con `before` viene null."
+        },
+        total_capped: %Schema{
+          type: :boolean,
+          nullable: true,
+          description: "true si hay más coincidencias que el tope (mostrar \"1000+\")"
+        }
+      },
+      required: [:messages, :next_cursor, :total, :total_capped]
     })
   end
 end

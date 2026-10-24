@@ -16,8 +16,10 @@ defmodule MessagingWeb.MessageController do
     description:
       "Cada página viene en orden cronológico (del más viejo al más nuevo). Sin cursor devuelve " <>
         "los mensajes más recientes; con `before` devuelve los anteriores a ese mensaje; con " <>
-        "`after` devuelve los posteriores (para ponerse al día tras una desconexión). " <>
-        "`before` y `after` son excluyentes.",
+        "`after` devuelve los posteriores (para ponerse al día tras una desconexión); con " <>
+        "`around` devuelve el historial alrededor de ese mensaje, incluido él (para saltar a " <>
+        "un resultado de la búsqueda), y la respuesta trae además `newer_cursor`. " <>
+        "`before`, `after` y `around` son excluyentes.",
     parameters: [
       channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
       limit: [
@@ -37,20 +39,29 @@ defmodule MessagingWeb.MessageController do
         type: :string,
         required: false,
         description: "Id del último mensaje que el cliente ya tiene; devuelve los posteriores"
+      ],
+      around: [
+        in: :query,
+        type: :string,
+        required: false,
+        description:
+          "Id de un mensaje: devuelve hasta limit/2 mensajes antes y después de él, y el mensaje"
       ]
     ],
     responses: [
       ok: {"Página de mensajes en orden cronológico", "application/json", Schemas.MessageList},
       bad_request:
-        {"Cursor inválido, de otro canal, o `before` y `after` juntos", "application/json",
-         Schemas.ErrorResponse},
+        {"Cursor inválido, de otro canal, o más de uno entre `before`, `after` y `around`",
+         "application/json", Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
       forbidden:
         {"El usuario no tiene VIEW_CHANNELS en este canal", "application/json",
          Schemas.ErrorResponse},
-      not_found: {"El canal no existe", "application/json", Schemas.ErrorResponse}
+      not_found:
+        {"El canal no existe, o el mensaje de `around` no existe o fue eliminado",
+         "application/json", Schemas.ErrorResponse}
     ]
 
   def index(conn, %{"channel_id" => channel_id} = params) do
@@ -59,17 +70,10 @@ defmodule MessagingWeb.MessageController do
 
     with {:ok, channel} <- Chat.channel_exists?(channel_id),
          {:ok, true} <- Chat.can_view_channel?(channel, user_id),
-         {:ok, messages, next_cursor} <-
-           Chat.list_messages(channel_id,
-             limit: limit,
-             before: Map.get(params, "before"),
-             after: Map.get(params, "after")
-           ),
+         {:ok, messages, cursors} <- fetch_page(channel_id, params, limit),
          {:ok, reactions} <- Chat.reactions_for(messages, user_id) do
-      json(conn, %{
-        "messages" => Enum.map(messages, &Message.to_api(&1, reactions)),
-        "next_cursor" => next_cursor
-      })
+      messages = Enum.map(messages, &Message.to_api(&1, reactions))
+      json(conn, Map.put(cursors, "messages", messages))
     else
       {:ok, false} ->
         conn |> put_status(403) |> json(ApiError.payload(:forbidden))
@@ -159,6 +163,25 @@ defmodule MessagingWeb.MessageController do
 
       {:error, reason} ->
         conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
+    end
+  end
+
+  defp fetch_page(channel_id, %{"around" => around_id} = params, limit) do
+    if Map.has_key?(params, "before") or Map.has_key?(params, "after") do
+      {:error, :invalid_cursor}
+    else
+      with {:ok, messages, older, newer} <-
+             Chat.list_messages_around(channel_id, around_id, limit: limit) do
+        {:ok, messages, %{"next_cursor" => older, "newer_cursor" => newer}}
+      end
+    end
+  end
+
+  defp fetch_page(channel_id, params, limit) do
+    opts = [limit: limit, before: Map.get(params, "before"), after: Map.get(params, "after")]
+
+    with {:ok, messages, next_cursor} <- Chat.list_messages(channel_id, opts) do
+      {:ok, messages, %{"next_cursor" => next_cursor}}
     end
   end
 

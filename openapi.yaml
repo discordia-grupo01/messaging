@@ -382,6 +382,12 @@ components:
           type: array
           x-struct:
           x-validate:
+        newer_cursor:
+          description: 'Solo con `around`: id para pasar como `after` mientras haya mensajes más nuevos. null si ya se llegó al presente.'
+          nullable: true
+          type: string
+          x-struct:
+          x-validate:
         next_cursor:
           description: 'Hay más mensajes: id para pasar como `before` (o como `after` si se pidió con `after`). null si no hay más.'
           nullable: true
@@ -394,6 +400,42 @@ components:
       title: MessageList
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.MessageList
+      x-validate:
+    MessageSearchResult:
+      description: Coincidencias de la búsqueda, de la más nueva a la más vieja. Sin coincidencias, `messages` viene vacío (no es un error).
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          type: array
+          x-struct:
+          x-validate:
+        next_cursor:
+          description: 'Hay más coincidencias: id para pasar como `before` y traer las más viejas. null si no hay más.'
+          nullable: true
+          type: string
+          x-struct:
+          x-validate:
+        total:
+          description: Cuántas coincidencias hay en total (con tope de 1000). Solo en la primera página; con `before` viene null.
+          nullable: true
+          type: integer
+          x-struct:
+          x-validate:
+        total_capped:
+          description: true si hay más coincidencias que el tope (mostrar "1000+")
+          nullable: true
+          type: boolean
+          x-struct:
+          x-validate:
+      required:
+        - messages
+        - next_cursor
+        - total
+        - total_capped
+      title: MessageSearchResult
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.MessageSearchResult
       x-validate:
     Presence:
       properties:
@@ -749,7 +791,7 @@ paths:
   /v1/channels/{channel_id}/messages:
     get:
       callbacks: {}
-      description: Cada página viene en orden cronológico (del más viejo al más nuevo). Sin cursor devuelve los mensajes más recientes; con `before` devuelve los anteriores a ese mensaje; con `after` devuelve los posteriores (para ponerse al día tras una desconexión). `before` y `after` son excluyentes.
+      description: Cada página viene en orden cronológico (del más viejo al más nuevo). Sin cursor devuelve los mensajes más recientes; con `before` devuelve los anteriores a ese mensaje; con `after` devuelve los posteriores (para ponerse al día tras una desconexión); con `around` devuelve el historial alrededor de ese mensaje, incluido él (para saltar a un resultado de la búsqueda), y la respuesta trae además `newer_cursor`. `before`, `after` y `around` son excluyentes.
       operationId: MessagingWeb.MessageController.index
       parameters:
         - description: UUID del canal
@@ -784,6 +826,14 @@ paths:
             type: string
             x-struct:
             x-validate:
+        - description: 'Id de un mensaje: devuelve hasta limit/2 mensajes antes y después de él, y el mensaje'
+          in: query
+          name: around
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
       responses:
         '200':
           content:
@@ -796,7 +846,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: Cursor inválido, de otro canal, o `before` y `after` juntos
+          description: Cursor inválido, de otro canal, o más de uno entre `before`, `after` y `around`
         '401':
           content:
             application/json:
@@ -814,7 +864,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: El canal no existe
+          description: El canal no existe, o el mensaje de `around` no existe o fue eliminado
       summary: Historial de mensajes de un canal
       tags:
         - messages
@@ -1060,6 +1110,100 @@ paths:
       summary: Estado de actividad de varios usuarios
       tags:
         - presence
+  /v1/servers/{server_id}/messages/search:
+    get:
+      callbacks: {}
+      description: 'Busca en los canales de texto del servidor donde el usuario tiene `VIEW_CHANNELS` (historia #49). `q` encuentra los mensajes que contienen ese texto, aunque sea parte de una palabra y sin distinguir mayúsculas; `author_id` se queda con los de ese autor. Tiene que venir al menos uno de los dos, y si vienen ambos se combinan. Los resultados van del más nuevo al más viejo y no incluyen mensajes eliminados. Sin coincidencias responde 200 con `messages` vacío.'
+      operationId: MessagingWeb.SearchController.index
+      parameters:
+        - description: UUID del servidor
+          in: path
+          name: server_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Texto a buscar (se recorta; hasta 100 caracteres)
+          in: query
+          name: q
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Id del autor de los mensajes
+          in: query
+          name: author_id
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Buscar solo en este canal del servidor
+          in: query
+          name: channel_id
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Tamaño de página (default 25, máx 50)
+          in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            x-struct:
+            x-validate:
+        - description: Id devuelto como next_cursor, para traer las coincidencias más viejas
+          in: query
+          name: before
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSearchResult'
+          description: Coincidencias de la búsqueda
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Búsqueda inválida (`INVALID_SEARCH_QUERY`) o cursor inválido (`INVALID_CURSOR`)
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No es miembro del servidor (`NOT_SERVER_MEMBER`) o no puede ver el `channel_id` pedido
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El `channel_id` no es un canal de texto de este servidor
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo completar la búsqueda (`SEARCH_UNAVAILABLE`)
+      summary: Buscar mensajes en un servidor
+      tags:
+        - messages
   /v1/socket-tickets:
     post:
       callbacks: {}
