@@ -215,4 +215,45 @@ defmodule Messaging.Chat.BlocksTest do
       assert MapSet.to_list(set) == [@third]
     end
   end
+
+  describe "blocked_either/2" do
+    @fourth "44444444-4444-4444-8444-444444444444"
+
+    test "nobody else means no query (yourself does not count)" do
+      assert {:ok, set} = Blocks.blocked_either(@me, [])
+      assert MapSet.size(set) == 0
+
+      assert {:ok, set} = Blocks.blocked_either(@me, [@me])
+      assert MapSet.size(set) == 0
+    end
+
+    test "returns who I blocked and who blocked me, in one query" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn ids ->
+        assert Enum.sort(ids) ==
+                 Enum.sort([
+                   @me <> ":" <> @other,
+                   @other <> ":" <> @me,
+                   @me <> ":" <> @third,
+                   @third <> ":" <> @me,
+                   @me <> ":" <> @fourth,
+                   @fourth <> ":" <> @me
+                 ])
+
+        {:ok,
+         [
+           %{"_id" => @me <> ":" <> @other, "blocker_id" => @me, "blocked_id" => @other},
+           %{"_id" => @third <> ":" <> @me, "blocker_id" => @third, "blocked_id" => @me}
+         ]}
+      end)
+
+      assert {:ok, set} = Blocks.blocked_either(@me, [@other, @third, @fourth, @other])
+      assert Enum.sort(MapSet.to_list(set)) == Enum.sort([@other, @third])
+    end
+
+    test "a read error is returned as is" do
+      expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:error, :timeout} end)
+
+      assert {:error, :timeout} = Blocks.blocked_either(@me, [@other])
+    end
+  end
 end

@@ -27,6 +27,19 @@ defmodule Messaging.Chat.SocketsTest do
     end
   end
 
+  test "revoke_member/3 also closes the presence of the server for that user" do
+    MessagingWeb.Endpoint.subscribe("presence:srv-1")
+    expect(Messaging.Chat.RepoMock, :list_channel_ids, fn "srv-1" -> {:ok, ["c-1"]} end)
+
+    assert :ok = Sockets.revoke_member("srv-1", "user-1", "member_left")
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "presence:srv-1",
+      event: "access_revoked",
+      payload: %{"server_id" => "srv-1", "reason" => "member_left", "user_id" => "user-1"}
+    }
+  end
+
   test "a server without cached channels has nobody to tell" do
     expect(Messaging.Chat.RepoMock, :list_channel_ids, fn _server -> {:ok, []} end)
 

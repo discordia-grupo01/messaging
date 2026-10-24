@@ -207,6 +207,49 @@ defmodule MessagingWeb.Schemas do
     })
   end
 
+  defmodule Presence do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "Presence",
+      type: :object,
+      properties: %{
+        user_id: %Schema{type: :string},
+        status: %Schema{
+          type: :string,
+          enum: ["online", "idle", "dnd", "offline"],
+          description:
+            "Lo que ven los demás: `invisible` se ve como `offline`, y también quien tiene un " <>
+              "bloqueo con vos (en cualquier dirección)"
+        },
+        version: %Schema{
+          type: :integer,
+          description:
+            "Crece con cada cambio. Entre esta respuesta y los `presence_updated` del socket, " <>
+              "vale el de versión más alta; 0 si el usuario nunca se conectó"
+        }
+      },
+      required: [:user_id, :status, :version]
+    })
+  end
+
+  defmodule PresenceList do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "PresenceList",
+      type: :object,
+      properties: %{
+        presences: %Schema{
+          type: :array,
+          items: Presence,
+          description: "Uno por cada id pedido, en el mismo orden"
+        }
+      },
+      required: [:presences]
+    })
+  end
+
   defmodule MessageList do
     require OpenApiSpex
 
