@@ -10,6 +10,7 @@ defmodule Messaging.Chat do
     Mentions,
     Message,
     Reaction,
+    Search,
     UserMention,
     WordFilter
   }
@@ -418,6 +419,9 @@ defmodule Messaging.Chat do
       build_page(docs, limit, direction(after_id))
     end
   end
+
+  @spec search_messages(Search.params()) :: {:ok, Search.page()} | {:error, term()}
+  def search_messages(params), do: Search.run(params)
 
   @spec list_changes(String.t(), DateTime.t()) ::
           {:ok, [Message.t()], [String.t()]} | {:error, :too_many_changes | term()}
