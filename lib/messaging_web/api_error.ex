@@ -35,6 +35,9 @@ defmodule MessagingWeb.ApiError do
           | :suspension_unavailable
           | :invalid_status
           | :presence_unavailable
+          | :invalid_search_query
+          | :not_server_member
+          | :search_unavailable
 
   @spec describe(reason()) :: {String.t(), String.t()}
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
@@ -157,6 +160,18 @@ defmodule MessagingWeb.ApiError do
       {"PRESENCE_UNAVAILABLE",
        "No se pudo actualizar tu estado de actividad, intentá de nuevo en un momento."}
 
+  def describe(:invalid_search_query),
+    do:
+      {"INVALID_SEARCH_QUERY",
+       "Ingresá un término de hasta #{Messaging.Chat.Search.max_text_length()} caracteres o elegí un autor para buscar."}
+
+  def describe(:not_server_member),
+    do: {"NOT_SERVER_MEMBER", "No sos miembro de este servidor."}
+
+  def describe(:search_unavailable),
+    do:
+      {"SEARCH_UNAVAILABLE", "No se pudo completar la búsqueda, intentá de nuevo en un momento."}
+
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
@@ -192,6 +207,8 @@ defmodule MessagingWeb.ApiError do
   def http_status(:storage_unavailable), do: 503
   def http_status(:messages_unavailable), do: 503
   def http_status(:presence_unavailable), do: 503
+  def http_status(:not_server_member), do: 403
+  def http_status(:search_unavailable), do: 503
   def http_status(:file_too_large), do: 413
   def http_status(:unsupported_file_type), do: 415
   def http_status(:too_many_pending_attachments), do: 429
