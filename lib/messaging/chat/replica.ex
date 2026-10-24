@@ -37,6 +37,27 @@ defmodule Messaging.Chat.Replica do
   def server_wide(snapshot, user_id, role_ids),
     do: Permissions.server_wide(snapshot.owner_id == user_id, role_ids, snapshot.roles)
 
+  @spec viewable_channel_ids(String.t(), String.t(), [String.t()], [String.t()]) ::
+          {:ok, [String.t()]} | {:error, term()}
+  def viewable_channel_ids(_server_id, _user_id, _role_ids, []), do: {:ok, []}
+
+  def viewable_channel_ids(server_id, user_id, role_ids, channel_ids) do
+    with owner_id when not is_tuple(owner_id) <- repo().get_server_owner(server_id),
+         {:ok, roles} <- repo().list_roles(server_id),
+         {:ok, overrides_by_channel} <- repo().list_channel_overrides(channel_ids) do
+      server = %{owner_id: owner_id, roles: Map.new(roles, &role_entry/1), overrides: %{}}
+
+      {:ok,
+       Enum.filter(channel_ids, fn channel_id ->
+         overrides = Map.get(overrides_by_channel, channel_id, [])
+
+         %{server | overrides: Map.new(overrides, &override_entry/1)}
+         |> effective(user_id, role_ids)
+         |> Permissions.can?("VIEW_CHANNELS")
+       end)}
+    end
+  end
+
   defp role_entry(%{"_id" => id, "permissions" => permissions, "is_everyone" => is_everyone}),
     do: {id, %{permissions: permissions, is_everyone: is_everyone}}
 

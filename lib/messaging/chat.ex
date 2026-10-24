@@ -10,6 +10,7 @@ defmodule Messaging.Chat do
     Mentions,
     Message,
     Reaction,
+    Search,
     UserMention,
     WordFilter
   }
@@ -192,7 +193,6 @@ defmodule Messaging.Chat do
     end
   end
 
-  @doc "Reactions of each message as `viewer_id` sees them: `%{message_id => [summary]}`."
   @spec reactions_for([Message.t()], String.t()) ::
           {:ok, %{String.t() => [Reaction.summary()]}} | {:error, term()}
   def reactions_for([], _viewer_id), do: {:ok, %{}}
@@ -418,6 +418,27 @@ defmodule Messaging.Chat do
       build_page(docs, limit, direction(after_id))
     end
   end
+
+  @spec list_messages_around(String.t(), String.t(), keyword()) ::
+          {:ok, [Message.t()], String.t() | nil, String.t() | nil} | {:error, atom()}
+  def list_messages_around(channel_id, message_id, opts \\ []) do
+    half = opts |> Keyword.get(:limit) |> clamp_limit() |> div(2) |> max(1)
+
+    with {:ok, center} <- fetch_message(channel_id, message_id),
+         position = {center.inserted_at, center.id},
+         {:ok, older} <- repo().list_messages(channel_id, before: position, limit: half + 1),
+         {:ok, newer} <- repo().list_messages(channel_id, after: position, limit: half + 1) do
+      {older, more_older?} = take_side(older, half)
+      {newer, more_newer?} = take_side(newer, half)
+      messages = Enum.reverse(older) ++ [center | newer]
+      older_cursor = if more_older?, do: hd(messages).id
+      newer_cursor = if more_newer?, do: List.last(messages).id
+      {:ok, messages, older_cursor, newer_cursor}
+    end
+  end
+
+  @spec search_messages(Search.params()) :: {:ok, Search.page()} | {:error, term()}
+  def search_messages(params), do: Search.run(params)
 
   @spec list_changes(String.t(), DateTime.t()) ::
           {:ok, [Message.t()], [String.t()]} | {:error, :too_many_changes | term()}
@@ -667,8 +688,6 @@ defmodule Messaging.Chat do
     end
   end
 
-  # After an edit: forget the users the message no longer reaches, notify the
-  # ones it reaches for the first time.
   defp sync_mentions(%Message{} = before, %Message{} = after_edit, recipient_ids) do
     if Message.mentions?(before) do
       case repo().delete_mentions(after_edit.id, recipient_ids) do
@@ -721,9 +740,6 @@ defmodule Messaging.Chat do
     end
   end
 
-  # With a client id the message id is derived from it, so a retried send maps
-  # to the same id and the insert, the outbox upsert and the broadcast are all
-  # idempotent by id.
   defp message_id(_channel_id, _user_id, nil), do: UUID.generate_v7()
 
   defp message_id(channel_id, user_id, client_id),
@@ -1110,6 +1126,11 @@ defmodule Messaging.Chat do
     next_cursor = if rest == [], do: nil, else: List.last(messages).id
     ordered = if direction == :backward, do: Enum.reverse(messages), else: messages
     {:ok, ordered, next_cursor}
+  end
+
+  defp take_side(docs, half) do
+    {page, rest} = Enum.split(docs, half)
+    {Enum.map(page, &Message.from_doc/1), rest != []}
   end
 
   defp clamp_limit(n) when is_integer(n) and n > 0 and n <= @max_page_limit, do: n

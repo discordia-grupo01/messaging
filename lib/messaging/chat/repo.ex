@@ -5,6 +5,13 @@ defmodule Messaging.Chat.Repo do
   @callback insert_message(doc :: map()) :: {:ok, map()} | {:error, term()}
   @callback list_messages(channel_id :: String.t(), opts :: keyword()) ::
               {:ok, [map()]} | {:error, term()}
+  @callback search_messages(channel_ids :: [String.t()], opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+  @callback count_search_matches(
+              channel_ids :: [String.t()],
+              opts :: keyword(),
+              limit :: pos_integer()
+            ) :: {:ok, non_neg_integer()} | {:error, term()}
   @callback update_message(
               id :: String.t(),
               channel_id :: String.t(),
@@ -73,6 +80,8 @@ defmodule Messaging.Chat.Repo do
             ) :: {:ok, :applied | :stale} | {:error, term()}
   @callback get_clock(key :: String.t()) :: map() | nil | {:error, term()}
   @callback list_channel_ids(server_id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  @callback list_text_channel_ids(server_id :: String.t()) ::
+              {:ok, [String.t()]} | {:error, term()}
   @callback get_channel(channel_id :: String.t()) :: map() | nil | {:error, term()}
   @callback upsert_channel(doc :: map()) :: :ok | {:error, term()}
   @callback delete_channel(channel_id :: String.t()) :: :ok | {:error, term()}
@@ -124,6 +133,8 @@ defmodule Messaging.Chat.Repo do
   @callback list_roles(server_id :: String.t()) :: {:ok, [map()]} | {:error, term()}
   @callback get_channel_overrides(channel_id :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
+  @callback list_channel_overrides(channel_ids :: [String.t()]) ::
+              {:ok, %{String.t() => [map()]}} | {:error, term()}
   @callback user_known?(user_id :: String.t()) :: boolean() | {:error, term()}
   @callback insert_attachment(doc :: map()) :: :ok | {:error, term()}
   @callback count_pending_attachments(user_id :: String.t()) ::
