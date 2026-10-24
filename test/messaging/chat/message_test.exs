@@ -53,6 +53,32 @@ defmodule Messaging.Chat.MessageTest do
     end
   end
 
+  describe "client_id" do
+    @doc_with_client %{
+      "_id" => "msg-1",
+      "channel_id" => "chan-1",
+      "server_id" => "srv-1",
+      "user_id" => "user-1",
+      "content" => "hola",
+      "inserted_at" => ~U[2026-09-28 12:00:00Z],
+      "client_id" => "c-1"
+    }
+
+    test "a stored client id comes back in the API payload" do
+      message = Message.from_doc(@doc_with_client)
+
+      assert message.client_id == "c-1"
+      assert %{"client_id" => "c-1"} = Message.to_api(message)
+    end
+
+    test "a message without one does not carry the key" do
+      payload =
+        @doc_with_client |> Map.delete("client_id") |> Message.from_doc() |> Message.to_api()
+
+      refute Map.has_key?(payload, "client_id")
+    end
+  end
+
   describe "to_api/1" do
     test "serializes with string keys and a Z-suffixed ISO 8601 timestamp" do
       message = %Message{

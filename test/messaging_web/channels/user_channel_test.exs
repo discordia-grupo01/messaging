@@ -84,6 +84,42 @@ defmodule MessagingWeb.UserChannelTest do
       assert conversation_id == dm_id(@ana, @beto)
     end
 
+    test "a retried send with the same client id returns the same message and notifies once" do
+      stub_new_conversation(@ana, @beto)
+      {:ok, stored} = Agent.start_link(fn -> [] end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc ->
+        Agent.update(stored, &[doc | &1])
+        {:ok, doc}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :get_message, fn id ->
+        Enum.find(Agent.get(stored, & &1), &(&1["_id"] == id))
+      end)
+
+      ana = join_own(@ana)
+      payload = %{"to" => @beto, "content" => "hola", "client_id" => "c-1"}
+
+      ref = push(ana, "send_dm", payload)
+      assert_reply ref, :ok, %{"message" => %{"id" => id, "client_id" => "c-1"}}
+      assert_push "new_dm", %{"message" => %{"id" => ^id, "client_id" => "c-1"}}
+
+      retry = push(ana, "send_dm", payload)
+      assert_reply retry, :ok, %{"message" => %{"id" => ^id}}
+      refute_push "new_dm", _payload
+
+      assert [_one] = Agent.get(stored, & &1)
+    end
+
+    test "an invalid client id is rejected" do
+      stub_new_conversation(@ana, @beto)
+      ana = join_own(@ana)
+
+      ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola", "client_id" => 7})
+
+      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+    end
+
     test "CA1: the recipient is notified on their own topic even with no conversation open" do
       stub_new_conversation(@ana, @beto)
       ana = join_own(@ana)

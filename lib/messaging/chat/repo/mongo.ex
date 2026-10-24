@@ -381,9 +381,22 @@ defmodule Messaging.Chat.Repo.Mongo do
     set = if expires_at, do: Map.put(set, "expires_at", expires_at), else: set
     filter = %{"_id" => key, "at" => %{"$lte" => at}}
 
+    upsert_clock(filter, set, 1)
+  end
+
+  # A duplicate key means either a newer clock exists (stale) or a concurrent upsert
+  # inserted the document between our match and our insert. Retrying once tells them apart.
+  defp upsert_clock(filter, set, retries) do
     case Mongo.update_one(@conn, @clocks, filter, %{"$set" => set}, upsert: true) do
-      {:ok, _result} -> {:ok, :applied}
-      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+      {:ok, _result} ->
+        {:ok, :applied}
+
+      {:error, error} ->
+        cond do
+          not duplicate_key?(error) -> {:error, error}
+          retries > 0 -> upsert_clock(filter, set, retries - 1)
+          true -> {:ok, :stale}
+        end
     end
   end
 
