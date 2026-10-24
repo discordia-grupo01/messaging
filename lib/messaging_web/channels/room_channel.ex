@@ -71,25 +71,25 @@ defmodule MessagingWeb.RoomChannel do
   end
 
   defp dispatch("new_message", payload, socket) when is_map(payload) do
-    case MessagePayload.content(payload) do
-      {:ok, content} ->
-        params = %{
-          channel_id: socket.assigns.channel_id,
-          user_id: socket.assigns.user_id,
-          content: content,
-          attachment_ids: Map.get(payload, "attachment_ids")
-        }
+    with {:ok, content} <- MessagePayload.content(payload),
+         {:ok, client_id} <- MessagePayload.client_id(payload) do
+      params = %{
+        channel_id: socket.assigns.channel_id,
+        user_id: socket.assigns.user_id,
+        content: content,
+        attachment_ids: Map.get(payload, "attachment_ids"),
+        client_id: client_id
+      }
 
-        case Chat.send_message(params) do
-          {:ok, _message} ->
-            {:reply, :ok, socket}
+      case Chat.send_message(params) do
+        {:ok, message} ->
+          {:reply, {:ok, Message.to_api(message)}, socket}
 
-          {:error, reason} ->
-            {:reply, {:error, ApiError.payload(reason)}, socket}
-        end
-
-      :error ->
-        {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+        {:error, reason} ->
+          {:reply, {:error, ApiError.payload(reason)}, socket}
+      end
+    else
+      :error -> {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
     end
   end
 

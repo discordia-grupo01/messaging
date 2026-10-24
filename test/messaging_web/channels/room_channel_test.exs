@@ -61,6 +61,80 @@ defmodule MessagingWeb.RoomChannelTest do
     assert_push "new_message", %{"content" => "hola a todos", "user_id" => "user-a"}
   end
 
+  describe "client_id" do
+    setup do
+      {:ok, stored} = Agent.start_link(fn -> [] end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc ->
+        Agent.update(stored, &[doc | &1])
+        {:ok, doc}
+      end)
+
+      stub(Messaging.Chat.RepoMock, :get_message, fn id ->
+        Enum.find(Agent.get(stored, & &1), &(&1["_id"] == id))
+      end)
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+
+      %{socket: socket, stored: stored}
+    end
+
+    test "the reply carries the message and the broadcast echoes the client id", %{
+      socket: socket
+    } do
+      ref = push(socket, "new_message", %{"content" => "hola", "client_id" => "c-1"})
+
+      assert_reply ref, :ok, %{"id" => id, "content" => "hola", "client_id" => "c-1"}
+      assert_push "new_message", %{"id" => ^id, "client_id" => "c-1"}
+    end
+
+    test "a retried send with the same client id returns the same message and stores it once",
+         %{socket: socket, stored: stored} do
+      ref = push(socket, "new_message", %{"content" => "hola", "client_id" => "c-1"})
+      assert_reply ref, :ok, %{"id" => id}
+      assert_push "new_message", %{"id" => ^id}
+
+      retry = push(socket, "new_message", %{"content" => "hola", "client_id" => "c-1"})
+      assert_reply retry, :ok, %{"id" => ^id}
+      refute_push "new_message", _payload
+
+      assert [%{"_id" => ^id, "client_id" => "c-1"}] = Agent.get(stored, & &1)
+    end
+
+    test "different client ids make different messages", %{socket: socket} do
+      first = push(socket, "new_message", %{"content" => "a", "client_id" => "c-1"})
+      assert_reply first, :ok, %{"id" => first_id}
+
+      second = push(socket, "new_message", %{"content" => "b", "client_id" => "c-2"})
+      assert_reply second, :ok, %{"id" => second_id}
+
+      refute first_id == second_id
+    end
+
+    test "the same client id from another user makes another message", %{socket: socket} do
+      other = join_socket("user-b")
+
+      {:ok, _reply, other_socket} =
+        subscribe_and_join(other, RoomChannel, "channel:" <> @channel_id)
+
+      mine = push(socket, "new_message", %{"content" => "a", "client_id" => "c-1"})
+      assert_reply mine, :ok, %{"id" => mine_id}
+
+      theirs = push(other_socket, "new_message", %{"content" => "b", "client_id" => "c-1"})
+      assert_reply theirs, :ok, %{"id" => theirs_id}
+
+      refute mine_id == theirs_id
+    end
+
+    test "an invalid client id is rejected", %{socket: socket} do
+      for bad <- ["", 12, String.duplicate("x", 65)] do
+        ref = push(socket, "new_message", %{"content" => "hola", "client_id" => bad})
+        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      end
+    end
+  end
+
   describe "attachments" do
     defp attachment_doc(id),
       do: %{

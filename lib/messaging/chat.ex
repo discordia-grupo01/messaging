@@ -29,6 +29,7 @@ defmodule Messaging.Chat do
   @max_page_limit 100
   @max_changes 200
   @clock_skew_ms 5_000
+  @message_namespace "6c1b7f0e-2d4a-4b8e-9f35-1a7e0c5d3b92"
 
   def max_message_length, do: @max_message_length
   def max_page_limit, do: @max_page_limit
@@ -39,7 +40,8 @@ defmodule Messaging.Chat do
           required(:channel_id) => String.t(),
           required(:user_id) => String.t(),
           required(:content) => String.t(),
-          optional(:attachment_ids) => term()
+          optional(:attachment_ids) => term(),
+          optional(:client_id) => String.t() | nil
         }
 
   @spec send_message(send_message_params()) ::
@@ -59,9 +61,16 @@ defmodule Messaging.Chat do
          {:ok, true} <- check_permission(channel, user_id),
          :ok <- check_word_filter(channel, trimmed),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
-         {:ok, message} <-
-           persist_message(channel, user_id, trimmed, mentions, attachment_ids) do
-      record_mentions(message, mentions.recipient_ids)
+         {:ok, message, outcome} <-
+           persist_message(
+             channel,
+             user_id,
+             trimmed,
+             mentions,
+             attachment_ids,
+             Map.get(params, :client_id)
+           ) do
+      if outcome == :created, do: record_mentions(message, mentions.recipient_ids)
       {:ok, message}
     else
       {:ok, false} -> {:error, :forbidden}
@@ -225,7 +234,8 @@ defmodule Messaging.Chat do
           required(:sender_id) => String.t(),
           required(:recipient_id) => term(),
           required(:content) => String.t(),
-          optional(:attachment_ids) => term()
+          optional(:attachment_ids) => term(),
+          optional(:client_id) => String.t() | nil
         }
 
   @spec send_direct_message(send_direct_params()) ::
@@ -243,9 +253,16 @@ defmodule Messaging.Chat do
          {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          :ok <- Blocks.check_contact(sender_id, recipient_id),
          {:ok, channel} <- ensure_conversation(sender_id, recipient_id),
-         {:ok, message} <-
-           persist_message(channel, sender_id, trimmed, Mentions.none(), attachment_ids) do
-      record_last_message(channel, message)
+         {:ok, message, outcome} <-
+           persist_message(
+             channel,
+             sender_id,
+             trimmed,
+             Mentions.none(),
+             attachment_ids,
+             Map.get(params, :client_id)
+           ) do
+      if outcome == :created, do: record_last_message(channel, message)
       {:ok, channel, message}
     end
   end
@@ -674,11 +691,13 @@ defmodule Messaging.Chat do
          user_id,
          content,
          mentions,
-         attachment_ids
+         attachment_ids,
+         client_id
        ) do
-    id = UUID.generate_v7()
+    id = message_id(channel.channel_id, user_id, client_id)
 
-    with {:ok, attachment_docs} <- claim_attachments(attachment_ids, user_id, channel, id) do
+    with :none <- existing_message(id, client_id),
+         {:ok, attachment_docs} <- claim_attachments(attachment_ids, user_id, channel, id) do
       message = %Message{
         id: id,
         channel_id: channel.channel_id,
@@ -686,13 +705,36 @@ defmodule Messaging.Chat do
         user_id: user_id,
         content: content,
         inserted_at: DateTime.utc_now() |> DateTime.truncate(:millisecond),
+        client_id: client_id,
         mentions: mentions.user_ids,
         mention_roles: mentions.role_ids,
         mention_everyone: mentions.everyone,
         attachments: Enum.map(attachment_docs, &Attachment.embed/1)
       }
 
-      insert_message(message, mentions, attachment_ids, channel)
+      with {:ok, message} <- insert_message(message, mentions, attachment_ids, channel) do
+        {:ok, message, :created}
+      end
+    else
+      {:duplicate, message} -> {:ok, message, :duplicate}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # With a client id the message id is derived from it, so a retried send maps
+  # to the same id and the insert, the outbox upsert and the broadcast are all
+  # idempotent by id.
+  defp message_id(_channel_id, _user_id, nil), do: UUID.generate_v7()
+
+  defp message_id(channel_id, user_id, client_id),
+    do: UUID.v5(@message_namespace, channel_id <> ":" <> user_id <> ":" <> client_id)
+
+  defp existing_message(_id, nil), do: :none
+
+  defp existing_message(id, _client_id) do
+    case repo().get_message(id) do
+      %{"_id" => ^id} = doc -> {:duplicate, Message.from_doc(doc)}
+      _none -> :none
     end
   end
 
@@ -713,6 +755,7 @@ defmodule Messaging.Chat do
       }
       |> with_mention_fields(message, mentions)
       |> with_attachment_field(message)
+      |> with_client_id_field(message)
 
     case Outbox.enqueue(created_entries(message, doc, channel, mentions)) do
       :ok ->
@@ -804,6 +847,9 @@ defmodule Messaging.Chat do
 
   defp with_attachment_field(doc, %Message{attachments: attachments}),
     do: Map.put(doc, "attachments", attachments)
+
+  defp with_client_id_field(doc, %Message{client_id: nil}), do: doc
+  defp with_client_id_field(doc, %Message{client_id: id}), do: Map.put(doc, "client_id", id)
 
   # Only messages with mentions carry the fields, so the rest stay as before.
   defp with_mention_fields(doc, message, mentions) do
