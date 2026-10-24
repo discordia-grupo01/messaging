@@ -140,6 +140,54 @@ defmodule MessagingWeb.MessageControllerTest do
              json_response(conn, 200)
   end
 
+  test "`around` returns the messages on both sides of one, with a cursor per side",
+       %{conn: conn} do
+    allow_view()
+    at = ~U[2026-09-28 12:00:05Z]
+
+    expect(Messaging.Chat.RepoMock, :get_message, fn "msg-5" -> message_doc("msg-5", at) end)
+
+    expect(Messaging.Chat.RepoMock, :list_messages, 2, fn @channel_id, opts ->
+      if opts[:before] == {at, "msg-5"} do
+        {:ok,
+         [
+           message_doc("msg-4", ~U[2026-09-28 12:00:04Z]),
+           message_doc("msg-3", ~U[2026-09-28 12:00:03Z])
+         ]}
+      else
+        {:ok, [message_doc("msg-6", ~U[2026-09-28 12:00:06Z])]}
+      end
+    end)
+
+    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?around=msg-5&limit=2")
+
+    assert %{
+             "messages" => [%{"id" => "msg-4"}, %{"id" => "msg-5"}, %{"id" => "msg-6"}],
+             "next_cursor" => "msg-4",
+             "newer_cursor" => nil
+           } = json_response(conn, 200)
+  end
+
+  test "400s when `around` comes with `before` or `after`", %{conn: conn} do
+    allow_view()
+
+    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?around=a&before=b")
+
+    assert json_response(conn, 400)["error"]["code"] == "INVALID_CURSOR"
+  end
+
+  test "404s when the `around` message is from another channel", %{conn: conn} do
+    allow_view()
+
+    expect(Messaging.Chat.RepoMock, :get_message, fn "x" ->
+      message_doc("x", ~U[2026-09-28 12:00:00Z], "other-channel")
+    end)
+
+    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?around=x")
+
+    assert json_response(conn, 404)["error"]["code"] == "MESSAGE_NOT_FOUND"
+  end
+
   test "400s when `before` and `after` are sent together", %{conn: conn} do
     allow_view()
 
