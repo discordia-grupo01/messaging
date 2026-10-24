@@ -22,6 +22,7 @@ defmodule Messaging.Chat.SearchTest do
 
     stub(Messaging.Chat.RepoMock, :get_server_owner, fn "srv-1" -> "owner-1" end)
     stub(Messaging.Chat.RepoMock, :list_roles, fn "srv-1" -> {:ok, Fixtures.roles()} end)
+
     stub(Messaging.Chat.RepoMock, :list_text_channel_ids, fn "srv-1" ->
       {:ok, ~w(general staff)}
     end)
