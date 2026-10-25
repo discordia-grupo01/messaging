@@ -712,8 +712,10 @@ defmodule Messaging.Chat do
         attachments: Enum.map(attachment_docs, &Attachment.embed/1)
       }
 
-      with {:ok, message} <- insert_message(message, mentions, attachment_ids, channel) do
-        {:ok, message, :created}
+      case insert_message(message, mentions, attachment_ids, channel) do
+        {:ok, message} -> {:ok, message, :created}
+        {:duplicate, message} -> {:ok, message, :duplicate}
+        {:error, _reason} = error -> error
       end
     else
       {:duplicate, message} -> {:ok, message, :duplicate}
@@ -722,8 +724,8 @@ defmodule Messaging.Chat do
   end
 
   # With a client id the message id is derived from it, so a retried send maps
-  # to the same id and the insert, the outbox upsert and the broadcast are all
-  # idempotent by id.
+  # to the same id: a later retry finds the stored message, and one racing the
+  # original is stopped by the outbox, which enqueues each creation event once.
   defp message_id(_channel_id, _user_id, nil), do: UUID.generate_v7()
 
   defp message_id(channel_id, user_id, client_id),
@@ -760,6 +762,17 @@ defmodule Messaging.Chat do
     case Outbox.enqueue(created_entries(message, doc, channel, mentions)) do
       :ok ->
         store_message(message, doc)
+
+      :duplicate ->
+        Logger.info("message_send_deduplicated",
+          channel_id: message.channel_id,
+          message_id: message.id
+        )
+
+        case existing_message(message.id, message.client_id) do
+          {:duplicate, stored} -> {:duplicate, stored}
+          :none -> {:duplicate, message}
+        end
 
       {:error, reason} ->
         Logger.error("message_enqueue_failed",
