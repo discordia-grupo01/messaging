@@ -11,7 +11,7 @@ defmodule Messaging.Outbox do
           optional(:channel_id) => String.t() | nil
         }
 
-  @spec enqueue([entry()]) :: :ok | {:error, term()}
+  @spec enqueue([entry()]) :: :ok | :duplicate | {:error, term()}
   def enqueue([]), do: :ok
 
   def enqueue(entries) when is_list(entries) do

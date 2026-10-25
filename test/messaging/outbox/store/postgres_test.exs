@@ -39,12 +39,15 @@ if database_host do
     defp restore(key, nil), do: Application.delete_env(:messaging, key)
     defp restore(key, value), do: Application.put_env(:messaging, key, value)
 
-    defp reset_schema do
+    defp reset_schema(migrations \\ Path.wildcard("migrations/*.up.sql")) do
       Postgrex.query!(Postgres, "DROP SCHEMA IF EXISTS #{@schema} CASCADE", [])
       Postgrex.query!(Postgres, "CREATE SCHEMA #{@schema}", [])
+      migrations |> Enum.sort() |> Enum.each(&migrate/1)
+    end
 
+    defp migrate(path) do
       statements =
-        "migrations/0001_outbox_events.up.sql"
+        path
         |> File.read!()
         |> String.split(";")
         |> Enum.map(&String.trim/1)
@@ -156,6 +159,61 @@ if database_host do
 
       assert {:error, _reason} = Store.insert([good, bad])
       assert count() == 0
+    end
+
+    test "a message's creation events are enqueued once per topic" do
+      dm = fn topic -> row("m1", "new_dm", %{topic: topic, apply: nil}) end
+      created = [row("m1"), dm.("user:ana"), dm.("user:beto")]
+
+      assert :ok = Store.insert(created)
+      assert :duplicate = Store.insert([row("m1"), dm.("user:ana"), dm.("user:beto")])
+      assert count() == 3
+    end
+
+    test "a batch with an already enqueued creation event inserts nothing" do
+      :ok = Store.insert([row("m1")])
+
+      assert :duplicate = Store.insert([row("m2"), row("m1")])
+      assert count() == 1
+    end
+
+    test "the creation event of a published message is still not enqueued again" do
+      :ok = Store.insert([row("m1")])
+      {:ok, 1} = Store.process_pending(10, &publish_all/1)
+
+      assert :duplicate = Store.insert([row("m1")])
+    end
+
+    test "other events of the same message can repeat" do
+      updated = fn -> row("m1", "message_updated", %{apply: nil}) end
+
+      assert :ok = Store.insert([updated.()])
+      assert :ok = Store.insert([updated.()])
+      assert count() == 2
+    end
+
+    test "two inserts of the same creation event at once: one wins, the other is a duplicate" do
+      results =
+        1..2
+        |> Enum.map(fn _ -> Task.async(fn -> Store.insert([row("m1")]) end) end)
+        |> Enum.map(&Task.await/1)
+
+      assert Enum.sort(results) == [:duplicate, :ok]
+      assert count() == 1
+    end
+
+    test "adding the creation index keeps only the first of the creation events already repeated" do
+      reset_schema(["migrations/0001_outbox_events.up.sql"])
+      first = row("m1")
+      repeated = row("m1")
+      updates = for _ <- 1..2, do: row("m1", "message_updated", %{apply: nil})
+      Enum.each([first, repeated | updates], &Store.insert([&1]))
+
+      migrate("migrations/0002_outbox_events_created_once.up.sql")
+
+      assert count() == 3
+      assert %{event: "new_message"} = fetch(first.id)
+      assert :duplicate = Store.insert([row("m1")])
     end
 
     test "events come out in the order they were recorded" do

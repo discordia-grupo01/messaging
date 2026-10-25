@@ -22,14 +22,19 @@ defmodule Messaging.Outbox.Store do
 
   @type outcome :: :ok | {:retry, term()} | {:error, term()}
 
-  @callback insert([row()]) :: :ok | {:error, term()}
+  @doc """
+  Inserts every row or none. `:duplicate` means a creation event (`new_message`,
+  `new_dm`, `messaging.message_created`) for the same message and topic was
+  already enqueued, so nothing was inserted.
+  """
+  @callback insert([row()]) :: :ok | :duplicate | {:error, term()}
 
   @callback process_pending(limit :: pos_integer(), ([pending()] -> [{String.t(), outcome()}])) ::
               {:ok, non_neg_integer()} | {:error, term()}
 
   @callback ping() :: :ok | {:error, term()}
 
-  @spec insert([row()]) :: :ok | {:error, term()}
+  @spec insert([row()]) :: :ok | :duplicate | {:error, term()}
   def insert(rows), do: impl().insert(rows)
 
   @spec process_pending(pos_integer(), ([pending()] -> [{String.t(), outcome()}])) ::

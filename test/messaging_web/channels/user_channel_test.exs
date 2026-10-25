@@ -111,6 +111,32 @@ defmodule MessagingWeb.UserChannelTest do
       assert [_one] = Agent.get(stored, & &1)
     end
 
+    test "a retry that races the original (not stored yet) notifies and updates the conversation once" do
+      stub_new_conversation(@ana, @beto)
+      Messaging.OutboxHelper.stub_outbox_once()
+      {:ok, last_messages} = Agent.start_link(fn -> 0 end)
+
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      stub(Messaging.Chat.RepoMock, :get_message, fn _id -> nil end)
+
+      stub(Messaging.Chat.RepoMock, :record_last_message, fn _channel, _id, _user, _at ->
+        Agent.update(last_messages, &(&1 + 1))
+      end)
+
+      ana = join_own(@ana)
+      payload = %{"to" => @beto, "content" => "hola", "client_id" => "c-1"}
+
+      ref = push(ana, "send_dm", payload)
+      assert_reply ref, :ok, %{"message" => %{"id" => id}}
+      assert_push "new_dm", %{"message" => %{"id" => ^id}}
+
+      retry = push(ana, "send_dm", payload)
+      assert_reply retry, :ok, %{"message" => %{"id" => ^id}}
+      refute_push "new_dm", _payload
+
+      assert Agent.get(last_messages, & &1) == 1
+    end
+
     test "an invalid client id is rejected" do
       stub_new_conversation(@ana, @beto)
       ana = join_own(@ana)
