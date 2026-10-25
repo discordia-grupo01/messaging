@@ -30,6 +30,9 @@ defmodule MessagingWeb.ApiErrorTest do
     assert ApiError.http_status(:dm_not_delivered) == 403
     assert ApiError.http_status(:message_not_found) == 404
     assert ApiError.http_status(:invalid_payload) == 400
+    assert ApiError.http_status(:invalid_search_query) == 400
+    assert ApiError.http_status(:not_server_member) == 403
+    assert ApiError.http_status(:search_unavailable) == 503
   end
 
   test "describe/1 covers every reason with a non-empty code and message" do
@@ -51,7 +54,10 @@ defmodule MessagingWeb.ApiErrorTest do
           :dm_not_delivered,
           :recipient_not_found,
           :users_unavailable,
-          :invalid_payload
+          :invalid_payload,
+          :invalid_search_query,
+          :not_server_member,
+          :search_unavailable
         ] do
       assert {code, message} = ApiError.describe(reason)
       assert code != ""

@@ -63,6 +63,54 @@ defmodule Messaging.Chat.Repo.Mongo do
   defp live(filter), do: Map.put(filter, "deleted_at", nil)
 
   @impl true
+  def search_messages([], _opts), do: {:ok, []}
+
+  def search_messages(channel_ids, opts) do
+    filter = channel_ids |> search_filter(opts) |> older_than(opts[:before])
+    sort = [inserted_at: -1, _id: -1]
+
+    case Mongo.find(@conn, @messages, filter, sort: sort, limit: Keyword.fetch!(opts, :limit)) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.to_list(cursor)}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
+  def count_search_matches([], _opts, _limit), do: {:ok, 0}
+
+  def count_search_matches(channel_ids, opts, limit) do
+    Mongo.count_documents(@conn, @messages, search_filter(channel_ids, opts), limit: limit)
+  rescue
+    error -> {:error, error}
+  end
+
+  defp search_filter(channel_ids, opts) do
+    %{"channel_id" => %{"$in" => channel_ids}}
+    |> live()
+    |> containing(opts[:text])
+    |> written_by(opts[:author_id])
+  end
+
+  defp containing(filter, nil), do: filter
+
+  defp containing(filter, text),
+    do: Map.put(filter, "content", %BSON.Regex{pattern: Regex.escape(text), options: "i"})
+
+  defp written_by(filter, nil), do: filter
+  defp written_by(filter, author_id), do: Map.put(filter, "user_id", author_id)
+
+  defp older_than(filter, nil), do: filter
+
+  defp older_than(filter, {%DateTime{} = at, id}) do
+    Map.put(filter, "$or", [
+      %{"inserted_at" => %{"$lt" => at}},
+      %{"inserted_at" => at, "_id" => %{"$lt" => id}}
+    ])
+  end
+
+  @impl true
   def update_message(id, channel_id, user_id, content, edited_at, mention_fields) do
     filter = live(%{"_id" => id, "channel_id" => channel_id, "user_id" => user_id})
 
@@ -415,6 +463,18 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def list_text_channel_ids(server_id) do
+    filter = %{"server_id" => server_id, "kind" => "text"}
+
+    case Mongo.find(@conn, @channels, filter, projection: %{"_id" => 1}) do
+      {:error, reason} -> {:error, reason}
+      cursor -> {:ok, Enum.map(cursor, & &1["_id"])}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  @impl true
   def get_channel(channel_id), do: Mongo.find_one(@conn, @channels, %{"_id" => channel_id})
 
   @impl true
@@ -748,6 +808,15 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def list_channel_overrides([]), do: {:ok, %{}}
+
+  def list_channel_overrides(channel_ids) do
+    with {:ok, docs} <- list(@replica_overrides, %{"_id" => %{"$in" => channel_ids}}) do
+      {:ok, Map.new(docs, &{&1["_id"], Map.get(&1, "overrides", [])})}
+    end
+  end
+
+  @impl true
   def user_known?(user_id) do
     case Mongo.find_one(@conn, @replica_users, %{"_id" => user_id}, projection: %{"_id" => 1}) do
       nil -> false
@@ -817,6 +886,10 @@ defmodule Messaging.Chat.Repo.Mongo do
         name: "messages_channel_changed_at",
         key: [channel_id: 1, changed_at: 1],
         partialFilterExpression: %{"changed_at" => %{"$exists" => true}}
+      ],
+      [
+        name: "messages_channel_user_inserted_at_id",
+        key: [channel_id: 1, user_id: 1, inserted_at: -1, _id: -1]
       ]
     ]
 
@@ -825,7 +898,8 @@ defmodule Messaging.Chat.Repo.Mongo do
         name: "dm_participants_last_message_at",
         key: [participants: 1, last_message_at: -1],
         partialFilterExpression: %{"kind" => "dm"}
-      ]
+      ],
+      [name: "channels_server_kind", key: [server_id: 1, kind: 1]]
     ]
 
     block_indexes = [[name: "blocks_blocker_created_at", key: [blocker_id: 1, created_at: -1]]]

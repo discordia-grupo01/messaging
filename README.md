@@ -309,9 +309,12 @@ compatibles con la versión anterior (agregar, no renombrar ni borrar).
   edita un mensaje propio (ver [Editar mensajes](#editar-mensajes)).
 - `DELETE /v1/channels/:channel_id/messages/:message_id` -- elimina un mensaje (ver
   [Eliminar mensajes](#eliminar-mensajes)).
-- `GET /v1/channels/:channel_id/messages?limit=&before=<id>&after=<id>` --
+- `GET /v1/channels/:channel_id/messages?limit=&before=<id>&after=<id>&around=<id>` --
   historial paginado por cursor, cada página en orden cronológico. Requiere
-  `VIEW_CHANNELS`.
+  `VIEW_CHANNELS`. `around` trae el historial alrededor de un mensaje (ver
+  [Historial y reconexión](#historial-y-reconexión)).
+- `GET /v1/servers/:server_id/messages/search?q=&author_id=&channel_id=&limit=&before=` --
+  busca mensajes del servidor (ver [Buscar mensajes](#buscar-mensajes)).
 - `GET /livez`, `GET /readyz` (`readyz` pinguea Mongo).
 
 Formato de error (REST y WS) siempre `{ "error": { "code", "message", "details" } }`.
@@ -396,6 +399,15 @@ página anterior con `?before=<next_cursor>` hasta que `next_cursor` sea `null`.
 `?after=<id>` hace lo inverso: devuelve lo posterior a ese mensaje, también en
 orden cronológico. `before` y `after` no se pueden combinar y el cursor tiene
 que ser un mensaje de ese mismo canal (si no, `400 INVALID_CURSOR`).
+
+**Alrededor de un mensaje.** `?around=<id>` devuelve ese mensaje con hasta
+`limit / 2` mensajes antes y `limit / 2` después, en orden cronológico. Sirve
+para saltar a un resultado de la [búsqueda](#buscar-mensajes) aunque esté muy
+atrás en el historial. Además de `next_cursor` (hay más viejos: pasarlo como
+`before`), la respuesta trae `newer_cursor` (hay más nuevos: pasarlo como
+`after`); cuando `newer_cursor` es `null` se llegó al presente. `around` no se
+combina con `before` ni `after` (`400 INVALID_CURSOR`), y si el mensaje no
+existe, es de otro canal o fue eliminado responde `404 MESSAGE_NOT_FOUND`.
 
 **Orden.** Se ordena por `(inserted_at, _id)`. Mongo guarda fechas con
 milisegundos, así que dos mensajes del mismo milisegundo se desempatan por
@@ -819,6 +831,25 @@ solo `POST /v1/attachments` responde `503`. La ruta está en Kong (`messaging-at
 responde 401): se habilita en Settings > Security > "PDF and ZIP files delivery". La subida se hace
 con `resource_type=auto`, y `messaging` guarda en `path` el tipo que Cloudinary asignó
 (`image/<public_id>`, `raw/<public_id>`) para poder borrar el archivo después.
+
+## Buscar mensajes
+Historia #49. `GET /v1/servers/:server_id/messages/search?q=&author_id=&channel_id=&limit=&before=`
+
+- `q` busca el texto **dentro** del mensaje, sin distinguir mayúsculas ("mens"
+  encuentra "Mensaje"); hasta 100 caracteres. `author_id` filtra por autor.
+  Tiene que venir al menos uno; juntos se combinan. `channel_id` acota a un canal.
+- Solo busca en los canales de texto donde el usuario tiene `VIEW_CHANNELS`
+  (misma regla que el historial). Nunca devuelve mensajes eliminados.
+- Responde de la coincidencia más nueva a la más vieja:
+  `{ "messages": [...], "next_cursor", "total", "total_capped" }`. Se sigue con
+  `?before=<next_cursor>`. `total` viene solo en la primera página, con tope de 1000.
+- Sin resultados: `200` con `messages: []`.
+- Para abrir un resultado: `GET /v1/channels/:channel_id/messages?around=<id>`.
+- Errores: `INVALID_SEARCH_QUERY` / `INVALID_CURSOR` (400), `NOT_SERVER_MEMBER` /
+  `FORBIDDEN` (403), `CHANNEL_NOT_FOUND` (404), `SEARCH_UNAVAILABLE` (503).
+
+El término se escapa y se busca con regex (`$text` solo encuentra palabras
+enteras). Índices: `messages_channel_user_inserted_at_id` y `channels_server_kind`.
 
 ## Mongo con TLS (Atlas)
 Si `MONGO_URL` pide TLS (`?ssl=true`, `?tls=true` o `mongodb+srv://`),

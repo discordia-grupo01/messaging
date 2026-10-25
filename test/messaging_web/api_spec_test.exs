@@ -26,5 +26,8 @@ defmodule MessagingWeb.ApiSpecTest do
 
     assert %{post: %OpenApiSpex.Operation{}} =
              spec.paths["/v1/channels/{channel_id}/mentions/read"]
+
+    assert %{get: %OpenApiSpex.Operation{}} =
+             spec.paths["/v1/servers/{server_id}/messages/search"]
   end
 end
