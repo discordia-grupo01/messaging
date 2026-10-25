@@ -560,13 +560,13 @@ defmodule Messaging.Chat.Repo.Mongo do
       "_id" => %{"$in" => ids},
       "user_id" => user_id,
       "channel_id" => channel_id,
-      "message_id" => nil,
+      "message_id" => %{"$in" => [nil, message_id]},
       "orphaned_at" => nil
     }
 
     update = %{"$set" => %{"message_id" => message_id}}
 
-    with {:ok, %Mongo.UpdateResult{modified_count: count}} <-
+    with {:ok, %Mongo.UpdateResult{matched_count: count}} <-
            Mongo.update_many(@conn, @attachments, filter, update),
          :ok <- ensure_claimed(count, length(ids), message_id) do
       docs = @conn |> Mongo.find(@attachments, %{"message_id" => message_id}) |> Enum.to_list()

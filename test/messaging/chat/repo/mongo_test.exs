@@ -57,6 +57,30 @@ if mongo_url do
       if cursor, do: walk_forward(channel_id, cursor, acc), else: acc
     end
 
+    test "claiming attachments again for the same message is fine; another message cannot take them",
+         %{channel_id: channel_id} do
+      ids = for _ <- 1..2, do: "att-" <> Messaging.UUID.generate()
+
+      for id <- ids do
+        :ok =
+          Repo.insert_attachment(%{
+            "_id" => id,
+            "user_id" => "user-1",
+            "channel_id" => channel_id,
+            "message_id" => nil,
+            "orphaned_at" => nil
+          })
+      end
+
+      assert {:ok, [_, _]} = Repo.claim_attachments(ids, "user-1", channel_id, "m1")
+      assert {:ok, [_, _]} = Repo.claim_attachments(ids, "user-1", channel_id, "m1")
+
+      assert {:error, :invalid_attachment} =
+               Repo.claim_attachments(ids, "user-1", channel_id, "m2")
+
+      assert {:ok, [_, _]} = Repo.claim_attachments(ids, "user-1", channel_id, "m1")
+    end
+
     test "inserting a message id that already exists is an error, not an exception", %{
       channel_id: channel_id
     } do

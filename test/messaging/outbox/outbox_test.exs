@@ -36,6 +36,12 @@ defmodule Messaging.OutboxTest do
     assert {:error, :timeout} = Outbox.enqueue([@entry])
   end
 
+  test "an already enqueued creation event is returned as a duplicate" do
+    expect(Messaging.Outbox.StoreMock, :insert, fn _rows -> :duplicate end)
+
+    assert :duplicate = Outbox.enqueue([@entry])
+  end
+
   test "the poller is woken up as soon as something is recorded" do
     test_pid = self()
     stub(Messaging.Outbox.StoreMock, :insert, fn _rows -> :ok end)

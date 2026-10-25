@@ -102,6 +102,22 @@ defmodule MessagingWeb.RoomChannelTest do
       assert [%{"_id" => ^id, "client_id" => "c-1"}] = Agent.get(stored, & &1)
     end
 
+    test "a retry that races the original (not stored yet) is not broadcast again",
+         %{socket: socket, stored: stored} do
+      Messaging.OutboxHelper.stub_outbox_once()
+      stub(Messaging.Chat.RepoMock, :get_message, fn _id -> nil end)
+
+      ref = push(socket, "new_message", %{"content" => "hola", "client_id" => "c-1"})
+      assert_reply ref, :ok, %{"id" => id}
+      assert_push "new_message", %{"id" => ^id}
+
+      retry = push(socket, "new_message", %{"content" => "hola", "client_id" => "c-1"})
+      assert_reply retry, :ok, %{"id" => ^id, "client_id" => "c-1"}
+      refute_push "new_message", _payload
+
+      assert [%{"_id" => ^id}] = Agent.get(stored, & &1)
+    end
+
     test "different client ids make different messages", %{socket: socket} do
       first = push(socket, "new_message", %{"content" => "a", "client_id" => "c-1"})
       assert_reply first, :ok, %{"id" => first_id}

@@ -15,6 +15,7 @@ defmodule Messaging.Outbox.Store.Postgres do
         fn conn ->
           Enum.each(rows, fn row ->
             case Postgrex.query(conn, insert_sql(), insert_params(row)) do
+              {:ok, %Postgrex.Result{num_rows: 0}} -> DBConnection.rollback(conn, :duplicate)
               {:ok, _result} -> :ok
               {:error, reason} -> DBConnection.rollback(conn, reason)
             end
@@ -25,6 +26,7 @@ defmodule Messaging.Outbox.Store.Postgres do
 
     case result do
       {:ok, _} -> :ok
+      {:error, :duplicate} -> :duplicate
       {:error, reason} -> {:error, reason}
     end
   rescue
@@ -65,6 +67,7 @@ defmodule Messaging.Outbox.Store.Postgres do
     """
     INSERT INTO #{table()} (id, event, topic, payload, apply, message_id, channel_id)
     VALUES ($1::text::uuid, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, $7)
+    ON CONFLICT DO NOTHING
     """
   end
 
