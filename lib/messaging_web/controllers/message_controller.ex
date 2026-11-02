@@ -83,6 +83,48 @@ defmodule MessagingWeb.MessageController do
     end
   end
 
+  operation :lookup,
+    summary: "Mensajes por id",
+    description:
+      "Devuelve los mensajes pedidos (hasta 50, separados por coma) que existen, no fueron " <>
+        "eliminados y están en un canal que el usuario puede ver (`VIEW_CHANNELS`, o ser parte " <>
+        "de la conversación en un mensaje directo). Los demás se omiten sin avisar, así que no " <>
+        "se revela si existen. Vienen en el orden pedido. Sirve para mostrar el texto de cada " <>
+        "entrada de `GET /v1/notifications/history`, que solo guarda ids.",
+    parameters: [
+      ids: [
+        in: :query,
+        type: :string,
+        required: true,
+        description: "Ids de mensaje separados por coma (de 1 a 50)"
+      ]
+    ],
+    responses: [
+      ok: {"Mensajes visibles", "application/json", Schemas.MessageLookup},
+      bad_request:
+        {"Falta `ids`, viene vacío o tiene más de 50", "application/json", Schemas.ErrorResponse},
+      unauthorized:
+        {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
+         Schemas.ErrorResponse},
+      service_unavailable:
+        {"No se pudieron leer los mensajes", "application/json", Schemas.ErrorResponse}
+    ]
+
+  def lookup(conn, params) do
+    with {:ok, ids} <- parse_ids(params),
+         {:ok, messages} <- Chat.lookup_messages(ids, conn.assigns.user_id) do
+      json(conn, %{"messages" => Enum.map(messages, &Message.to_api/1)})
+    else
+      {:error, :invalid_payload} ->
+        conn |> put_status(400) |> json(ApiError.payload(:invalid_payload))
+
+      {:error, _reason} ->
+        conn
+        |> put_status(ApiError.http_status(:messages_unavailable))
+        |> json(ApiError.payload(:messages_unavailable))
+    end
+  end
+
   operation :update,
     summary: "Editar un mensaje propio",
     description:
@@ -184,6 +226,19 @@ defmodule MessagingWeb.MessageController do
       {:ok, messages, %{"next_cursor" => next_cursor}}
     end
   end
+
+  defp parse_ids(%{"ids" => raw}) when is_binary(raw) do
+    ids =
+      raw
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    if ids == [], do: {:error, :invalid_payload}, else: {:ok, ids}
+  end
+
+  defp parse_ids(_params), do: {:error, :invalid_payload}
 
   defp fetch_content(%{"content" => content}) when is_binary(content), do: {:ok, content}
   defp fetch_content(_params), do: {:error, :invalid_payload}

@@ -20,6 +20,7 @@ defmodule MessagingWeb.Router do
     pipe_through [:api, :authenticated]
 
     get "/channels/:channel_id/messages", MessageController, :index
+    get "/messages", MessageController, :lookup
     patch "/channels/:channel_id/messages/:message_id", MessageController, :update
     delete "/channels/:channel_id/messages/:message_id", MessageController, :delete
     get "/servers/:server_id/messages/search", SearchController, :index
