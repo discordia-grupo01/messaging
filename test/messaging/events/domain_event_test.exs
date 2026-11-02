@@ -21,6 +21,9 @@ defmodule Messaging.Events.DomainEventTest do
   test "exposes the topic and the routing key the publisher and the contract agree on" do
     assert DomainEvent.topic() == "domain"
     assert DomainEvent.routing_key_message_created() == "messaging.message_created"
+
+    assert DomainEvent.routing_key_direct_message_created() ==
+             "messaging.direct_message_created"
   end
 
   test "message_created/2 builds an outbox entry that is ordered with the message's other events" do
@@ -57,5 +60,34 @@ defmodule Messaging.Events.DomainEventTest do
 
     assert {:ok, json} = Jason.encode(payload)
     assert %{"mentioned_user_ids" => ["user-2"]} = Jason.decode!(json)
+  end
+
+  describe "direct_message_created/2" do
+    defp direct_message, do: message(%{server_id: nil, channel_id: "conversation-1"})
+
+    test "builds an outbox entry on the domain topic, ordered with the message's other events" do
+      entry = DomainEvent.direct_message_created(direct_message(), "user-2")
+
+      assert entry.event == "messaging.direct_message_created"
+      assert entry.topic == "domain"
+      assert entry.message_id == "01a16a21-7df1-7001-8e37-5a0fdc09d1cd"
+      assert entry.channel_id == "conversation-1"
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries ids and the time, and nothing the message says" do
+      assert %{payload: payload} = DomainEvent.direct_message_created(direct_message(), "user-2")
+
+      assert payload == %{
+               "occurred_at" => "2026-10-24T15:00:00.123Z",
+               "conversation_id" => "conversation-1",
+               "message_id" => "01a16a21-7df1-7001-8e37-5a0fdc09d1cd",
+               "author_id" => "user-1",
+               "recipient_id" => "user-2"
+             }
+
+      refute inspect(payload) =~ "texto privado"
+      assert {:ok, _json} = Jason.encode(payload)
+    end
   end
 end

@@ -173,7 +173,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       capture_log(fn -> assert {:error, :messages_unavailable} = send_hola() end)
     end
 
-    test "a direct message records the message and one notification per participant at once" do
+    test "a direct message records the message, one notification per participant and the domain event at once" do
       record_outbox()
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
       stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
@@ -183,19 +183,48 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       conversation = Conversation.id(@user, @other)
       assert_received {:outbox, rows}
-      assert Enum.map(rows, & &1.event) == ["new_message", "new_dm", "new_dm"]
+
+      assert Enum.map(rows, & &1.event) ==
+               ["new_message", "new_dm", "new_dm", "messaging.direct_message_created"]
 
       assert Enum.map(rows, & &1.topic) ==
-               ["channel:" <> conversation, "user:" <> @user, "user:" <> @other]
+               ["channel:" <> conversation, "user:" <> @user, "user:" <> @other, "domain"]
 
       assert Enum.all?(rows, &(&1.message_id == id))
 
-      [_message, mine, theirs] = rows
+      [_message, mine, theirs, _domain] = rows
       assert mine.payload["partner_id"] == @other
       assert theirs.payload["partner_id"] == @user
       assert mine.payload["conversation_id"] == conversation
       assert mine.payload["message"]["id"] == id
       assert is_nil(Map.get(mine, :apply)) and is_nil(Map.get(theirs, :apply))
+    end
+
+    test "a direct message tells the other services who wrote to whom, with ids only and never the text" do
+      record_outbox()
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
+
+      assert {:ok, _channel, %Message{id: id, inserted_at: inserted_at}} =
+               Chat.send_direct_message(%{sender_id: @user, recipient_id: @other, content: "hola"})
+
+      assert_received {:outbox, rows}
+      domain = List.last(rows)
+
+      assert domain.event == "messaging.direct_message_created"
+      assert domain.message_id == id
+      assert domain.channel_id == Conversation.id(@user, @other)
+      assert is_nil(Map.get(domain, :apply))
+
+      assert domain.payload == %{
+               "occurred_at" => DateTime.to_iso8601(inserted_at),
+               "conversation_id" => Conversation.id(@user, @other),
+               "message_id" => id,
+               "author_id" => @user,
+               "recipient_id" => @other
+             }
+
+      refute inspect(domain.payload) =~ "hola"
     end
   end
 

@@ -848,6 +848,16 @@ defmodule Messaging.Chat do
       domain_entries(channel, message, mentions)
   end
 
+  defp domain_entries(
+         %ChannelCache{kind: "dm", participants: participants},
+         %Message{} = message,
+         _mentions
+       ) do
+    for recipient_id <- participants,
+        recipient_id != message.user_id,
+        do: DomainEvent.direct_message_created(message, recipient_id)
+  end
+
   defp domain_entries(%ChannelCache{server_id: nil}, _message, _mentions), do: []
 
   defp domain_entries(%ChannelCache{}, %Message{} = message, %Mentions{} = mentions),
