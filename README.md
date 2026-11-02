@@ -201,11 +201,20 @@ mensajes anteriores siguen visibles para los demás.
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
 ## Eventos que publica
-Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
-detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
-dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
-`message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
-`access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción que el mensaje):
+
+| Routing key | Cuándo | Payload (solo ids, nunca el texto) |
+|---|---|---|
+| `messaging.message_created` | Se crea un mensaje en un canal de un servidor | `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (ya resueltos y validados, sin el autor) |
+| `messaging.direct_message_created` | Se crea un mensaje directo | `occurred_at`, `conversation_id`, `message_id`, `author_id`, `recipient_id` |
+
+Los consume `notifications` (no leídos, menciones e historial). El contrato vive en
+[`events-contract`](https://github.com/discordia-grupo01/events-contract) y en el AsyncAPI de `docs`.
+
+La propagación de mensajes enviados entre instancias es un detalle interno de escalado
+(`messaging.broadcast`, ver ADR), no un evento de dominio para otros servicios. Lo que viaja por ahí
+es siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
+`mention` y `access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
 `disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
 `presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
 perderlo.
