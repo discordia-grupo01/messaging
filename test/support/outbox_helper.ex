@@ -8,7 +8,12 @@ defmodule Messaging.OutboxHelper do
     end)
   end
 
-  @creation_events ["new_message", "new_dm", "messaging.message_created"]
+  @creation_events [
+    "new_message",
+    "new_dm",
+    "messaging.message_created",
+    "messaging.direct_message_created"
+  ]
 
   @doc "Like `stub_outbox/0`, but a creation event already enqueued is a `:duplicate`, as in Postgres."
   def stub_outbox_once do
