@@ -587,4 +587,177 @@ defmodule MessagingWeb.MessageControllerTest do
       assert json_response(conn, 404)["error"]["code"] == "CHANNEL_NOT_FOUND"
     end
   end
+
+  describe "GET /v1/messages (lookup)" do
+    @other_channel_id "chan-2"
+    @at ~U[2026-09-28 12:00:00Z]
+
+    defp server_channel_doc(channel_id),
+      do: %{
+        "_id" => channel_id,
+        "server_id" => @server_id,
+        "name" => channel_id,
+        "kind" => "text"
+      }
+
+    defp stub_channels(channels) do
+      stub(Messaging.Chat.RepoMock, :get_channel, fn id -> Map.get(channels, id) end)
+    end
+
+    defp stub_view(allowed) do
+      stub(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn %{channel_id: id}, _user ->
+        {:ok, id in allowed}
+      end)
+    end
+
+    test "requires Authorization", %{conn: conn} do
+      conn = get(conn, "/v1/messages?ids=msg-1")
+      assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
+    end
+
+    test "returns the requested messages in the requested order", %{conn: conn} do
+      stub_channels(%{@channel_id => server_channel_doc(@channel_id)})
+      stub_view([@channel_id])
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn ["msg-2", "msg-1"] ->
+        {:ok, [message_doc("msg-1", @at), message_doc("msg-2", @at)]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-2,msg-1")
+
+      assert %{
+               "messages" => [
+                 %{"id" => "msg-2"},
+                 %{"id" => "msg-1", "content" => "mensaje msg-1"}
+               ]
+             } =
+               json_response(conn, 200)
+    end
+
+    test "trims blanks and repeated ids before asking the repo", %{conn: conn} do
+      stub_channels(%{@channel_id => server_channel_doc(@channel_id)})
+      stub_view([@channel_id])
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn ["msg-1", "msg-2"] ->
+        {:ok, [message_doc("msg-1", @at), message_doc("msg-2", @at)]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1,%20msg-2,,msg-1")
+
+      assert %{"messages" => [%{"id" => "msg-1"}, %{"id" => "msg-2"}]} = json_response(conn, 200)
+    end
+
+    test "omits messages from channels the user cannot view without saying why", %{conn: conn} do
+      stub_channels(%{
+        @channel_id => server_channel_doc(@channel_id),
+        @other_channel_id => server_channel_doc(@other_channel_id)
+      })
+
+      stub_view([@channel_id])
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids ->
+        {:ok,
+         [message_doc("msg-1", @at, @channel_id), message_doc("msg-2", @at, @other_channel_id)]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1,msg-2")
+
+      assert %{"messages" => [%{"id" => "msg-1"}]} = json_response(conn, 200)
+    end
+
+    test "omits deleted messages and ids that do not exist", %{conn: conn} do
+      stub_channels(%{@channel_id => server_channel_doc(@channel_id)})
+      stub_view([@channel_id])
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids ->
+        {:ok,
+         [
+           message_doc("msg-1", @at),
+           Map.put(message_doc("msg-2", @at), "deleted_at", ~U[2026-09-28 12:05:00Z])
+         ]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1,msg-2,msg-3")
+
+      assert %{"messages" => [%{"id" => "msg-1"}]} = json_response(conn, 200)
+    end
+
+    test "omits messages whose channel no longer exists", %{conn: conn} do
+      stub_channels(%{})
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids ->
+        {:ok, [message_doc("msg-1", @at)]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1")
+
+      assert %{"messages" => []} = json_response(conn, 200)
+    end
+
+    test "a participant sees a direct message and an outsider does not", %{conn: conn} do
+      dm = %{
+        "_id" => "dm-1",
+        "server_id" => nil,
+        "name" => "",
+        "kind" => "dm",
+        "participants" => ["user-1", "user-2"]
+      }
+
+      stub_channels(%{"dm-1" => dm})
+
+      stub(Messaging.Chat.RepoMock, :get_messages, fn _ids ->
+        {:ok, [Map.put(message_doc("msg-1", @at, "dm-1"), "server_id", nil)]}
+      end)
+
+      assert %{"messages" => [%{"id" => "msg-1"}]} =
+               conn |> authed("user-2") |> get("/v1/messages?ids=msg-1") |> json_response(200)
+
+      assert %{"messages" => []} =
+               conn |> authed("user-3") |> get("/v1/messages?ids=msg-1") |> json_response(200)
+    end
+
+    test "rejects a missing or empty ids parameter", %{conn: conn} do
+      for path <- ["/v1/messages", "/v1/messages?ids=", "/v1/messages?ids=,%20,"] do
+        response = conn |> authed() |> get(path)
+        assert json_response(response, 400)["error"]["code"] == "INVALID_PAYLOAD"
+      end
+    end
+
+    test "rejects more than 50 ids without touching the repo", %{conn: conn} do
+      ids = Enum.map_join(1..51, ",", &"msg-#{&1}")
+
+      conn = conn |> authed() |> get("/v1/messages?ids=#{ids}")
+
+      assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+    end
+
+    test "accepts exactly 50 ids", %{conn: conn} do
+      ids = Enum.map(1..50, &"msg-#{&1}")
+      expect(Messaging.Chat.RepoMock, :get_messages, fn ^ids -> {:ok, []} end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=#{Enum.join(ids, ",")}")
+
+      assert %{"messages" => []} = json_response(conn, 200)
+    end
+
+    test "answers 503 when the repo fails", %{conn: conn} do
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids -> {:error, :timeout} end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1")
+
+      assert json_response(conn, 503)["error"]["code"] == "MESSAGES_UNAVAILABLE"
+    end
+
+    test "answers 503 when a channel cannot be read", %{conn: conn} do
+      stub(Messaging.Chat.RepoMock, :get_channel, fn _id -> {:error, :timeout} end)
+
+      expect(Messaging.Chat.RepoMock, :get_messages, fn _ids ->
+        {:ok, [message_doc("msg-1", @at)]}
+      end)
+
+      conn = conn |> authed() |> get("/v1/messages?ids=msg-1")
+
+      assert json_response(conn, 503)["error"]["code"] == "MESSAGES_UNAVAILABLE"
+    end
+  end
 end

@@ -299,6 +299,17 @@ defmodule MessagingWeb.Schemas do
     })
   end
 
+  defmodule MessageLookup do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MessageLookup",
+      type: :object,
+      properties: %{messages: %Schema{type: :array, items: Message}},
+      required: [:messages]
+    })
+  end
+
   defmodule MentionList do
     require OpenApiSpex
 
