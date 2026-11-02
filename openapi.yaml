@@ -401,6 +401,20 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.MessageList
       x-validate:
+    MessageLookup:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - messages
+      title: MessageLookup
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.MessageLookup
+      x-validate:
     MessageSearchResult:
       description: Coincidencias de la búsqueda, de la más nueva a la más vieja. Sin coincidencias, `messages` viene vacío (no es un error).
       properties:
@@ -1068,6 +1082,48 @@ paths:
       summary: Mis menciones sin leer
       tags:
         - mentions
+  /v1/messages:
+    get:
+      callbacks: {}
+      description: Devuelve los mensajes pedidos (hasta 50, separados por coma) que existen, no fueron eliminados y están en un canal que el usuario puede ver (`VIEW_CHANNELS`, o ser parte de la conversación en un mensaje directo). Los demás se omiten sin avisar, así que no se revela si existen. Vienen en el orden pedido. Sirve para mostrar el texto de cada entrada de `GET /v1/notifications/history`, que solo guarda ids.
+      operationId: MessagingWeb.MessageController.lookup
+      parameters:
+        - description: Ids de mensaje separados por coma (de 1 a 50)
+          in: query
+          name: ids
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageLookup'
+          description: Mensajes visibles
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Falta `ids`, viene vacío o tiene más de 50
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudieron leer los mensajes
+      summary: Mensajes por id
+      tags:
+        - messages
   /v1/presence:
     get:
       callbacks: {}

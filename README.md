@@ -310,6 +310,8 @@ compatibles con la versión anterior (agregar, no renombrar ni borrar).
 - `GET /v1/presence?user_ids=a,b,c`: ver [Estado de actividad](#estado-de-actividad).
 - `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
   [Menciones](#menciones).
+- `GET /v1/messages?ids=a,b,c` -- trae varios mensajes por id (ver
+  [Mensajes por id](#mensajes-por-id)).
 - `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
   [Mensajes directos](#mensajes-directos-dm).
 - `POST /v1/blocks`, `DELETE /v1/blocks/:user_id` y `GET /v1/blocks` -- ver
@@ -453,6 +455,22 @@ Garantías y casos borde:
 - Al abrir un canal conviene hacer primero el `join` (y bufferear lo que llegue
   en vivo) y después pedir el historial, deduplicando por `id`, para no perder
   lo enviado entre ambos pasos.
+
+## Mensajes por id
+
+`GET /v1/messages?ids=<id>,<id>,...` devuelve los mensajes pedidos (de 1 a 50 ids
+separados por coma; repetidos y espacios se descartan) como `{"messages": [...]}`,
+en el orden pedido y con la misma forma que el historial. Sirve para mostrar el
+texto de cada entrada de `GET /v1/notifications/history`, que solo guarda ids.
+
+- **Permisos:** un mensaje sale solo si el canal existe y el usuario puede verlo
+  (`VIEW_CHANNELS`, o ser parte de la conversación en un DM). Los que no cumplen,
+  los eliminados y los ids que no existen se **omiten sin avisar**: la respuesta no
+  revela si un mensaje existe en un canal ajeno. Por eso puede traer menos
+  mensajes que ids pedidos.
+- **Errores:** `400 INVALID_PAYLOAD` si falta `ids`, viene vacío o tiene más de 50;
+  `503 MESSAGES_UNAVAILABLE` si no se pudo leer Mongo; `401` sin JWT.
+- No trae reacciones (para eso está el historial del canal).
 
 ## Eliminar mensajes
 Un mensaje se elimina por REST (`DELETE /v1/channels/:channel_id/messages/:message_id`,
