@@ -37,6 +37,24 @@ defmodule Messaging.Chat do
   def max_message_length, do: @max_message_length
   def max_page_limit, do: @max_page_limit
 
+  @spec authorize_private_voice(String.t(), String.t(), String.t()) ::
+          :ok | {:error, term()}
+  def authorize_private_voice(user_id, recipient_id, conversation_id) do
+    with :ok <- Suspension.ensure_active(user_id),
+         {:ok, channel} <- fetch_channel(conversation_id),
+         true <- channel.server_id == nil,
+         true <- user_id in channel.participants,
+         true <- recipient_id in channel.participants,
+         :ok <- Blocks.check_contact(user_id, recipient_id) do
+      :ok
+    else
+      false -> {:error, :forbidden}
+      {:error, :user_blocked} -> {:error, :forbidden}
+      {:error, :dm_not_delivered} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp repo, do: Application.get_env(:messaging, :chat_repo, Messaging.Chat.Repo.Mongo)
 
   @type send_message_params :: %{
