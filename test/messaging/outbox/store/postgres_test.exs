@@ -116,7 +116,7 @@ if database_host do
       r = row("m1")
       assert :ok = Store.insert([r])
 
-      assert {:ok, 1} =
+      assert {:ok, 0} =
                Store.process_pending(10, fn [pending] ->
                  assert pending.id == r.id
                  assert pending.event == "new_message"
@@ -144,6 +144,39 @@ if database_host do
       assert stored.event == "new_message"
       assert stored.message_id == "m1"
       assert count() == 1
+    end
+
+    test "it counts only the rows that were published" do
+      :ok = Store.insert([row("m1"), row("m2")])
+
+      assert {:ok, 1} =
+               Store.process_pending(10, fn [first, second] ->
+                 [{first.id, :ok}, {second.id, {:retry, :unavailable}}]
+               end)
+
+      assert {:ok, 0} =
+               Store.process_pending(10, fn [pending] ->
+                 [{pending.id, {:retry, :unavailable}}]
+               end)
+    end
+
+    test "the events of one message come out in order, one per poll" do
+      first = row("m1", "new_message", %{apply: nil})
+      second = row("m1", "message_updated", %{apply: nil})
+      :ok = Store.insert([first])
+      :ok = Store.insert([second])
+
+      assert {:ok, 1} =
+               Store.process_pending(10, fn [pending] ->
+                 assert pending.id == first.id
+                 [{pending.id, :ok}]
+               end)
+
+      assert {:ok, 1} =
+               Store.process_pending(10, fn [pending] ->
+                 assert pending.id == second.id
+                 [{pending.id, :ok}]
+               end)
     end
 
     test "a published event is never returned again" do
@@ -258,7 +291,7 @@ if database_host do
       second = row("m1", "message_updated", %{apply: nil})
       Enum.each([first, second], &Store.insert([&1]))
 
-      {:ok, 1} = Store.process_pending(10, fn [p] -> [{p.id, {:retry, :not_connected}}] end)
+      {:ok, 0} = Store.process_pending(10, fn [p] -> [{p.id, {:retry, :not_connected}}] end)
 
       {:ok, 1} =
         Store.process_pending(10, fn [pending] ->
@@ -321,7 +354,7 @@ if database_host do
       r = row("m1")
       :ok = Store.insert([r])
 
-      {:ok, 1} = Store.process_pending(10, fn [p] -> [{p.id, {:error, {:invalid, :date}}}] end)
+      {:ok, 0} = Store.process_pending(10, fn [p] -> [{p.id, {:error, {:invalid, :date}}}] end)
 
       stored = fetch(r.id)
       assert stored.attempts == 1
@@ -335,7 +368,7 @@ if database_host do
       :ok = Store.insert([r])
 
       for _ <- 1..15 do
-        {:ok, 1} = Store.process_pending(10, fn [p] -> [{p.id, {:retry, :not_connected}}] end)
+        {:ok, 0} = Store.process_pending(10, fn [p] -> [{p.id, {:retry, :not_connected}}] end)
       end
 
       stored = fetch(r.id)
@@ -349,7 +382,7 @@ if database_host do
       :ok = Store.insert([r])
 
       for _ <- 1..10 do
-        {:ok, 1} = Store.process_pending(10, fn [p] -> [{p.id, {:error, :boom}}] end)
+        {:ok, 0} = Store.process_pending(10, fn [p] -> [{p.id, {:error, :boom}}] end)
       end
 
       assert {:ok, 0} = Store.process_pending(10, fn [] -> [] end)
