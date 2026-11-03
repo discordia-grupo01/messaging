@@ -100,7 +100,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert {:ok, _datetime, _offset} = DateTime.from_iso8601(doc["inserted_at"])
     end
 
-    test "tells the other services about it, with ids only and never the text" do
+    test "tells the other services about it, with the ids and a short preview of the text" do
       record_outbox()
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
 
@@ -119,10 +119,10 @@ defmodule Messaging.Chat.OutboxFlowTest do
                "channel_id" => "chan-1",
                "message_id" => id,
                "author_id" => @user,
-               "mentioned_user_ids" => []
+               "mentioned_user_ids" => [],
+               "channel_name" => "general",
+               "content_preview" => "hola"
              }
-
-      refute inspect(domain.payload) =~ "hola"
     end
 
     test "carries the users it mentions, as already validated by the resolver" do
@@ -153,7 +153,8 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert_received {:outbox, [_created, domain]}
       assert domain.payload["message_id"] == id
       assert domain.payload["mentioned_user_ids"] == ["user-2"]
-      refute inspect(domain.payload) =~ "hola"
+      assert domain.payload["content_preview"] == "hola @usuario @usuario"
+      refute inspect(domain.payload) =~ "<@user"
     end
 
     test "the order really is outbox, then Mongo" do
@@ -200,7 +201,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert is_nil(Map.get(mine, :apply)) and is_nil(Map.get(theirs, :apply))
     end
 
-    test "a direct message tells the other services who wrote to whom, with ids only and never the text" do
+    test "a direct message tells the other services who wrote to whom, with a short preview of the text" do
       record_outbox()
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
       stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
@@ -221,10 +222,9 @@ defmodule Messaging.Chat.OutboxFlowTest do
                "conversation_id" => Conversation.id(@user, @other),
                "message_id" => id,
                "author_id" => @user,
-               "recipient_id" => @other
+               "recipient_id" => @other,
+               "content_preview" => "hola"
              }
-
-      refute inspect(domain.payload) =~ "hola"
     end
   end
 

@@ -860,8 +860,8 @@ defmodule Messaging.Chat do
 
   defp domain_entries(%ChannelCache{server_id: nil}, _message, _mentions), do: []
 
-  defp domain_entries(%ChannelCache{}, %Message{} = message, %Mentions{} = mentions),
-    do: [DomainEvent.message_created(message, mentions.recipient_ids)]
+  defp domain_entries(%ChannelCache{} = channel, %Message{} = message, %Mentions{} = mentions),
+    do: [DomainEvent.message_created(message, mentions.recipient_ids, channel.name)]
 
   defp direct_entries(
          %ChannelCache{kind: "dm", participants: participants} = channel,

@@ -203,12 +203,18 @@ mensajes anteriores siguen visibles para los demás.
 ## Eventos que publica
 En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción que el mensaje):
 
-| Routing key | Cuándo | Payload (solo ids, nunca el texto) |
+| Routing key | Cuándo | Payload |
 |---|---|---|
-| `messaging.message_created` | Se crea un mensaje en un canal de un servidor | `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (ya resueltos y validados, sin el autor) |
-| `messaging.direct_message_created` | Se crea un mensaje directo | `occurred_at`, `conversation_id`, `message_id`, `author_id`, `recipient_id` |
+| `messaging.message_created` | Se crea un mensaje en un canal de un servidor | `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (ya resueltos y validados, sin el autor), `channel_name` y `content_preview` (opcionales) |
+| `messaging.direct_message_created` | Se crea un mensaje directo | `occurred_at`, `conversation_id`, `message_id`, `author_id`, `recipient_id`, `content_preview` (opcional) |
 
-Los consume `notifications` (no leídos, menciones e historial). El contrato vive en
+**Texto en los eventos de mensaje.** `content_preview` existe solo para armar el aviso push sin
+que `notifications` llame a `messaging`. Son unos 140 caracteres: las menciones se reemplazan por
+`@usuario` y `@rol`, los espacios se compactan, y si el mensaje tiene solo archivos dice `Archivo
+adjunto`. Sin texto ni archivos no viaja. `notifications` lo usa y lo descarta; no lo guarda.
+`channel_name` evita buscar el nombre del canal.
+
+Los consume `notifications` (no leídos, menciones, historial y push). El contrato vive en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract) y en el AsyncAPI de `docs`.
 
 La propagación de mensajes enviados entre instancias es un detalle interno de escalado
