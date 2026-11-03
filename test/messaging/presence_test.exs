@@ -7,6 +7,17 @@ defmodule Messaging.PresenceTest do
 
   setup :verify_on_exit!
 
+  setup do
+    test_pid = self()
+
+    stub(Messaging.Outbox.StoreMock, :insert, fn rows ->
+      send(test_pid, {:outbox, rows})
+      :ok
+    end)
+
+    :ok
+  end
+
   @ana "11111111-1111-4111-8111-111111111111"
   @beto "22222222-2222-4222-8222-222222222222"
   @cami "33333333-3333-4333-8333-333333333333"
@@ -334,5 +345,178 @@ defmodule Messaging.PresenceTest do
 
   test "idle_after_ms/0 has a default of five minutes" do
     assert Presence.idle_after_ms() == 300_000
+  end
+
+  describe "push state events" do
+    defp push_event do
+      assert_received {:outbox, [event]}
+      event
+    end
+
+    test "the first connection tells the other services the user is active" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:connect, "c1", "i-1"}, {:ok, {:changed, doc("online", [], 4)}})
+
+      assert {:ok, "online"} = Presence.connect(@ana, "c1", "i-1")
+
+      event = push_event()
+      assert event.event == "messaging.user_presence_changed"
+      assert event.topic == "domain"
+      refute Map.has_key?(event, :message_id)
+
+      assert %{
+               "user_id" => @ana,
+               "connections" => "active",
+               "do_not_disturb" => false,
+               "version" => 5,
+               "occurred_at" => occurred_at
+             } = event.payload
+
+      assert {:ok, _at, _offset} = DateTime.from_iso8601(occurred_at)
+    end
+
+    test "a second tab does not repeat what the others already know" do
+      expect_change({:connect, "c2", "i-1"}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+      assert {:ok, "online"} = Presence.connect(@ana, "c2", "i-1")
+      refute_received {:outbox, _}
+    end
+
+    test "the only connection going idle is reported as idle" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:activity, "c1", true}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+      assert :ok = Presence.set_activity(@ana, "c1", true)
+      assert push_event().payload["connections"] == "idle"
+    end
+
+    test "coming back from idle is reported as active again" do
+      stub_audience()
+      capture_publishes()
+
+      expect_change(
+        {:activity, "c1", false},
+        {:ok, {:changed, doc("online", [conn("c1", true)])}}
+      )
+
+      assert :ok = Presence.set_activity(@ana, "c1", false)
+      assert push_event().payload["connections"] == "active"
+    end
+
+    test "one idle tab while another stays active changes nothing" do
+      expect_change(
+        {:activity, "c1", true},
+        {:ok, {:changed, doc("online", [conn("c1"), conn("phone")])}}
+      )
+
+      assert :ok = Presence.set_activity(@ana, "c1", true)
+      refute_received {:outbox, _}
+    end
+
+    test "choosing do not disturb is reported, keeping the connections as they are" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:set_manual, "dnd"}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+      assert :ok = Presence.set_manual(@ana, "dnd")
+
+      assert %{"connections" => "active", "do_not_disturb" => true} = push_event().payload
+    end
+
+    test "leaving do not disturb is reported" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:set_manual, "online"}, {:ok, {:changed, doc("dnd", [conn("c1")])}})
+
+      assert :ok = Presence.set_manual(@ana, "online")
+
+      assert %{"do_not_disturb" => false} = push_event().payload
+    end
+
+    test "being invisible or idle by choice does not change who gets a push" do
+      for choice <- ["invisible", "idle"] do
+        stub_audience()
+        capture_publishes()
+        expect_change({:set_manual, choice}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+        assert :ok = Presence.set_manual(@ana, choice)
+        refute_received {:outbox, _}
+      end
+    end
+
+    test "an invisible user with the app open still counts as active" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:connect, "c2", "i-1"}, {:ok, {:changed, doc("invisible", [])}})
+
+      assert {:ok, "invisible"} = Presence.connect(@ana, "c2", "i-1")
+      assert push_event().payload["connections"] == "active"
+    end
+
+    test "closing the last connection is reported as none" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:disconnect, "c1"}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+      assert :ok = Presence.disconnect(@ana, "c1")
+      assert push_event().payload["connections"] == "none"
+    end
+
+    test "closing one tab out of two reports nothing" do
+      expect_change(
+        {:disconnect, "c1"},
+        {:ok, {:changed, doc("online", [conn("c1"), conn("c2")])}}
+      )
+
+      assert :ok = Presence.disconnect(@ana, "c1")
+      refute_received {:outbox, _}
+    end
+
+    test "an instance that died takes its connections with it, and that is reported" do
+      stub_audience()
+      capture_publishes()
+      on_dead_instance = Map.put(conn("c1"), "instance", "dead")
+
+      expect_change(
+        {:drop_instance, "dead"},
+        {:ok, {:changed, doc("online", [on_dead_instance])}}
+      )
+
+      assert :ok = Presence.drop_instance(@ana, "dead")
+      assert push_event().payload["connections"] == "none"
+    end
+
+    test "a change that did not happen reports nothing" do
+      expect_change({:disconnect, "c1"}, {:ok, :unchanged})
+
+      assert :ok = Presence.disconnect(@ana, "c1")
+      refute_received {:outbox, _}
+    end
+
+    test "the version travels with the event, growing with each change" do
+      stub_audience()
+      capture_publishes()
+      expect_change({:disconnect, "c1"}, {:ok, {:changed, doc("online", [conn("c1")], 41)}})
+
+      assert :ok = Presence.disconnect(@ana, "c1")
+      assert push_event().payload["version"] == 42
+    end
+
+    test "if the event cannot be queued the presence change still counts, and it is logged" do
+      stub_audience()
+      capture_publishes()
+      stub(Messaging.Outbox.StoreMock, :insert, fn _rows -> {:error, :timeout} end)
+      expect_change({:disconnect, "c1"}, {:ok, {:changed, doc("online", [conn("c1")])}})
+
+      log =
+        capture_log(fn ->
+          assert :ok = Presence.disconnect(@ana, "c1")
+        end)
+
+      assert log =~ "presence_event_enqueue_failed"
+      assert_received {:published, "presence:srv-1", "presence_updated", %{"status" => "offline"}}
+    end
   end
 end

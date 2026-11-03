@@ -24,6 +24,8 @@ defmodule Messaging.Events.DomainEventTest do
 
     assert DomainEvent.routing_key_direct_message_created() ==
              "messaging.direct_message_created"
+
+    assert DomainEvent.routing_key_user_presence_changed() == "messaging.user_presence_changed"
   end
 
   test "message_created/3 builds an outbox entry that is ordered with the message's other events" do
@@ -127,6 +129,44 @@ defmodule Messaging.Events.DomainEventTest do
 
       assert %{payload: payload} = DomainEvent.direct_message_created(empty, "user-2")
       refute Map.has_key?(payload, "content_preview")
+    end
+  end
+
+  describe "user_presence_changed/4" do
+    test "builds an outbox entry on the domain topic, with no message to order it by" do
+      entry = DomainEvent.user_presence_changed("user-1", "active", false, 7)
+
+      assert entry.event == "messaging.user_presence_changed"
+      assert entry.topic == "domain"
+      refute Map.has_key?(entry, :message_id)
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries who, the real connection state, do not disturb and the version" do
+      assert %{payload: payload} = DomainEvent.user_presence_changed("user-1", "idle", true, 9)
+
+      assert %{
+               "user_id" => "user-1",
+               "connections" => "idle",
+               "do_not_disturb" => true,
+               "version" => 9,
+               "occurred_at" => occurred_at
+             } = payload
+
+      assert map_size(payload) == 5
+      assert {:ok, _at, _offset} = DateTime.from_iso8601(occurred_at)
+    end
+
+    test "always sends do_not_disturb, also when it is false" do
+      assert %{payload: %{"do_not_disturb" => false}} =
+               DomainEvent.user_presence_changed("user-1", "none", false, 1)
+    end
+
+    test "the payload encodes to JSON" do
+      %{payload: payload} = DomainEvent.user_presence_changed("user-1", "active", false, 3)
+
+      assert %{"connections" => "active", "version" => 3} =
+               payload |> Jason.encode!() |> Jason.decode!()
     end
   end
 end

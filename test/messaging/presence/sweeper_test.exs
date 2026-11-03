@@ -15,6 +15,7 @@ defmodule Messaging.Presence.SweeperTest do
     # Nobody hears about the changes in these tests: no servers, no DMs.
     stub(Messaging.Presence.StoreMock, :member_server_ids, fn _ -> {:ok, []} end)
     stub(Messaging.Presence.StoreMock, :dm_partner_ids, fn _, _ -> {:ok, []} end)
+    stub(Messaging.Outbox.StoreMock, :insert, fn _rows -> :ok end)
     :ok
   end
 

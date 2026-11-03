@@ -2,7 +2,9 @@ defmodule Messaging.Presence do
   require Logger
 
   alias Messaging.Chat.{Blocks, Repo}
+  alias Messaging.Events.DomainEvent
   alias Messaging.Log
+  alias Messaging.Outbox
   alias Messaging.Presence.{Notifier, Status, Store}
 
   @default_idle_after_ms 5 * 60 * 1000
@@ -101,6 +103,7 @@ defmodule Messaging.Presence do
       {:ok, {:changed, before}} ->
         after_doc = Status.apply_change(before, change)
         notify_if_visible(user_id, before, after_doc)
+        publish_push_state(user_id, before, after_doc)
         {:ok, after_doc}
 
       {:ok, :unchanged} ->
@@ -122,6 +125,31 @@ defmodule Messaging.Presence do
 
     if status != Status.effective(before),
       do: Notifier.presence_changed(user_id, status, Status.version(after_doc))
+  end
+
+  defp publish_push_state(user_id, before, after_doc) do
+    state = Status.push_state(after_doc)
+
+    if state != Status.push_state(before) do
+      event =
+        DomainEvent.user_presence_changed(
+          user_id,
+          state.connections,
+          state.do_not_disturb,
+          Status.version(after_doc)
+        )
+
+      case Outbox.enqueue([event]) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("presence_event_enqueue_failed",
+            user_id: user_id,
+            reason: Log.reason(reason)
+          )
+      end
+    end
   end
 
   defp entry(user_id, doc),
