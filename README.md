@@ -201,11 +201,35 @@ mensajes anteriores siguen visibles para los demás.
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
 ## Eventos que publica
-Ninguno en `discordia.events` -- la propagación de mensajes enviados es un
-detalle interno de escalado (`messaging.broadcast`, ver ADR), no un evento de
-dominio para otros servicios. Lo que viaja por ahí es siempre `new_message`,
-`message_updated`, `message_deleted`, `reaction_updated`, `new_dm`, `mention` y
-`access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción que el mensaje):
+
+| Routing key | Cuándo | Payload |
+|---|---|---|
+| `messaging.message_created` | Se crea un mensaje en un canal de un servidor | `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (ya resueltos y validados, sin el autor), `channel_name` y `content_preview` (opcionales) |
+| `messaging.direct_message_created` | Se crea un mensaje directo | `occurred_at`, `conversation_id`, `message_id`, `author_id`, `recipient_id`, `content_preview` (opcional) |
+| `messaging.message_updated` | Se edita el texto de un mensaje de un canal de un servidor (solo si cambió; los directos no lo publican) | `occurred_at` (el momento de la edición), `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (las menciones **después** de editar), `channel_name` y `content_preview` (opcionales) |
+| `messaging.message_deleted` | Se borra un mensaje, de un canal o directo | `occurred_at` (el momento del borrado), `server_id` (no viaja en un directo), `channel_id` (la conversación en un directo), `message_id`, `author_id`; nunca el texto |
+| `messaging.user_presence_changed` | Cambia lo que importa para el push de un usuario (ver abajo) | `occurred_at`, `user_id`, `connections` (`active`, `idle` o `none`), `do_not_disturb`, `version` |
+
+**Texto en los eventos de mensaje.** `content_preview` existe solo para armar el aviso push sin
+que `notifications` llame a `messaging`. Son unos 140 caracteres: las menciones se reemplazan por
+`@usuario` y `@rol`, los espacios se compactan, y si el mensaje tiene solo archivos dice `Archivo
+adjunto`. Sin texto ni archivos no viaja. `notifications` lo usa y lo descarta; no lo guarda.
+`channel_name` evita buscar el nombre del canal.
+
+**Presencia para el push.** Se publica (por el outbox) cuando cambia el par (conexiones, "No
+molestar") de un usuario, no cuando cambia su estado visible: `connections` es el estado real de
+sus conexiones (ignora el modo invisible, que no importa para saber si la app está abierta) y
+`do_not_disturb` es verdadero con el estado manual "No molestar". Conectar una segunda pestaña
+activa no publica nada. `version` es la de la presencia del usuario y crece siempre.
+
+Los consume `notifications` (no leídos, menciones, historial y push). El contrato vive en
+[`events-contract`](https://github.com/discordia-grupo01/events-contract) y en el AsyncAPI de `docs`.
+
+La propagación de mensajes enviados entre instancias es un detalle interno de escalado
+(`messaging.broadcast`, ver ADR), no un evento de dominio para otros servicios. Lo que viaja por ahí
+es siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
+`mention` y `access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
 `disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
 `presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
 perderlo.
@@ -301,6 +325,8 @@ compatibles con la versión anterior (agregar, no renombrar ni borrar).
 - `GET /v1/presence?user_ids=a,b,c`: ver [Estado de actividad](#estado-de-actividad).
 - `GET /v1/mentions` y `POST /v1/channels/:channel_id/mentions/read` -- ver
   [Menciones](#menciones).
+- `GET /v1/messages?ids=a,b,c` -- trae varios mensajes por id (ver
+  [Mensajes por id](#mensajes-por-id)).
 - `GET /v1/conversations` y `POST /v1/conversations/:id/read` -- ver
   [Mensajes directos](#mensajes-directos-dm).
 - `POST /v1/blocks`, `DELETE /v1/blocks/:user_id` y `GET /v1/blocks` -- ver
@@ -444,6 +470,22 @@ Garantías y casos borde:
 - Al abrir un canal conviene hacer primero el `join` (y bufferear lo que llegue
   en vivo) y después pedir el historial, deduplicando por `id`, para no perder
   lo enviado entre ambos pasos.
+
+## Mensajes por id
+
+`GET /v1/messages?ids=<id>,<id>,...` devuelve los mensajes pedidos (de 1 a 50 ids
+separados por coma; repetidos y espacios se descartan) como `{"messages": [...]}`,
+en el orden pedido y con la misma forma que el historial. Sirve para mostrar el
+texto de cada entrada de `GET /v1/notifications/history`, que solo guarda ids.
+
+- **Permisos:** un mensaje sale solo si el canal existe y el usuario puede verlo
+  (`VIEW_CHANNELS`, o ser parte de la conversación en un DM). Los que no cumplen,
+  los eliminados y los ids que no existen se **omiten sin avisar**: la respuesta no
+  revela si un mensaje existe en un canal ajeno. Por eso puede traer menos
+  mensajes que ids pedidos.
+- **Errores:** `400 INVALID_PAYLOAD` si falta `ids`, viene vacío o tiene más de 50;
+  `503 MESSAGES_UNAVAILABLE` si no se pudo leer Mongo; `401` sin JWT.
+- No trae reacciones (para eso está el historial del canal).
 
 ## Eliminar mensajes
 Un mensaje se elimina por REST (`DELETE /v1/channels/:channel_id/messages/:message_id`,

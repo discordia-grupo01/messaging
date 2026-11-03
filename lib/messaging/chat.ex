@@ -29,6 +29,8 @@ defmodule Messaging.Chat do
   @default_page_limit 50
   @max_page_limit 100
   @max_changes 200
+  @max_lookup_ids 50
+  @hidden_channel_errors [:channel_not_found, :channel_not_text]
   @clock_skew_ms 5_000
   @message_namespace "6c1b7f0e-2d4a-4b8e-9f35-1a7e0c5d3b92"
 
@@ -434,6 +436,45 @@ defmodule Messaging.Chat do
       older_cursor = if more_older?, do: hd(messages).id
       newer_cursor = if more_newer?, do: List.last(messages).id
       {:ok, messages, older_cursor, newer_cursor}
+    end
+  end
+
+  @spec lookup_messages([String.t()], String.t()) :: {:ok, [Message.t()]} | {:error, term()}
+  def lookup_messages([], _user_id), do: {:ok, []}
+
+  def lookup_messages(ids, user_id) when length(ids) <= @max_lookup_ids do
+    order = ids |> Enum.with_index() |> Map.new()
+
+    with {:ok, docs} <- repo().get_messages(ids),
+         messages = docs |> Enum.map(&Message.from_doc/1) |> Enum.filter(&is_nil(&1.deleted_at)),
+         {:ok, viewable} <- viewable_channel_ids(messages, user_id) do
+      visible = Enum.filter(messages, &MapSet.member?(viewable, &1.channel_id))
+      {:ok, Enum.sort_by(visible, &Map.fetch!(order, &1.id))}
+    end
+  end
+
+  def lookup_messages(_ids, _user_id), do: {:error, :invalid_payload}
+
+  defp viewable_channel_ids(messages, user_id) do
+    messages
+    |> Enum.map(& &1.channel_id)
+    |> Enum.uniq()
+    |> Enum.reduce_while({:ok, MapSet.new()}, fn channel_id, {:ok, viewable} ->
+      case channel_viewable?(channel_id, user_id) do
+        {:ok, true} -> {:cont, {:ok, MapSet.put(viewable, channel_id)}}
+        {:ok, false} -> {:cont, {:ok, viewable}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp channel_viewable?(channel_id, user_id) do
+    with {:ok, channel} <- fetch_channel(channel_id),
+         {:ok, viewable?} <- can_view_channel?(channel, user_id) do
+      {:ok, viewable?}
+    else
+      {:error, reason} when reason in @hidden_channel_errors -> {:ok, false}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -848,10 +889,20 @@ defmodule Messaging.Chat do
       domain_entries(channel, message, mentions)
   end
 
+  defp domain_entries(
+         %ChannelCache{kind: "dm", participants: participants},
+         %Message{} = message,
+         _mentions
+       ) do
+    for recipient_id <- participants,
+        recipient_id != message.user_id,
+        do: DomainEvent.direct_message_created(message, recipient_id)
+  end
+
   defp domain_entries(%ChannelCache{server_id: nil}, _message, _mentions), do: []
 
-  defp domain_entries(%ChannelCache{}, %Message{} = message, %Mentions{} = mentions),
-    do: [DomainEvent.message_created(message, mentions.recipient_ids)]
+  defp domain_entries(%ChannelCache{} = channel, %Message{} = message, %Mentions{} = mentions),
+    do: [DomainEvent.message_created(message, mentions.recipient_ids, channel.name)]
 
   defp direct_entries(
          %ChannelCache{kind: "dm", participants: participants} = channel,
@@ -942,7 +993,10 @@ defmodule Messaging.Chat do
       channel_id: message.channel_id
     }
 
-    enqueue_or_unavailable([entry], message.channel_id)
+    enqueue_or_unavailable(
+      [entry, DomainEvent.message_deleted(message, deleted_at)],
+      message.channel_id
+    )
   end
 
   defp enqueue_or_unavailable(entries, channel_id) do
@@ -1037,20 +1091,28 @@ defmodule Messaging.Chat do
   defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
     with :ok <- check_word_filter(channel, new_content),
          {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
-      update_content(message, new_content, mentions)
+      update_content(channel, message, new_content, mentions)
     end
   end
 
-  defp update_content(%Message{} = message, new_content, mentions) do
+  defp update_content(%ChannelCache{} = channel, %Message{} = message, new_content, mentions) do
     edited_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
     mention_fields = Mentions.message_fields(mentions)
 
-    with :ok <- enqueue_updated(message, new_content, edited_at, mentions, mention_fields) do
+    with :ok <-
+           enqueue_updated(channel, message, new_content, edited_at, mentions, mention_fields) do
       write_update(message, new_content, edited_at, mentions, mention_fields)
     end
   end
 
-  defp enqueue_updated(%Message{} = message, new_content, edited_at, mentions, mention_fields) do
+  defp enqueue_updated(
+         %ChannelCache{} = channel,
+         %Message{} = message,
+         new_content,
+         edited_at,
+         mentions,
+         mention_fields
+       ) do
     edited = edited_message(message, new_content, edited_at, mentions)
 
     fields =
@@ -1074,8 +1136,16 @@ defmodule Messaging.Chat do
       channel_id: message.channel_id
     }
 
-    enqueue_or_unavailable([entry], message.channel_id)
+    enqueue_or_unavailable(
+      [entry | updated_entries(channel, edited, mentions)],
+      message.channel_id
+    )
   end
+
+  defp updated_entries(%ChannelCache{server_id: nil}, _edited, _mentions), do: []
+
+  defp updated_entries(%ChannelCache{} = channel, %Message{} = edited, %Mentions{} = mentions),
+    do: [DomainEvent.message_updated(edited, mentions.recipient_ids, channel.name)]
 
   defp edited_message(%Message{} = message, new_content, edited_at, mentions) do
     %{

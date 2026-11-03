@@ -21,10 +21,17 @@ defmodule Messaging.Events.DomainEventTest do
   test "exposes the topic and the routing key the publisher and the contract agree on" do
     assert DomainEvent.topic() == "domain"
     assert DomainEvent.routing_key_message_created() == "messaging.message_created"
+
+    assert DomainEvent.routing_key_direct_message_created() ==
+             "messaging.direct_message_created"
+
+    assert DomainEvent.routing_key_user_presence_changed() == "messaging.user_presence_changed"
+    assert DomainEvent.routing_key_message_updated() == "messaging.message_updated"
+    assert DomainEvent.routing_key_message_deleted() == "messaging.message_deleted"
   end
 
-  test "message_created/2 builds an outbox entry that is ordered with the message's other events" do
-    entry = DomainEvent.message_created(message(), ["user-2"])
+  test "message_created/3 builds an outbox entry that is ordered with the message's other events" do
+    entry = DomainEvent.message_created(message(), ["user-2"], "general")
 
     assert entry.event == "messaging.message_created"
     assert entry.topic == "domain"
@@ -33,8 +40,9 @@ defmodule Messaging.Events.DomainEventTest do
     refute Map.has_key?(entry, :apply)
   end
 
-  test "message_created/2 carries ids and the time, and nothing the message says" do
-    assert %{payload: payload} = DomainEvent.message_created(message(), ["user-2", "user-3"])
+  test "message_created/3 carries the ids, the time, the channel name and a short preview" do
+    assert %{payload: payload} =
+             DomainEvent.message_created(message(), ["user-2", "user-3"], "general")
 
     assert payload == %{
              "occurred_at" => "2026-10-24T15:00:00.123Z",
@@ -42,20 +50,200 @@ defmodule Messaging.Events.DomainEventTest do
              "channel_id" => "chan-1",
              "message_id" => "01a16a21-7df1-7001-8e37-5a0fdc09d1cd",
              "author_id" => "user-1",
-             "mentioned_user_ids" => ["user-2", "user-3"]
+             "mentioned_user_ids" => ["user-2", "user-3"],
+             "channel_name" => "general",
+             "content_preview" => "texto privado"
            }
-
-    refute inspect(payload) =~ "texto privado"
   end
 
-  test "message_created/2 keeps an empty list when nobody is mentioned" do
-    assert %{payload: %{"mentioned_user_ids" => []}} = DomainEvent.message_created(message(), [])
+  test "message_created/3 cuts a long text instead of sending all of it" do
+    long = message(%{content: String.duplicate("x", 500)})
+
+    assert %{payload: %{"content_preview" => preview}} =
+             DomainEvent.message_created(long, [], "general")
+
+    assert String.length(preview) == 141
+  end
+
+  test "message_created/3 omits the channel name when it is unknown" do
+    for name <- [nil, ""] do
+      assert %{payload: payload} = DomainEvent.message_created(message(), [], name)
+      refute Map.has_key?(payload, "channel_name")
+    end
+  end
+
+  test "message_created/3 omits the preview when there is nothing to show" do
+    assert %{payload: payload} = DomainEvent.message_created(message(%{content: ""}), [], "x")
+    refute Map.has_key?(payload, "content_preview")
+  end
+
+  test "message_created/3 says there are files when the message has no text" do
+    files = message(%{content: "", attachments: [%{"id" => "att-1"}]})
+
+    assert %{payload: %{"content_preview" => "Archivo adjunto"}} =
+             DomainEvent.message_created(files, [], "general")
+  end
+
+  test "message_created/3 keeps an empty list when nobody is mentioned" do
+    assert %{payload: %{"mentioned_user_ids" => []}} =
+             DomainEvent.message_created(message(), [], "general")
   end
 
   test "the payload encodes to JSON as the contract expects" do
-    %{payload: payload} = DomainEvent.message_created(message(), ["user-2"])
+    %{payload: payload} = DomainEvent.message_created(message(), ["user-2"], "general")
 
     assert {:ok, json} = Jason.encode(payload)
-    assert %{"mentioned_user_ids" => ["user-2"]} = Jason.decode!(json)
+
+    assert %{"mentioned_user_ids" => ["user-2"], "channel_name" => "general"} =
+             Jason.decode!(json)
+  end
+
+  describe "direct_message_created/2" do
+    defp direct_message, do: message(%{server_id: nil, channel_id: "conversation-1"})
+
+    test "builds an outbox entry on the domain topic, ordered with the message's other events" do
+      entry = DomainEvent.direct_message_created(direct_message(), "user-2")
+
+      assert entry.event == "messaging.direct_message_created"
+      assert entry.topic == "domain"
+      assert entry.message_id == "01a16a21-7df1-7001-8e37-5a0fdc09d1cd"
+      assert entry.channel_id == "conversation-1"
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries the ids, the time and a short preview of the text" do
+      assert %{payload: payload} = DomainEvent.direct_message_created(direct_message(), "user-2")
+
+      assert payload == %{
+               "occurred_at" => "2026-10-24T15:00:00.123Z",
+               "conversation_id" => "conversation-1",
+               "message_id" => "01a16a21-7df1-7001-8e37-5a0fdc09d1cd",
+               "author_id" => "user-1",
+               "recipient_id" => "user-2",
+               "content_preview" => "texto privado"
+             }
+
+      assert {:ok, _json} = Jason.encode(payload)
+    end
+
+    test "omits the preview when there is nothing to show" do
+      empty = message(%{server_id: nil, channel_id: "conversation-1", content: ""})
+
+      assert %{payload: payload} = DomainEvent.direct_message_created(empty, "user-2")
+      refute Map.has_key?(payload, "content_preview")
+    end
+  end
+
+  describe "user_presence_changed/4" do
+    test "builds an outbox entry on the domain topic, with no message to order it by" do
+      entry = DomainEvent.user_presence_changed("user-1", "active", false, 7)
+
+      assert entry.event == "messaging.user_presence_changed"
+      assert entry.topic == "domain"
+      refute Map.has_key?(entry, :message_id)
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries who, the real connection state, do not disturb and the version" do
+      assert %{payload: payload} = DomainEvent.user_presence_changed("user-1", "idle", true, 9)
+
+      assert %{
+               "user_id" => "user-1",
+               "connections" => "idle",
+               "do_not_disturb" => true,
+               "version" => 9,
+               "occurred_at" => occurred_at
+             } = payload
+
+      assert map_size(payload) == 5
+      assert {:ok, _at, _offset} = DateTime.from_iso8601(occurred_at)
+    end
+
+    test "always sends do_not_disturb, also when it is false" do
+      assert %{payload: %{"do_not_disturb" => false}} =
+               DomainEvent.user_presence_changed("user-1", "none", false, 1)
+    end
+
+    test "the payload encodes to JSON" do
+      %{payload: payload} = DomainEvent.user_presence_changed("user-1", "active", false, 3)
+
+      assert %{"connections" => "active", "version" => 3} =
+               payload |> Jason.encode!() |> Jason.decode!()
+    end
+  end
+
+  describe "message_updated/3" do
+    defp edited(overrides \\ %{}),
+      do:
+        message(
+          Map.merge(%{content: "texto nuevo", edited_at: ~U[2026-10-24 16:30:00.500Z]}, overrides)
+        )
+
+    test "builds an outbox entry on the domain topic, ordered with the message's other events" do
+      entry = DomainEvent.message_updated(edited(), ["user-2"], "general")
+
+      assert entry.event == "messaging.message_updated"
+      assert entry.topic == "domain"
+      assert entry.message_id == "01a16a21-7df1-7001-8e37-5a0fdc09d1cd"
+      assert entry.channel_id == "chan-1"
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries the moment of the edit, the mentions after it and a preview of the new text" do
+      assert %{payload: payload} = DomainEvent.message_updated(edited(), ["user-2"], "general")
+
+      assert payload == %{
+               "occurred_at" => "2026-10-24T16:30:00.500Z",
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "01a16a21-7df1-7001-8e37-5a0fdc09d1cd",
+               "author_id" => "user-1",
+               "mentioned_user_ids" => ["user-2"],
+               "channel_name" => "general",
+               "content_preview" => "texto nuevo"
+             }
+    end
+
+    test "keeps an empty mention list and omits what is unknown" do
+      assert %{payload: payload} = DomainEvent.message_updated(edited(%{content: ""}), [], nil)
+
+      assert payload["mentioned_user_ids"] == []
+      refute Map.has_key?(payload, "channel_name")
+      refute Map.has_key?(payload, "content_preview")
+    end
+  end
+
+  describe "message_deleted/2" do
+    test "builds an outbox entry on the domain topic, ordered with the message's other events" do
+      entry = DomainEvent.message_deleted(message(), ~U[2026-10-24 17:00:00.000Z])
+
+      assert entry.event == "messaging.message_deleted"
+      assert entry.topic == "domain"
+      assert entry.message_id == "01a16a21-7df1-7001-8e37-5a0fdc09d1cd"
+      refute Map.has_key?(entry, :apply)
+    end
+
+    test "carries only ids and the moment of the deletion, never the text" do
+      assert %{payload: payload} =
+               DomainEvent.message_deleted(message(), ~U[2026-10-24 17:00:00.000Z])
+
+      assert payload == %{
+               "occurred_at" => "2026-10-24T17:00:00.000Z",
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "01a16a21-7df1-7001-8e37-5a0fdc09d1cd",
+               "author_id" => "user-1"
+             }
+    end
+
+    test "a direct message has no server" do
+      direct = message(%{server_id: nil, channel_id: "conversation-1"})
+
+      assert %{payload: payload} =
+               DomainEvent.message_deleted(direct, ~U[2026-10-24 17:00:00.000Z])
+
+      refute Map.has_key?(payload, "server_id")
+      assert payload["channel_id"] == "conversation-1"
+    end
   end
 end

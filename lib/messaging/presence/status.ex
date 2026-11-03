@@ -44,6 +44,23 @@ defmodule Messaging.Presence.Status do
     end
   end
 
+  @type connections :: String.t()
+  @type push_state :: %{connections: connections(), do_not_disturb: boolean()}
+
+  @spec push_state(doc() | nil) :: push_state()
+  def push_state(doc) do
+    %{connections: connections_state(doc), do_not_disturb: manual(doc) == "dnd"}
+  end
+
+  defp connections_state(nil), do: "none"
+
+  defp connections_state(doc) do
+    case connections(doc) do
+      [] -> "none"
+      connections -> if Enum.all?(connections, &(&1["idle"] == true)), do: "idle", else: "active"
+    end
+  end
+
   @spec apply_change(doc() | nil, change()) :: doc()
   def apply_change(doc, change) do
     doc = doc || %{"manual" => default_choice(), "connections" => [], "version" => 0}

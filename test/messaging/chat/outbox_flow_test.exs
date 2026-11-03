@@ -100,7 +100,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert {:ok, _datetime, _offset} = DateTime.from_iso8601(doc["inserted_at"])
     end
 
-    test "tells the other services about it, with ids only and never the text" do
+    test "tells the other services about it, with the ids and a short preview of the text" do
       record_outbox()
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
 
@@ -119,10 +119,10 @@ defmodule Messaging.Chat.OutboxFlowTest do
                "channel_id" => "chan-1",
                "message_id" => id,
                "author_id" => @user,
-               "mentioned_user_ids" => []
+               "mentioned_user_ids" => [],
+               "channel_name" => "general",
+               "content_preview" => "hola"
              }
-
-      refute inspect(domain.payload) =~ "hola"
     end
 
     test "carries the users it mentions, as already validated by the resolver" do
@@ -153,7 +153,8 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert_received {:outbox, [_created, domain]}
       assert domain.payload["message_id"] == id
       assert domain.payload["mentioned_user_ids"] == ["user-2"]
-      refute inspect(domain.payload) =~ "hola"
+      assert domain.payload["content_preview"] == "hola @usuario @usuario"
+      refute inspect(domain.payload) =~ "<@user"
     end
 
     test "the order really is outbox, then Mongo" do
@@ -173,7 +174,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       capture_log(fn -> assert {:error, :messages_unavailable} = send_hola() end)
     end
 
-    test "a direct message records the message and one notification per participant at once" do
+    test "a direct message records the message, one notification per participant and the domain event at once" do
       record_outbox()
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
       stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
@@ -183,19 +184,47 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       conversation = Conversation.id(@user, @other)
       assert_received {:outbox, rows}
-      assert Enum.map(rows, & &1.event) == ["new_message", "new_dm", "new_dm"]
+
+      assert Enum.map(rows, & &1.event) ==
+               ["new_message", "new_dm", "new_dm", "messaging.direct_message_created"]
 
       assert Enum.map(rows, & &1.topic) ==
-               ["channel:" <> conversation, "user:" <> @user, "user:" <> @other]
+               ["channel:" <> conversation, "user:" <> @user, "user:" <> @other, "domain"]
 
       assert Enum.all?(rows, &(&1.message_id == id))
 
-      [_message, mine, theirs] = rows
+      [_message, mine, theirs, _domain] = rows
       assert mine.payload["partner_id"] == @other
       assert theirs.payload["partner_id"] == @user
       assert mine.payload["conversation_id"] == conversation
       assert mine.payload["message"]["id"] == id
       assert is_nil(Map.get(mine, :apply)) and is_nil(Map.get(theirs, :apply))
+    end
+
+    test "a direct message tells the other services who wrote to whom, with a short preview of the text" do
+      record_outbox()
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      stub(Messaging.Chat.RepoMock, :record_last_message, fn _, _, _, _ -> :ok end)
+
+      assert {:ok, _channel, %Message{id: id, inserted_at: inserted_at}} =
+               Chat.send_direct_message(%{sender_id: @user, recipient_id: @other, content: "hola"})
+
+      assert_received {:outbox, rows}
+      domain = List.last(rows)
+
+      assert domain.event == "messaging.direct_message_created"
+      assert domain.message_id == id
+      assert domain.channel_id == Conversation.id(@user, @other)
+      assert is_nil(Map.get(domain, :apply))
+
+      assert domain.payload == %{
+               "occurred_at" => DateTime.to_iso8601(inserted_at),
+               "conversation_id" => Conversation.id(@user, @other),
+               "message_id" => id,
+               "author_id" => @user,
+               "recipient_id" => @other,
+               "content_preview" => "hola"
+             }
     end
   end
 
@@ -220,7 +249,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       assert {:ok, %Message{content: "nuevo"}, :updated} = edit_to("nuevo")
 
-      assert_received {:outbox, [row]}
+      assert_received {:outbox, [row, domain]}
       assert row.event == "message_updated"
       assert row.topic == "channel:chan-1"
       assert row.message_id == "msg-1"
@@ -238,6 +267,24 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert fields["content"] == "nuevo"
       assert {:ok, _, _} = DateTime.from_iso8601(fields["edited_at"])
       assert {:ok, _, _} = DateTime.from_iso8601(fields["changed_at"])
+
+      assert domain.event == "messaging.message_updated"
+      assert domain.topic == "domain"
+      assert domain.message_id == "msg-1"
+      assert is_nil(Map.get(domain, :apply))
+
+      assert %{
+               "occurred_at" => occurred_at,
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "msg-1",
+               "author_id" => @user,
+               "mentioned_user_ids" => [],
+               "channel_name" => "general",
+               "content_preview" => "nuevo"
+             } = domain.payload
+
+      assert occurred_at == fields["edited_at"]
     end
 
     test "nothing is recorded when the content did not change" do
@@ -266,7 +313,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       assert {:ok, %Message{deleted_at: %DateTime{}}} = delete_it()
 
-      assert_received {:outbox, [row]}
+      assert_received {:outbox, [row, domain]}
       assert row.event == "message_deleted"
       assert row.topic == "channel:chan-1"
       assert row.message_id == "msg-1"
@@ -282,6 +329,21 @@ defmodule Messaging.Chat.OutboxFlowTest do
                row.apply
 
       assert {:ok, _, _} = DateTime.from_iso8601(at)
+
+      assert domain.event == "messaging.message_deleted"
+      assert domain.topic == "domain"
+      assert domain.message_id == "msg-1"
+      assert is_nil(Map.get(domain, :apply))
+
+      assert domain.payload == %{
+               "occurred_at" => at,
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "msg-1",
+               "author_id" => @user
+             }
+
+      refute inspect(domain.payload) =~ "texto original"
     end
 
     test "Mongo is never touched if the event cannot be recorded" do
