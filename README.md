@@ -219,10 +219,12 @@ En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción
 | `messaging.user_presence_changed` | Cambia lo que importa para el push de un usuario (ver abajo) | `occurred_at`, `user_id`, `connections` (`active`, `idle` o `none`), `do_not_disturb`, `version` |
 
 **Texto en los eventos de mensaje.** `content_preview` existe solo para armar el aviso push sin
-que `notifications` llame a `messaging`. Son unos 140 caracteres: las menciones se reemplazan por
-`@usuario` y `@rol`, los espacios se compactan, y si el mensaje tiene solo archivos dice `Archivo
-adjunto`. Sin texto ni archivos no viaja. `notifications` lo usa y lo descarta; no lo guarda.
-`channel_name` evita buscar el nombre del canal.
+que `notifications` llame a `messaging`. Son unos 140 caracteres: las menciones de rol se
+reemplazan por `@rol`, las de usuario se dejan como `<@id>` (cada una cuenta como los 8 caracteres
+de `@usuario` y el corte nunca la parte) para que `notifications` ponga el nombre desde su réplica
+(`@Ana`, o `@usuario` si no lo conoce), los espacios se compactan, y si el mensaje tiene solo
+archivos dice `Archivo adjunto`. Sin texto ni archivos no viaja. `notifications` lo usa y lo
+descarta; no lo guarda. `channel_name` evita buscar el nombre del canal.
 
 **Presencia para el push.** Se publica (por el outbox) cuando cambia el par (conexiones, "No
 molestar") de un usuario, no cuando cambia su estado visible: `connections` es el estado real de
