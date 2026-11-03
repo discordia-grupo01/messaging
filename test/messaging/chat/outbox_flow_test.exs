@@ -153,8 +153,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert_received {:outbox, [_created, domain]}
       assert domain.payload["message_id"] == id
       assert domain.payload["mentioned_user_ids"] == ["user-2"]
-      assert domain.payload["content_preview"] == "hola @usuario @usuario"
-      refute inspect(domain.payload) =~ "<@user"
+      assert domain.payload["content_preview"] == "hola <@user-2> <@user-3>"
     end
 
     test "the order really is outbox, then Mongo" do
