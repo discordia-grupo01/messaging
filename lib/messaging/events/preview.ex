@@ -3,6 +3,8 @@ defmodule Messaging.Events.Preview do
 
   @max_length 140
   @attachment_text "Archivo adjunto"
+  @mention_width String.length("@usuario")
+  @exact_user_token ~r/\A<@[A-Za-z0-9_-]{1,64}>\z/
   @role_token ~r/<@&[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/
   @user_token ~r/<@[A-Za-z0-9_-]{1,64}>/
 
@@ -21,14 +23,53 @@ defmodule Messaging.Events.Preview do
   defp normalize(content) do
     content
     |> String.replace(@role_token, "@rol")
-    |> String.replace(@user_token, "@usuario")
     |> String.replace(~r/\s+/u, " ")
     |> String.trim()
   end
 
   defp truncate(text) do
-    if String.length(text) > @max_length,
-      do: text |> String.slice(0, @max_length) |> String.trim_trailing() |> Kernel.<>("…"),
+    segments = segments(text)
+
+    if visible_length(segments) > @max_length,
+      do: cut(segments),
       else: text
+  end
+
+  defp segments(text) do
+    @user_token
+    |> Regex.split(text, include_captures: true, trim: true)
+    |> Enum.map(fn piece ->
+      if Regex.match?(@exact_user_token, piece), do: {:mention, piece}, else: {:text, piece}
+    end)
+  end
+
+  defp visible_length(segments) do
+    segments |> Enum.map(&width/1) |> Enum.sum()
+  end
+
+  defp width({:mention, _token}), do: @mention_width
+  defp width({:text, text}), do: String.length(text)
+
+  defp cut(segments) do
+    {kept, _left} = Enum.reduce_while(segments, {[], @max_length}, &take/2)
+
+    kept
+    |> Enum.reverse()
+    |> Enum.join()
+    |> String.trim_trailing()
+    |> Kernel.<>("…")
+  end
+
+  defp take({:mention, token}, {kept, left}) when left >= @mention_width,
+    do: {:cont, {[token | kept], left - @mention_width}}
+
+  defp take({:mention, _token}, {kept, left}), do: {:halt, {kept, left}}
+
+  defp take({:text, text}, {kept, left}) do
+    length = String.length(text)
+
+    if length <= left,
+      do: {:cont, {[text | kept], left - length}},
+      else: {:halt, {[String.slice(text, 0, left) | kept], 0}}
   end
 end
