@@ -42,8 +42,9 @@ defmodule Messaging.Outbox.Store.Postgres do
         Postgres,
         fn conn ->
           rows = select_pending(conn, limit)
-          Enum.each(handler.(rows), &record(conn, &1))
-          length(rows)
+          outcomes = handler.(rows)
+          Enum.each(outcomes, &record(conn, &1))
+          Enum.count(outcomes, &match?({_id, :ok}, &1))
         end,
         timeout: @process_timeout
       )

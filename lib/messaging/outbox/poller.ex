@@ -35,11 +35,11 @@ defmodule Messaging.Outbox.Poller do
     flush_polls()
 
     case run_once() do
-      {:ok, @batch} ->
-        send(self(), :poll)
-
-      {:ok, _count} ->
+      {:ok, 0} ->
         :ok
+
+      {:ok, _published} ->
+        send(self(), :poll)
 
       {:error, reason} ->
         Logger.warning("outbox_poll_failed", reason: Log.reason(reason))
