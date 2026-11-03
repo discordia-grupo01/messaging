@@ -1,5 +1,12 @@
 # messaging (Elixir)
 
+## Autorización de llamadas privadas
+
+Messaging expone internamente `GET /v1/voice-access/:recipient_id?conversation_id=...`
+para que signaling valide que ambos usuarios pertenecen a la conversación
+directa y que no existe un bloqueo en ninguno de los dos sentidos. La ruta
+requiere el JWT del usuario llamante y no crea ni modifica datos.
+
 Servicio de **mensajería** de Discordia: mensajes de texto en canales, con
 entrega en tiempo real. Cubre las historias **"Enviar mensaje en un canal"**
 (CA1 envío exitoso, CA2 mensaje vacío, CA3 sin permisos, CA4 mensaje muy
@@ -1150,3 +1157,9 @@ base de datos. Siempre entra por la API publica del Context: `Messaging.Chat.<ac
 ```bash
 make ci
 ```
+# Autorización de llamadas privadas
+
+Messaging expone internamente `GET /v1/voice-access/:recipient_id?conversation_id=...`
+para que signaling valide que ambos usuarios pertenecen a la conversación
+directa y que no existe un bloqueo en ninguno de los dos sentidos. La ruta
+requiere el JWT del usuario llamante y no crea ni modifica datos.
