@@ -253,6 +253,7 @@ enviar mensaje ──▶ 1. anota el evento en Postgres (outbox_events)   ← si
                    3. responde OK al cliente
 poller (cada 1 s, o apenas se anota) ──▶ completa Mongo si hace falta ──▶ publica en RabbitMQ
                                          ──▶ espera la confirmación del broker ──▶ marca publicado
+                                         ──▶ si publicó algo, vuelve a mirar sin esperar
 ```
 
 - **Qué pasa si algo se corta.** Proceso muerto entre 1 y 2: el poller ve la fila pendiente,
@@ -266,7 +267,10 @@ poller (cada 1 s, o apenas se anota) ──▶ completa Mongo si hace falta ─�
   servidor no guarda estado en memoria para esto.
 - **Varias instancias.** Cada poller toma un lote con `FOR UPDATE SKIP LOCKED`, así que dos
   instancias nunca toman la misma fila. Dos eventos del mismo mensaje (editar, borrar) nunca
-  salen juntos: el segundo espera a que el primero esté publicado, así llegan en orden.
+  salen juntos: el segundo espera a que el primero esté publicado, así llegan en orden. Como
+  cada consulta libera solo un evento por mensaje, el poller vuelve a consultar **de inmediato**
+  mientras publique algo (los 3 eventos de un mensaje directo salen en milisegundos y no en 3 s);
+  si todo falla espera el intervalo de 1 s, para no reintentar en un bucle.
 - **Qué se guarda.** Tabla `outbox_events` (`migrations/0001_outbox_events.up.sql`): `id`
   (UUIDv7), `event`, `topic`, `payload` y `apply` (JSONB), `message_id`, `channel_id`,
   `created_at`, `published_at`, `attempts` y `last_error`. **Las filas no se borran** (auditoría).
