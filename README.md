@@ -207,6 +207,8 @@ En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción
 |---|---|---|
 | `messaging.message_created` | Se crea un mensaje en un canal de un servidor | `occurred_at`, `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (ya resueltos y validados, sin el autor), `channel_name` y `content_preview` (opcionales) |
 | `messaging.direct_message_created` | Se crea un mensaje directo | `occurred_at`, `conversation_id`, `message_id`, `author_id`, `recipient_id`, `content_preview` (opcional) |
+| `messaging.message_updated` | Se edita el texto de un mensaje de un canal de un servidor (solo si cambió; los directos no lo publican) | `occurred_at` (el momento de la edición), `server_id`, `channel_id`, `message_id`, `author_id`, `mentioned_user_ids` (las menciones **después** de editar), `channel_name` y `content_preview` (opcionales) |
+| `messaging.message_deleted` | Se borra un mensaje, de un canal o directo | `occurred_at` (el momento del borrado), `server_id` (no viaja en un directo), `channel_id` (la conversación en un directo), `message_id`, `author_id`; nunca el texto |
 | `messaging.user_presence_changed` | Cambia lo que importa para el push de un usuario (ver abajo) | `occurred_at`, `user_id`, `connections` (`active`, `idle` o `none`), `do_not_disturb`, `version` |
 
 **Texto en los eventos de mensaje.** `content_preview` existe solo para armar el aviso push sin

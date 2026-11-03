@@ -249,7 +249,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       assert {:ok, %Message{content: "nuevo"}, :updated} = edit_to("nuevo")
 
-      assert_received {:outbox, [row]}
+      assert_received {:outbox, [row, domain]}
       assert row.event == "message_updated"
       assert row.topic == "channel:chan-1"
       assert row.message_id == "msg-1"
@@ -267,6 +267,24 @@ defmodule Messaging.Chat.OutboxFlowTest do
       assert fields["content"] == "nuevo"
       assert {:ok, _, _} = DateTime.from_iso8601(fields["edited_at"])
       assert {:ok, _, _} = DateTime.from_iso8601(fields["changed_at"])
+
+      assert domain.event == "messaging.message_updated"
+      assert domain.topic == "domain"
+      assert domain.message_id == "msg-1"
+      assert is_nil(Map.get(domain, :apply))
+
+      assert %{
+               "occurred_at" => occurred_at,
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "msg-1",
+               "author_id" => @user,
+               "mentioned_user_ids" => [],
+               "channel_name" => "general",
+               "content_preview" => "nuevo"
+             } = domain.payload
+
+      assert occurred_at == fields["edited_at"]
     end
 
     test "nothing is recorded when the content did not change" do
@@ -295,7 +313,7 @@ defmodule Messaging.Chat.OutboxFlowTest do
 
       assert {:ok, %Message{deleted_at: %DateTime{}}} = delete_it()
 
-      assert_received {:outbox, [row]}
+      assert_received {:outbox, [row, domain]}
       assert row.event == "message_deleted"
       assert row.topic == "channel:chan-1"
       assert row.message_id == "msg-1"
@@ -311,6 +329,21 @@ defmodule Messaging.Chat.OutboxFlowTest do
                row.apply
 
       assert {:ok, _, _} = DateTime.from_iso8601(at)
+
+      assert domain.event == "messaging.message_deleted"
+      assert domain.topic == "domain"
+      assert domain.message_id == "msg-1"
+      assert is_nil(Map.get(domain, :apply))
+
+      assert domain.payload == %{
+               "occurred_at" => at,
+               "server_id" => "srv-1",
+               "channel_id" => "chan-1",
+               "message_id" => "msg-1",
+               "author_id" => @user
+             }
+
+      refute inspect(domain.payload) =~ "texto original"
     end
 
     test "Mongo is never touched if the event cannot be recorded" do
