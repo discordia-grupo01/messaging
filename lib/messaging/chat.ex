@@ -901,8 +901,8 @@ defmodule Messaging.Chat do
 
   defp domain_entries(%ChannelCache{server_id: nil}, _message, _mentions), do: []
 
-  defp domain_entries(%ChannelCache{}, %Message{} = message, %Mentions{} = mentions),
-    do: [DomainEvent.message_created(message, mentions.recipient_ids)]
+  defp domain_entries(%ChannelCache{} = channel, %Message{} = message, %Mentions{} = mentions),
+    do: [DomainEvent.message_created(message, mentions.recipient_ids, channel.name)]
 
   defp direct_entries(
          %ChannelCache{kind: "dm", participants: participants} = channel,
@@ -993,7 +993,10 @@ defmodule Messaging.Chat do
       channel_id: message.channel_id
     }
 
-    enqueue_or_unavailable([entry], message.channel_id)
+    enqueue_or_unavailable(
+      [entry, DomainEvent.message_deleted(message, deleted_at)],
+      message.channel_id
+    )
   end
 
   defp enqueue_or_unavailable(entries, channel_id) do
@@ -1088,20 +1091,28 @@ defmodule Messaging.Chat do
   defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
     with :ok <- check_word_filter(channel, new_content),
          {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
-      update_content(message, new_content, mentions)
+      update_content(channel, message, new_content, mentions)
     end
   end
 
-  defp update_content(%Message{} = message, new_content, mentions) do
+  defp update_content(%ChannelCache{} = channel, %Message{} = message, new_content, mentions) do
     edited_at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
     mention_fields = Mentions.message_fields(mentions)
 
-    with :ok <- enqueue_updated(message, new_content, edited_at, mentions, mention_fields) do
+    with :ok <-
+           enqueue_updated(channel, message, new_content, edited_at, mentions, mention_fields) do
       write_update(message, new_content, edited_at, mentions, mention_fields)
     end
   end
 
-  defp enqueue_updated(%Message{} = message, new_content, edited_at, mentions, mention_fields) do
+  defp enqueue_updated(
+         %ChannelCache{} = channel,
+         %Message{} = message,
+         new_content,
+         edited_at,
+         mentions,
+         mention_fields
+       ) do
     edited = edited_message(message, new_content, edited_at, mentions)
 
     fields =
@@ -1125,8 +1136,16 @@ defmodule Messaging.Chat do
       channel_id: message.channel_id
     }
 
-    enqueue_or_unavailable([entry], message.channel_id)
+    enqueue_or_unavailable(
+      [entry | updated_entries(channel, edited, mentions)],
+      message.channel_id
+    )
   end
+
+  defp updated_entries(%ChannelCache{server_id: nil}, _edited, _mentions), do: []
+
+  defp updated_entries(%ChannelCache{} = channel, %Message{} = edited, %Mentions{} = mentions),
+    do: [DomainEvent.message_updated(edited, mentions.recipient_ids, channel.name)]
 
   defp edited_message(%Message{} = message, new_content, edited_at, mentions) do
     %{
