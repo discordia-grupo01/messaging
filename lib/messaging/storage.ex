@@ -13,5 +13,5 @@ defmodule Messaging.Storage do
   def delete([]), do: :ok
   def delete(paths), do: impl().delete(paths)
 
-  defp impl, do: Application.get_env(:messaging, :storage, Messaging.Storage.Cloudinary)
+  defp impl, do: Application.get_env(:messaging, :storage, Messaging.Storage.Tiered)
 end

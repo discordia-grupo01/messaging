@@ -836,9 +836,11 @@ borran junto con el mensaje, el canal o el servidor.
 
 ## Adjuntar archivos
 Se puede adjuntar a un mensaje (de un canal o directo) una imagen JPEG, PNG o WebP, o un PDF, de
-hasta **10 MB** cada uno y hasta **5 por mensaje**. Los archivos viven en **Cloudinary**; en
-`messaging` (Mongo) solo se guarda la URL y los metadatos, nunca los bytes, y el archivo tampoco
-se escribe en el disco del servidor.
+hasta **10 MB** cada uno y hasta **5 por mensaje**. Con Premium el límite es **50 MB** y también se
+pueden adjuntar **GIF**. Los archivos de hasta
+10 MB viven en **Cloudinary** y los más grandes en **Supabase Storage**; en `messaging` (Mongo) solo
+se guarda la URL y los metadatos, nunca los bytes, y el archivo tampoco se escribe en el disco del
+servidor.
 
 Es en dos pasos, porque los mensajes viajan por WebSocket y los archivos son binarios:
 
@@ -867,27 +869,28 @@ Es en dos pasos, porque los mensajes viajan por WebSocket y los archivos son bin
 
 **Reglas (CA1 a CA3)**
 - El formato se reconoce por el **contenido real** del archivo (sus primeros bytes), no por la
-  extensión ni por el `Content-Type` que declare el cliente: un `.png` que en realidad es un GIF o
-  un ejecutable se rechaza.
+  extensión ni por el `Content-Type` que declare el cliente: un `.png` que en realidad es un
+  ejecutable se rechaza, y un GIF solo se acepta si el usuario es Premium.
 - `415 UNSUPPORTED_FILE_TYPE`: "Formato no soportado. Solo se aceptan imágenes JPEG, PNG o WebP y
-  archivos PDF."
-- `413 FILE_TOO_LARGE`: "El archivo supera el tamaño máximo permitido (10 MB)." Si el pedido
-  declara un `Content-Length` mayor, se rechaza sin leer el cuerpo.
+  archivos PDF (y GIF con Premium)."
+- `413 FILE_TOO_LARGE`: "El archivo supera el tamaño máximo permitido (10 MB, o 50 MB con
+  Premium)." Si el pedido declara un `Content-Length` mayor que el límite del usuario, se rechaza
+  sin leer el cuerpo. El límite sale de `billing.premium_updated` (colección `premium_users`).
 - `400 EMPTY_FILE`, `400 INVALID_PAYLOAD` (hay que indicar `channel_id` o `to`, no los dos),
   `400 TOO_MANY_ATTACHMENTS`, `400 INVALID_ATTACHMENT` (no existe, ya se usó, es de otro canal o de
   otro usuario), `429 TOO_MANY_PENDING_ATTACHMENTS` (más de 20 subidos sin enviar) y
   `503 STORAGE_UNAVAILABLE`.
 - Primero se chequean los permisos y después se lee el cuerpo, así que quien no puede escribir no
   hace que se lea un archivo entero.
-- Los archivos tienen URL pública de Cloudinary (`secure_url`) con un identificador aleatorio
-  `<carpeta>/<canal>/<id>`: el nombre original nunca forma parte de la ruta.
+- Los archivos tienen URL pública (de Cloudinary o de Supabase) con un identificador aleatorio
+  `<canal>/<id>`: el nombre original nunca forma parte de la ruta.
 
 **Editar** un mensaje no cambia sus adjuntos; si tiene adjuntos, se puede dejar el texto vacío.
 
 **Huérfanos.** Cada subida queda registrada en la colección `attachments`. Un proceso
 (`Messaging.Chat.AttachmentCleaner`, cada 10 minutos y apenas se borra un mensaje) borra del bucket
 y de Mongo: los archivos subidos que no se adjuntaron a ningún mensaje en **24 horas**, los de un
-mensaje eliminado, y los de un canal o servidor eliminado. Si Cloudinary falla, el registro queda y
+mensaje eliminado, y los de un canal o servidor eliminado. Si el almacenamiento falla, el registro queda y
 se reintenta en la próxima vuelta. Con varias instancias corren todas: borrar dos veces es
 inofensivo.
 
@@ -898,9 +901,17 @@ inofensivo.
 | `CLOUDINARY_URL` | `cloudinary://<API_KEY>:<API_SECRET>@<CLOUD_NAME>`, tal cual la muestra el Dashboard de Cloudinary (Settings > API Keys). El secreto es solo del servidor, nunca al navegador |
 | `CLOUDINARY_FOLDER` | Carpeta donde se guardan los archivos (default `discordia/attachments`) |
 | `CLOUDINARY_API_BASE_URL` | Solo para apuntar a otro host (default `https://api.cloudinary.com`) |
+| `SUPABASE_URL` | URL del proyecto de Supabase donde van los archivos de más de 10 MB (`https://<ref>.supabase.co`) |
+| `SUPABASE_SECRET_KEY` | Clave secreta `sb_secret_...` de ese proyecto. Es solo del servidor, nunca al navegador |
+| `SUPABASE_STORAGE_BUCKET` | Bucket público donde se guardan (default `attachments`) |
 
-Si falta `CLOUDINARY_URL`, `messaging` arranca igual (loguea `attachments_storage_not_configured`) y
-solo `POST /v1/attachments` responde `503`. La ruta está en Kong (`messaging-attachments`, con JWT).
+Si falta alguna de las dos configuraciones, `messaging` arranca igual (loguea
+`attachments_storage_not_configured`) y `POST /v1/attachments` responde `503` para los archivos que
+van a ese almacenamiento. La ruta está en Kong (`messaging-attachments`, con JWT).
+
+**Supabase Storage.** El plan gratis limita cada archivo a 50 MB, el total a 1 GB y la descarga a
+5 GB por mes, y pausa el proyecto tras una semana sin uso. Si se pausa, las subidas de más de 10 MB
+responden `503` y esos archivos no se pueden abrir hasta reactivarlo.
 
 **Cloudinary y los PDF.** Las cuentas nuevas pueden traer bloqueada la entrega de PDF y ZIP (la URL
 responde 401): se habilita en Settings > Security > "PDF and ZIP files delivery". La subida se hace

@@ -59,6 +59,11 @@ config :messaging, :cloudinary,
   folder: System.get_env("CLOUDINARY_FOLDER", "discordia/attachments"),
   api_base: System.get_env("CLOUDINARY_API_BASE_URL", "https://api.cloudinary.com")
 
+config :messaging, :supabase_storage,
+  url: System.get_env("SUPABASE_URL"),
+  secret_key: System.get_env("SUPABASE_SECRET_KEY"),
+  bucket: System.get_env("SUPABASE_STORAGE_BUCKET", "attachments")
+
 if config_env() == :prod do
   allowed_origins =
     System.get_env(
