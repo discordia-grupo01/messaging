@@ -207,6 +207,26 @@ mensajes anteriores siguen visibles para los demás.
 |---|---|
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
+## Premium (`billing.premium_updated`)
+`discordia-billing` decide quién es Premium y publica el estado completo de cada usuario en
+`billing.premium_updated`.
+
+- **Consumidor.** `Messaging.Events.BillingEventsConsumer` lee la cola durable
+  `messaging.billing_events` (ack manual) y verifica la firma HMAC-SHA256 definida en
+  `events-contract/billing`. Con firma inválida el evento **no cambia nada**: se descarta sin
+  reencolar y queda en `consumed_events` como `discarded_invalid_signature`.
+- **Estado.** Colección Mongo `premium_users`: `{_id: user_id, active, version, updated_at}`. Un
+  evento se aplica solo si su `version` es mayor a la guardada. Un usuario sin documento no es
+  Premium. `Messaging.Premium.premium?/1` lo lee.
+- **Arranque.** `BILLING_EVENTS_HMAC_SECRET` tiene que ser el mismo valor que en billing. Si está
+  vacía, el consumidor **no arranca**, la cola no se crea y se loguea
+  `billing_events_consumer_not_started`. Los eventos publicados antes de que exista la cola se
+  pierden, así que al desplegarlo por primera vez hay que republicarlos desde billing.
+
+| Variable | Qué es |
+|---|---|
+| `BILLING_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-billing` para verificar la firma de `billing.premium_updated` |
+
 ## Eventos que publica
 En `discordia.events` (exchange `topic`, por el outbox, en la misma transacción que el mensaje):
 

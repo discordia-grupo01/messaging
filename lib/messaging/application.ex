@@ -87,7 +87,7 @@ defmodule Messaging.Application do
         {Messaging.Events.ChannelLifecycleConsumer, url: rabbitmq_url},
         {Messaging.Events.BroadcastPublisher, url: rabbitmq_url},
         {Messaging.Events.BroadcastConsumer, url: rabbitmq_url}
-      ] ++ admin_events_children(rabbitmq_url)
+      ] ++ admin_events_children(rabbitmq_url) ++ billing_events_children(rabbitmq_url)
     else
       []
     end
@@ -101,6 +101,17 @@ defmodule Messaging.Application do
 
       _secret ->
         [{Messaging.Events.AdminEventsConsumer, url: rabbitmq_url}]
+    end
+  end
+
+  defp billing_events_children(rabbitmq_url) do
+    case Application.get_env(:messaging, :billing_events_hmac_secret) do
+      secret when secret in [nil, ""] ->
+        Logger.error("billing_events_consumer_not_started", reason: "empty_hmac_secret")
+        []
+
+      _secret ->
+        [{Messaging.Events.BillingEventsConsumer, url: rabbitmq_url}]
     end
   end
 

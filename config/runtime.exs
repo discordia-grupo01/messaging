@@ -33,6 +33,10 @@ config :messaging,
 # never accepted.
 config :messaging, :admin_events_hmac_secret, System.get_env("ADMIN_EVENTS_HMAC_SECRET")
 
+# Shared with discordia-billing, which signs billing.premium_updated. Same rule: if
+# it is empty the consumer does not start.
+config :messaging, :billing_events_hmac_secret, System.get_env("BILLING_EVENTS_HMAC_SECRET")
+
 config :messaging, :postgres,
   host: System.get_env("DATABASE_HOST", "localhost"),
   port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
