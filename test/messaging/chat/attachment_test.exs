@@ -58,6 +58,35 @@ defmodule Messaging.Chat.AttachmentTest do
     end
   end
 
+  describe "validate/2 with the Premium plan" do
+    @premium_max 50 * 1024 * 1024
+
+    test "accepts a file of exactly 50 MB" do
+      assert {:ok, _detected} =
+               Attachment.validate(FileFixtures.sized(:pdf, @premium_max), :premium)
+    end
+
+    test "rejects one byte more" do
+      assert {:error, :file_too_large} =
+               Attachment.validate(FileFixtures.sized(:pdf, @premium_max + 1), :premium)
+    end
+
+    test "accepts both GIF versions" do
+      for header <- ["GIF87a", "GIF89a"] do
+        assert {:ok, %{content_type: "image/gif", extension: "gif"}} =
+                 Attachment.validate(header <> <<0, 0>>, :premium)
+      end
+    end
+
+    test "a GIF is still rejected on the free plan" do
+      assert {:error, :unsupported_file_type} = Attachment.validate(FileFixtures.gif(), :free)
+    end
+
+    test "other formats are still rejected" do
+      assert {:error, :unsupported_file_type} = Attachment.validate("texto plano", :premium)
+    end
+  end
+
   describe "sanitize_name/2" do
     test "keeps a normal name" do
       assert Attachment.sanitize_name("foto vacaciones.png", "png") == "foto vacaciones.png"

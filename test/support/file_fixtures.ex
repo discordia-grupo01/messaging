@@ -6,6 +6,8 @@ defmodule Messaging.FileFixtures do
 
   def webp(extra \\ 16), do: "RIFF" <> <<0, 0, 0, 0>> <> "WEBP" <> :binary.copy(<<0>>, extra)
 
+  def gif(extra \\ 16), do: "GIF89a" <> :binary.copy(<<0>>, extra)
+
   def pdf(extra \\ 16), do: "%PDF-1.7\n" <> :binary.copy("x", extra)
 
   def sized(kind, bytes) do

@@ -112,12 +112,12 @@ defmodule MessagingWeb.ApiError do
   def describe(:file_too_large),
     do:
       {"FILE_TOO_LARGE",
-       "El archivo supera el tamaño máximo permitido (#{div(Messaging.Chat.Attachment.max_bytes(), 1_048_576)} MB)."}
+       "El archivo supera el tamaño máximo permitido (#{div(Messaging.Chat.Attachment.max_bytes(), 1_048_576)} MB, o #{div(Messaging.Chat.Attachment.premium_max_bytes(), 1_048_576)} MB con Premium)."}
 
   def describe(:unsupported_file_type),
     do:
       {"UNSUPPORTED_FILE_TYPE",
-       "Formato no soportado. Solo se aceptan imágenes JPEG, PNG o WebP y archivos PDF."}
+       "Formato no soportado. Solo se aceptan imágenes JPEG, PNG o WebP y archivos PDF (y GIF con Premium)."}
 
   def describe(:empty_file),
     do: {"EMPTY_FILE", "El archivo está vacío: mandalo como cuerpo binario del pedido."}

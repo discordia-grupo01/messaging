@@ -17,7 +17,7 @@ defmodule MessagingWeb.Schemas do
         name: %Schema{type: :string, description: "Nombre original, ya saneado"},
         content_type: %Schema{
           type: :string,
-          enum: ["image/jpeg", "image/png", "image/webp", "application/pdf"],
+          enum: ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"],
           description:
             "Detectado por el contenido real del archivo, no por el que declaró el cliente"
         },

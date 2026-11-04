@@ -66,10 +66,17 @@ defmodule Messaging.Application do
   end
 
   defp warn_if_storage_missing do
-    storage = Application.get_env(:messaging, :storage, Messaging.Storage.Cloudinary)
+    if Application.get_env(:messaging, :storage, Messaging.Storage.Tiered) ==
+         Messaging.Storage.Tiered do
+      if not Messaging.Storage.Cloudinary.configured?() do
+        Logger.warning("attachments_storage_not_configured", hint: "set CLOUDINARY_URL")
+      end
 
-    if storage == Messaging.Storage.Cloudinary and not Messaging.Storage.Cloudinary.configured?() do
-      Logger.warning("attachments_storage_not_configured", hint: "set CLOUDINARY_URL")
+      if not Messaging.Storage.Supabase.configured?() do
+        Logger.warning("attachments_storage_not_configured",
+          hint: "set SUPABASE_URL and SUPABASE_SECRET_KEY"
+        )
+      end
     end
   end
 

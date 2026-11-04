@@ -18,6 +18,7 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
   setup do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
+    stub(Messaging.Chat.RepoMock, :premium?, fn _user -> false end)
     :ok
   end
 
@@ -156,6 +157,34 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
       big = FileFixtures.sized(:pdf, 10 * 1024 * 1024 + 1)
 
       assert {:error, :file_too_large} = Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+    end
+
+    test "a Premium user can store a file over 10 MB" do
+      stub(Messaging.Chat.RepoMock, :premium?, fn @user -> true end)
+      stub(Messaging.Chat.RepoMock, :count_pending_attachments, fn @user -> {:ok, 0} end)
+      stub(Messaging.Chat.RepoMock, :insert_attachment, fn _doc -> :ok end)
+
+      stub(Messaging.StorageMock, :put, fn key, _body, _type ->
+        {:ok, %{url: "https://cdn.test/" <> key, path: "supabase/" <> key}}
+      end)
+
+      big = FileFixtures.sized(:pdf, 10 * 1024 * 1024 + 1)
+
+      assert {:ok, %Attachment{size: 10_485_761}} =
+               Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+    end
+
+    test "a file up to 10 MB doesn't need to look up Premium" do
+      expect(Messaging.Chat.RepoMock, :premium?, 0, fn _user -> false end)
+      stub(Messaging.Chat.RepoMock, :count_pending_attachments, fn @user -> {:ok, 0} end)
+      stub(Messaging.Chat.RepoMock, :insert_attachment, fn _doc -> :ok end)
+
+      stub(Messaging.StorageMock, :put, fn key, _body, _type ->
+        {:ok, %{url: "https://cdn.test/" <> key, path: "image/" <> key}}
+      end)
+
+      assert {:ok, %Attachment{}} =
+               Chat.store_attachment(@channel_id, @user, "a.png", FileFixtures.png())
     end
 
     test "an empty file is rejected" do
