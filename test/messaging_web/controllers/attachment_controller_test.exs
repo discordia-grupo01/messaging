@@ -10,6 +10,7 @@ defmodule MessagingWeb.AttachmentControllerTest do
 
   setup do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
+    stub(Messaging.Chat.RepoMock, :premium?, fn _user -> false end)
     :ok
   end
 
@@ -188,6 +189,65 @@ defmodule MessagingWeb.AttachmentControllerTest do
 
       assert json_response(conn, 413)["error"]["code"] == "FILE_TOO_LARGE"
     end
+  end
+
+  describe "the limit of a Premium user" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :premium?, fn @me -> true end)
+      allow_channel()
+      :ok
+    end
+
+    test "a file of exactly 50 MB is accepted", %{conn: conn} do
+      allow_storage()
+
+      conn = upload(conn, "channel_id=#{@channel_id}", FileFixtures.sized(:pdf, 50 * 1024 * 1024))
+
+      assert %{"size" => 52_428_800} = json_response(conn, 201)
+    end
+
+    test "one byte more is rejected", %{conn: conn} do
+      conn =
+        upload(conn, "channel_id=#{@channel_id}", FileFixtures.sized(:pdf, 50 * 1024 * 1024 + 1))
+
+      assert %{"error" => %{"code" => "FILE_TOO_LARGE", "message" => message}} =
+               json_response(conn, 413)
+
+      assert message =~ "50 MB"
+    end
+
+    test "a GIF is accepted", %{conn: conn} do
+      allow_storage()
+
+      conn = upload(conn, "channel_id=#{@channel_id}&filename=risa.gif", FileFixtures.gif())
+
+      assert %{"content_type" => "image/gif", "name" => "risa.gif"} = json_response(conn, 201)
+    end
+  end
+
+  test "a GIF from a free user is rejected without touching storage", %{conn: conn} do
+    allow_channel()
+    expect(Messaging.StorageMock, :put, 0, fn _key, _body, _type -> {:error, :unused} end)
+
+    conn = upload(conn, "channel_id=#{@channel_id}", FileFixtures.gif())
+
+    assert %{"error" => %{"code" => "UNSUPPORTED_FILE_TYPE", "message" => message}} =
+             json_response(conn, 415)
+
+    assert message =~ "GIF con Premium"
+  end
+
+  test "when Premium can't be read the free limit applies", %{conn: conn} do
+    stub(Messaging.Chat.RepoMock, :premium?, fn _user -> {:error, :mongo_down} end)
+    allow_channel()
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        conn = upload(conn, "channel_id=#{@channel_id}", FileFixtures.sized(:pdf, 10_485_761))
+        assert json_response(conn, 413)["error"]["code"] == "FILE_TOO_LARGE"
+      end)
+
+    assert log =~ "premium_lookup_failed"
   end
 
   describe "permissions and destination" do

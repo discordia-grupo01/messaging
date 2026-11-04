@@ -19,6 +19,7 @@ defmodule Messaging.Chat do
   alias Messaging.Log
   alias Messaging.Outbox
   alias Messaging.Outbox.Applier
+  alias Messaging.Premium
   alias Messaging.Suspension
   alias Messaging.Storage
   alias Messaging.UUID
@@ -310,11 +311,30 @@ defmodule Messaging.Chat do
     end
   end
 
+  @spec max_upload_bytes(String.t()) :: pos_integer()
+  def max_upload_bytes(user_id), do: Attachment.max_bytes_for(upload_plan(user_id))
+
+  # If the Premium state can't be read the user gets the free plan: a failed
+  # lookup must not block normal uploads.
+  defp upload_plan(user_id) do
+    case Premium.premium?(user_id) do
+      {:ok, true} ->
+        :premium
+
+      {:ok, false} ->
+        :free
+
+      {:error, reason} ->
+        Logger.warning("premium_lookup_failed", reason: Log.reason(reason))
+        :free
+    end
+  end
+
   @spec store_attachment(String.t(), String.t(), term(), binary()) ::
           {:ok, Attachment.t()} | {:error, MessagingWeb.ApiError.reason()}
   def store_attachment(channel_id, user_id, filename, binary) do
     with :ok <- Suspension.ensure_active(user_id),
-         {:ok, detected} <- Attachment.validate(binary),
+         {:ok, detected} <- validate_upload(user_id, binary),
          :ok <- ensure_pending_room(user_id) do
       id = UUID.generate_v7()
 
@@ -333,6 +353,14 @@ defmodule Messaging.Chat do
 
         save_attachment(attachment)
       end
+    end
+  end
+
+  defp validate_upload(user_id, binary) do
+    if byte_size(binary) > Attachment.max_bytes() or Attachment.gif?(binary) do
+      Attachment.validate(binary, upload_plan(user_id))
+    else
+      Attachment.validate(binary)
     end
   end
 

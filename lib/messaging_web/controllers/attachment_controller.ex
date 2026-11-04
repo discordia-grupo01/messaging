@@ -17,8 +17,9 @@ defmodule MessagingWeb.AttachmentController do
     summary: "Subir un archivo para adjuntarlo a un mensaje",
     description:
       "El cuerpo del pedido es el archivo en binario (no multipart ni base64). Se acepta JPEG, " <>
-        "PNG, WebP o PDF de hasta #{div(Attachment.max_bytes(), 1_048_576)} MB; el formato se " <>
-        "reconoce por el contenido real del archivo, no por la extensión ni por el " <>
+        "PNG, WebP o PDF de hasta #{div(Attachment.max_bytes(), 1_048_576)} MB, o " <>
+        "#{div(Attachment.premium_max_bytes(), 1_048_576)} MB con Premium, que también permite " <>
+        "GIF; el formato se reconoce por el contenido real del archivo, no por la extensión ni por el " <>
         "`Content-Type`. Indicá el destino con `channel_id` (canal de un servidor) o con `to` " <>
         "(id del usuario, para un mensaje directo), nunca los dos. Hay que tener permiso de " <>
         "escribir ahí. La respuesta trae el `id` que se manda después en `attachment_ids` al " <>
@@ -71,16 +72,17 @@ defmodule MessagingWeb.AttachmentController do
     user_id = conn.assigns.user_id
 
     with {:ok, target} <- target(params),
-         :ok <- check_declared_size(conn),
+         max_bytes = Chat.max_upload_bytes(user_id),
+         :ok <- check_declared_size(conn, max_bytes),
          {:ok, channel_id} <- Chat.prepare_upload(target, user_id) do
-      store(conn, channel_id, user_id, Map.get(params, "filename"))
+      store(conn, channel_id, user_id, Map.get(params, "filename"), max_bytes)
     else
       {:error, reason} -> error(conn, reason)
     end
   end
 
-  defp store(conn, channel_id, user_id, filename) do
-    case read_file(conn) do
+  defp store(conn, channel_id, user_id, filename, max_bytes) do
+    case read_file(conn, max_bytes) do
       {:ok, body, conn} ->
         case Chat.store_attachment(channel_id, user_id, filename, body) do
           {:ok, attachment} -> conn |> put_status(201) |> json(Attachment.to_api(attachment))
@@ -100,19 +102,19 @@ defmodule MessagingWeb.AttachmentController do
   defp target(%{"to" => to}) when is_binary(to) and to != "", do: {:ok, {:direct, to}}
   defp target(_params), do: {:error, :invalid_payload}
 
-  defp check_declared_size(conn) do
+  defp check_declared_size(conn, max_bytes) do
     with [raw] <- Plug.Conn.get_req_header(conn, "content-length"),
          {size, ""} <- Integer.parse(raw),
-         true <- size > Attachment.max_bytes() do
+         true <- size > max_bytes do
       {:error, :file_too_large}
     else
       _within_limit -> :ok
     end
   end
 
-  defp read_file(conn) do
+  defp read_file(conn, max_bytes) do
     case Plug.Conn.read_body(conn,
-           length: Attachment.max_bytes() + 1,
+           length: max_bytes + 1,
            read_length: @read_length,
            read_timeout: @read_timeout
          ) do
