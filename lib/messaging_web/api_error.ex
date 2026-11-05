@@ -23,6 +23,9 @@ defmodule MessagingWeb.ApiError do
           | {:banned_word, [String.t()]}
           | :invalid_emoji
           | :too_many_reactions
+          | :custom_emoji_not_allowed
+          | :custom_emojis_unavailable
+          | :too_many_custom_emojis
           | :file_too_large
           | :unsupported_file_type
           | :empty_file
@@ -171,6 +174,21 @@ defmodule MessagingWeb.ApiError do
       {"INVALID_SEARCH_QUERY",
        "Ingresá un término de hasta #{Messaging.Chat.Search.max_text_length()} caracteres o elegí un autor para buscar."}
 
+  def describe(:custom_emoji_not_allowed),
+    do:
+      {"CUSTOM_EMOJI_NOT_ALLOWED",
+       "No podés usar ese emoji: tiene que existir y ser de un servidor donde seas miembro. Los animados, los de otro servidor y los que se usan en mensajes directos requieren Premium."}
+
+  def describe(:custom_emojis_unavailable),
+    do:
+      {"CUSTOM_EMOJIS_UNAVAILABLE",
+       "No se pudieron verificar los emojis, intentá de nuevo en un momento."}
+
+  def describe(:too_many_custom_emojis),
+    do:
+      {"TOO_MANY_CUSTOM_EMOJIS",
+       "Podés pedir hasta #{Messaging.Chat.CustomEmoji.max_ids()} emojis por consulta."}
+
   def describe(:not_server_member),
     do: {"NOT_SERVER_MEMBER", "No sos miembro de este servidor."}
 
@@ -199,6 +217,9 @@ defmodule MessagingWeb.ApiError do
   def http_status(:server_suspended), do: 403
   def http_status(:suspension_unavailable), do: 503
   def http_status(:forbidden), do: 403
+  def http_status(:custom_emoji_not_allowed), do: 403
+  def http_status(:custom_emojis_unavailable), do: 503
+  def http_status(:too_many_custom_emojis), do: 400
   def http_status(:member_muted), do: 403
   def http_status(:not_message_author), do: 403
   def http_status(:message_delete_denied), do: 403

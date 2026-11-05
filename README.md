@@ -829,6 +829,32 @@ y llega acá por `servers.word_filter_updated`.
 - Aplica desde que llega el evento: los mensajes ya enviados no se tocan. En
   los mensajes directos no aplica (la lista es de cada servidor).
 
+## Emojis personalizados
+`discordia-servers` es el dueño de los emojis (`/v1/servers/{serverId}/emojis`). Este servicio
+consume `servers.emoji_created` y `servers.emoji_deleted` en la cola `messaging.server_emojis` y los
+guarda en `replica_emojis`. Los dos eventos traen el emoji completo y el borrado gana sin importar
+el orden en que lleguen. Los emojis borrados se quedan en la réplica; al borrar un servidor se van
+los suyos.
+
+En mensajes y reacciones un emoji se escribe `<:nombre:id>`, o `<a:nombre:id>` si es animado.
+
+**Para usar uno** tiene que existir, no estar borrado, coincidir en nombre y en animado, y ser de
+un servidor donde seas miembro. Además hace falta Premium si es animado, si es de otro servidor o
+si va en un mensaje directo. Si no se cumple responde `403 CUSTOM_EMOJI_NOT_ALLOWED`, y
+`503 CUSTOM_EMOJIS_UNAVAILABLE` si no se pudo verificar.
+
+- **Editar un mensaje** solo valida los emojis nuevos: quien perdió Premium, o tiene en el mensaje
+  un emoji que se borró, puede seguir editándolo.
+- **Sacar una reacción** no valida el emoji, por el mismo motivo.
+- **Texto que solo se parece** a un token (un id que no es UUID, por ejemplo) es texto común.
+
+**Para dibujarlos**, `GET /v1/custom-emojis?ids=<id>,<id>` (hasta 100) devuelve nombre e imagen.
+Incluye los borrados y no pide ser miembro, porque un mensaje puede traer el emoji de un servidor
+donde quien lee no está. Si un id no aparece (se borró su servidor), el cliente muestra `:nombre:`.
+
+**Si la cola no existía** cuando `servers` publicó, esos eventos se perdieron: RabbitMQ no los
+guarda. Por ahora no hay backfill, así que hay que desplegar este consumidor antes de crear emojis.
+
 ## Reacciones
 Historia #48: reaccionar a un mensaje con un emoji, en canales de servidor y en
 conversaciones directas.
