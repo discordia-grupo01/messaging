@@ -12,7 +12,9 @@ defmodule MessagingWeb.SearchController do
     :invalid_cursor,
     :not_server_member,
     :forbidden,
-    :channel_not_found
+    :channel_not_found,
+    :server_suspended,
+    :suspension_unavailable
   ]
 
   tags ["messages"]

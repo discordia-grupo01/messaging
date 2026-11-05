@@ -1,7 +1,12 @@
 defmodule Messaging.Events.AdminEventsConsumer do
   @moduledoc """
   Consumes the signed `admin.user_suspended` / `admin.user_reactivated` events
-  into the suspended-user state (`Messaging.Suspension`).
+  into the suspended-user state (`Messaging.Suspension`) and the signed
+  `admin.server_suspended` / `admin.server_reactivated` events into the
+  suspended-server state (`Messaging.ServerSuspension`). Suspending a server also
+  cuts the sockets of all its channels. `admin.server_deletion_requested` is not
+  consumed here: servers runs the deletion and messaging reacts to the
+  `servers.server_deleted` it publishes.
 
   The queue is shared by every instance (competing consumers), so one instance
   gets each event: the state goes to Mongo, which all of them read. An event
@@ -11,8 +16,10 @@ defmodule Messaging.Events.AdminEventsConsumer do
   use GenServer
   require Logger
 
+  alias Messaging.Chat.{Repo, Sockets}
   alias Messaging.Events.{Audit, Backoff, EventPublisher}
   alias Messaging.Log
+  alias Messaging.ServerSuspension
   alias Messaging.Suspension
   alias Messaging.Suspension.Signature
 
@@ -20,7 +27,10 @@ defmodule Messaging.Events.AdminEventsConsumer do
   @default_queue "messaging.admin_events"
   @suspended "admin.user_suspended"
   @reactivated "admin.user_reactivated"
-  @routing_keys [@suspended, @reactivated]
+  @server_suspended "admin.server_suspended"
+  @server_reactivated "admin.server_reactivated"
+  @server_keys [@server_suspended, @server_reactivated]
+  @routing_keys [@suspended, @reactivated] ++ @server_keys
 
   def routing_keys, do: @routing_keys
 
@@ -144,6 +154,30 @@ defmodule Messaging.Events.AdminEventsConsumer do
     end
   end
 
+  # Server events name a server and their version starts at 1, as admin counts.
+  defp parse(
+         routing_key,
+         %{
+           "event_id" => event_id,
+           "occurred_at" => occurred_at,
+           "server_id" => server_id,
+           "version" => version
+         } = decoded
+       )
+       when routing_key in @server_keys and is_binary(event_id) and event_id != "" and
+              is_binary(occurred_at) and is_binary(server_id) and server_id != "" and
+              is_integer(version) and version >= 1 do
+    {:ok,
+     %{
+       routing_key: routing_key,
+       event_id: event_id,
+       occurred_at: occurred_at,
+       server_id: server_id,
+       version: version,
+       signature: Map.get(decoded, "signature")
+     }}
+  end
+
   defp parse(
          routing_key,
          %{
@@ -153,8 +187,9 @@ defmodule Messaging.Events.AdminEventsConsumer do
            "version" => version
          } = decoded
        )
-       when is_binary(event_id) and event_id != "" and is_binary(occurred_at) and
-              is_binary(user_id) and user_id != "" and is_integer(version) do
+       when routing_key not in @server_keys and is_binary(event_id) and event_id != "" and
+              is_binary(occurred_at) and is_binary(user_id) and user_id != "" and
+              is_integer(version) do
     {:ok,
      %{
        routing_key: routing_key,
@@ -167,6 +202,30 @@ defmodule Messaging.Events.AdminEventsConsumer do
   end
 
   defp parse(_routing_key, _decoded), do: {:error, :invalid_payload}
+
+  defp apply_event(%{server_id: server_id} = event, payload) do
+    suspended = event.routing_key == @server_suspended
+
+    case ServerSuspension.apply_event(server_id, suspended, event.version) do
+      {:ok, :applied} ->
+        if suspended, do: close_server_sockets(server_id)
+        audit(event.event_id, event.routing_key, payload, :processed, nil)
+        :ack
+
+      {:ok, :stale} ->
+        audit(event.event_id, event.routing_key, payload, :ignored_stale, nil)
+        :ack
+
+      {:error, reason} ->
+        Logger.error("admin_events_consumer_event_failed",
+          reason: Log.reason(reason),
+          event_id: event.event_id,
+          routing_key: event.routing_key
+        )
+
+        :retry
+    end
+  end
 
   defp apply_event(event, payload) do
     suspended = event.routing_key == @suspended
@@ -189,6 +248,23 @@ defmodule Messaging.Events.AdminEventsConsumer do
         )
 
         :retry
+    end
+  end
+
+  # Closes the sockets of every channel of the suspended server in all the
+  # instances (`Sockets.close_channels/2` goes through the broadcast fanout, like
+  # `servers.server_deleted` does). If it fails the state is already stored, so the
+  # next join or message is refused anyway; it is logged and the event is acked.
+  defp close_server_sockets(server_id) do
+    with {:ok, channel_ids} <- Repo.impl().list_channel_ids(server_id),
+         :ok <- Sockets.close_channels(channel_ids, "server_suspended") do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("admin_events_consumer_close_sockets_failed",
+          server_id: server_id,
+          reason: Log.reason(reason)
+        )
     end
   end
 

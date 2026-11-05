@@ -32,6 +32,7 @@ defmodule MessagingWeb.ApiError do
           | :storage_unavailable
           | :messages_unavailable
           | :account_suspended
+          | :server_suspended
           | :suspension_unavailable
           | :invalid_status
           | :presence_unavailable
@@ -147,6 +148,11 @@ defmodule MessagingWeb.ApiError do
   def describe(:account_suspended),
     do: {"ACCOUNT_SUSPENDED", "Tu cuenta está suspendida: no podés realizar acciones."}
 
+  def describe(:server_suspended),
+    do:
+      {"SERVER_SUSPENDED",
+       "Este servidor está suspendido por el staff de la plataforma: no se puede usar hasta que lo reactiven."}
+
   def describe(:suspension_unavailable),
     do:
       {"SUSPENSION_UNAVAILABLE",
@@ -190,6 +196,7 @@ defmodule MessagingWeb.ApiError do
 
   @spec http_status(reason()) :: 400 | 403 | 404 | 413 | 415 | 429 | 503
   def http_status(:account_suspended), do: 403
+  def http_status(:server_suspended), do: 403
   def http_status(:suspension_unavailable), do: 503
   def http_status(:forbidden), do: 403
   def http_status(:member_muted), do: 403

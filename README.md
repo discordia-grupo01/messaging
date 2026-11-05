@@ -207,6 +207,40 @@ mensajes anteriores siguen visibles para los demás.
 |---|---|
 | `ADMIN_EVENTS_HMAC_SECRET` | Secreto compartido con `discordia-admin` para verificar la firma de los eventos `admin.*` |
 
+## Servidores suspendidos (HU #69)
+Cuando el staff suspende un servidor, `discordia-admin` publica `admin.server_suspended` (y
+`admin.server_reactivated` al levantarlo). Mientras dure, **nadie** puede leer ni escribir en
+ninguno de sus canales, el owner incluido: ni historial, ni enviar, editar o borrar mensajes, ni
+reaccionar, ni adjuntar archivos, ni buscar, ni unirse a un canal. Los **mensajes no se borran**:
+al reactivar todo vuelve. Los DM no se ven afectados.
+
+- **Consumidor.** Es el mismo `AdminEventsConsumer` y la misma cola `messaging.admin_events`, con
+  dos bindings más. La firma es la de los eventos de usuario con `server_id` como sujeto
+  (`routing_key`, `event_id`, `server_id`, `version`, `occurred_at`, unidos por saltos de línea;
+  se prueba con los vectores de `events-contract` v0.13.1). Firma ausente o inválida, JSON roto,
+  `server_id` vacío o `version < 1` se descartan sin reencolar y sin cambiar nada. Una falla de
+  Mongo reencola.
+- **No consume `admin.server_deletion_requested`**: `servers` hace el borrado y messaging reacciona
+  al `servers.server_deleted` que publica, como siempre.
+- **Estado.** Colección Mongo `suspended_servers`: `{_id: server_id, suspended, version,
+  updated_at}`, con la misma regla de versión que los usuarios. Un servidor sin documento está
+  activo. `Messaging.ServerSuspension` lo lee con una caché ETS de 5 s (se invalida al aplicar un
+  evento en esa instancia; las otras se enteran dentro de la ventana).
+- **Rechazo.** Todas las operaciones sobre un canal resuelven el canal en `Chat.fetch_channel/1`,
+  y ahí se frena: responde `403 SERVER_SUSPENDED` en REST (historial, edición, borrado, adjuntos,
+  menciones y búsqueda) y en el `join` y los `handle_in` de `RoomChannel`. Un canal de un servidor
+  suspendido se trata como oculto en `GET /v1/messages`. Si no se puede leer el estado, falla
+  cerrado con `503 SUSPENSION_UNAVAILABLE`. Una cuenta suspendida recibe antes
+  `ACCOUNT_SUSPENDED`.
+- **Corte de sockets.** Al suspender se cierran, en todas las instancias, los sockets de todos los
+  canales del servidor (`Sockets.close_channels/2`, motivo `server_suspended`, el mismo mecanismo
+  que `server_deleted`). Si el aviso se pierde, el siguiente mensaje o join igual se rechaza.
+  Reactivar no corta nada.
+- **Pendiente de decidir:** el topic de presencia `presence:<server_id>` y el listado de menciones
+  sin leer no distinguen servidores suspendidos.
+- **Despliegue.** Desplegar `messaging` antes que `admin`; las suspensiones que ya existían se
+  re-publican con `make republish-suspensions` en `discordia-admin`.
+
 ## Premium (`billing.premium_updated`)
 `discordia-billing` decide quién es Premium y publica el estado completo de cada usuario en
 `billing.premium_updated`.

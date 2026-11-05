@@ -12,7 +12,9 @@ defmodule MessagingWeb.ApiSpec do
         description:
           "Mensajes de canal en tiempo real (envío por WebSocket, historial por REST). " <>
             "Todos los endpoints responden 403 ACCOUNT_SUSPENDED a una cuenta suspendida por el staff " <>
-            "y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado.",
+            "y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado. " <>
+            "Las rutas de un canal de un servidor suspendido por el staff responden 403 SERVER_SUSPENDED, " <>
+            "al owner también; los mensajes se conservan y vuelven al reactivarlo.",
         version: "0.1.0"
       },
       paths: Paths.from_router(MessagingWeb.Router)

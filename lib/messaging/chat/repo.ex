@@ -123,6 +123,12 @@ defmodule Messaging.Chat.Repo do
   @callback apply_suspension(user_id :: String.t(), suspended :: boolean(), version :: integer()) ::
               {:ok, :applied | :stale} | {:error, term()}
   @callback suspended?(user_id :: String.t()) :: boolean() | {:error, term()}
+  @callback apply_server_suspension(
+              server_id :: String.t(),
+              suspended :: boolean(),
+              version :: integer()
+            ) :: {:ok, :applied | :stale} | {:error, term()}
+  @callback server_suspended?(server_id :: String.t()) :: boolean() | {:error, term()}
   @callback apply_premium(user_id :: String.t(), active :: boolean(), version :: integer()) ::
               {:ok, :applied | :stale} | {:error, term()}
   @callback premium?(user_id :: String.t()) :: boolean() | {:error, term()}

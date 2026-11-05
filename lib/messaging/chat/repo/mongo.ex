@@ -16,6 +16,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @replica_users "replica_users"
   @replica_word_filters "replica_word_filters"
   @suspended_users "suspended_users"
+  @suspended_servers "suspended_servers"
   @premium_users "premium_users"
   @tombstone_ttl_seconds 7 * 24 * 60 * 60
 
@@ -758,6 +759,33 @@ defmodule Messaging.Chat.Repo.Mongo do
   @impl true
   def suspended?(user_id) do
     case Mongo.find_one(@conn, @suspended_users, %{"_id" => user_id}) do
+      %{"suspended" => suspended} -> suspended
+      nil -> false
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def apply_server_suspension(server_id, suspended, version) do
+    filter = %{"_id" => server_id, "version" => %{"$lt" => version}}
+
+    update = %{
+      "$set" => %{
+        "suspended" => suspended,
+        "version" => version,
+        "updated_at" => DateTime.utc_now()
+      }
+    }
+
+    case Mongo.update_one(@conn, @suspended_servers, filter, update, upsert: true) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def server_suspended?(server_id) do
+    case Mongo.find_one(@conn, @suspended_servers, %{"_id" => server_id}) do
       %{"suspended" => suspended} -> suspended
       nil -> false
       {:error, _reason} = error -> error

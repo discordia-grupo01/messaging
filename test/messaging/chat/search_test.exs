@@ -10,6 +10,8 @@ defmodule Messaging.Chat.SearchTest do
   @at ~U[2026-10-24 12:00:00.000Z]
 
   setup do
+    Messaging.SuspensionHelper.stub_active()
+
     staff = [
       Fixtures.override("everyone", [], ["VIEW_CHANNELS"]),
       Fixtures.override("mod", ["VIEW_CHANNELS"], [])
