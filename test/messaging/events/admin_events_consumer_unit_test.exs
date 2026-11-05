@@ -86,10 +86,12 @@ defmodule Messaging.Events.AdminEventsConsumerUnitTest do
     assert :ok = AdminEventsConsumer.terminate(:normal, state())
   end
 
-  test "binds exactly the two admin routing keys" do
+  test "binds the user events and the server events it handles" do
     assert AdminEventsConsumer.routing_keys() == [
              "admin.user_suspended",
-             "admin.user_reactivated"
+             "admin.user_reactivated",
+             "admin.server_suspended",
+             "admin.server_reactivated"
            ]
   end
 
