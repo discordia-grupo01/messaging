@@ -157,6 +157,8 @@ defmodule Messaging.Chat.Repo do
   @callback release_attachments(message_id :: String.t()) :: :ok | {:error, term()}
   @callback orphan_message_attachments(message_id :: String.t(), at :: DateTime.t()) ::
               :ok | {:error, term()}
+  @callback orphan_deleted_message_attachments(at :: DateTime.t(), limit :: pos_integer()) ::
+              {:ok, non_neg_integer()} | {:error, term()}
   @callback list_cleanable_attachments(pending_before :: DateTime.t(), limit :: pos_integer()) ::
               {:ok, [map()]} | {:error, term()}
   @callback delete_attachments(ids :: [String.t()]) :: :ok | {:error, term()}

@@ -177,6 +177,58 @@ if mongo_url do
       refute Enum.any?(docs, &(&1["_id"] == id))
     end
 
+    test "files of a message deleted without marking them are recovered", %{
+      user: user,
+      channel: channel
+    } do
+      [deleted, live, not_written] = seed(user, channel, 3)
+      deleted_message = "msg-#{Messaging.UUID.generate()}"
+      live_message = "msg-#{Messaging.UUID.generate()}"
+      now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+      for {attachment, message} <- [
+            {deleted, deleted_message},
+            {live, live_message},
+            {not_written, "msg-#{Messaging.UUID.generate()}"}
+          ] do
+        {:ok, _} = Repo.claim_attachments([attachment], user, channel, message)
+      end
+
+      {:ok, _} =
+        Mongo.insert_many(Messaging.Mongo, "messages", [
+          %{"_id" => deleted_message, "channel_id" => channel, "deleted_at" => now},
+          %{"_id" => live_message, "channel_id" => channel, "deleted_at" => nil}
+        ])
+
+      assert {:ok, count} = Repo.orphan_deleted_message_attachments(now, 100_000)
+      assert count >= 1
+
+      assert fetch(deleted)["orphaned_at"]
+      refute fetch(live)["orphaned_at"]
+      refute fetch(not_written)["orphaned_at"]
+
+      assert {:ok, 0} = Repo.orphan_deleted_message_attachments(now, 100_000)
+    end
+
+    test "recovering files marks at most the limit in one call", %{user: user, channel: channel} do
+      ids = seed(user, channel, 2)
+      message = "msg-#{Messaging.UUID.generate()}"
+      now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      {:ok, _} = Repo.orphan_deleted_message_attachments(now, 100_000)
+      {:ok, _} = Repo.claim_attachments(ids, user, channel, message)
+
+      {:ok, _} =
+        Mongo.insert_one(Messaging.Mongo, "messages", %{
+          "_id" => message,
+          "channel_id" => channel,
+          "deleted_at" => now
+        })
+
+      assert {:ok, 1} = Repo.orphan_deleted_message_attachments(now, 1)
+      assert {:ok, 1} = Repo.orphan_deleted_message_attachments(now, 1)
+      assert {:ok, 0} = Repo.orphan_deleted_message_attachments(now, 1)
+    end
+
     test "deleting a channel marks every file of that channel", %{user: user, channel: channel} do
       [pending] = seed(user, channel, 1)
       [used] = seed(user, channel, 1)
