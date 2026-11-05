@@ -613,6 +613,47 @@ defmodule Messaging.Chat.Repo.Mongo do
   end
 
   @impl true
+  def orphan_deleted_message_attachments(%DateTime{} = at, limit) do
+    pipeline = [
+      %{"$match" => %{"message_id" => %{"$ne" => nil}, "orphaned_at" => nil}},
+      %{
+        "$lookup" => %{
+          "from" => @messages,
+          "localField" => "message_id",
+          "foreignField" => "_id",
+          "as" => "message"
+        }
+      },
+      # $elemMatch, not "message.deleted_at": $ne also matches an empty lookup,
+      # which is a message not written yet, and its files are still in use.
+      %{"$match" => %{"message" => %{"$elemMatch" => %{"deleted_at" => %{"$ne" => nil}}}}},
+      %{"$limit" => limit},
+      %{"$project" => %{"_id" => 1}}
+    ]
+
+    case Mongo.aggregate(@conn, @attachments, pipeline) do
+      {:error, reason} -> {:error, reason}
+      cursor -> cursor |> Enum.map(& &1["_id"]) |> mark_orphaned(at)
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp mark_orphaned([], _at), do: {:ok, 0}
+
+  defp mark_orphaned(ids, at) do
+    case Mongo.update_many(
+           @conn,
+           @attachments,
+           %{"_id" => %{"$in" => ids}},
+           %{"$set" => %{"orphaned_at" => at}}
+         ) do
+      {:ok, _result} -> {:ok, length(ids)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
   def list_cleanable_attachments(%DateTime{} = pending_before, limit) do
     filter = %{
       "$or" => [

@@ -23,7 +23,27 @@ defmodule Messaging.Chat.AttachmentCleaner do
   end
 
   @spec sweep() :: {:ok, non_neg_integer()} | {:error, term()}
-  def sweep, do: sweep(0)
+  def sweep do
+    recover_files_of_deleted_messages()
+    sweep(0)
+  end
+
+  # Deleting a message marks its files only if the database answers at that
+  # moment; this catches the ones it could not mark, on any later sweep.
+  defp recover_files_of_deleted_messages do
+    at = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+    case Repo.impl().orphan_deleted_message_attachments(at, @batch) do
+      {:ok, 0} ->
+        :ok
+
+      {:ok, count} ->
+        Logger.info("attachments_recovered", count: count)
+
+      {:error, reason} ->
+        Logger.warning("attachments_recover_failed", reason: Log.reason(reason))
+    end
+  end
 
   defp sweep(total) do
     pending_before = DateTime.add(DateTime.utc_now(), -Attachment.pending_ttl_seconds(), :second)

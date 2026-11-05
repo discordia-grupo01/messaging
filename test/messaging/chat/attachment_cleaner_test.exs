@@ -6,7 +6,46 @@ defmodule Messaging.Chat.AttachmentCleanerTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Messaging.Chat.RepoMock, :orphan_deleted_message_attachments, fn _at, _limit ->
+      {:ok, 0}
+    end)
+
+    :ok
+  end
+
   defp doc(n), do: %{"_id" => "att-#{n}", "path" => "chan-1/att-#{n}.png"}
+
+  test "marks the files of deleted messages before looking for what to clean" do
+    test_pid = self()
+
+    expect(Messaging.Chat.RepoMock, :orphan_deleted_message_attachments, fn %DateTime{}, 100 ->
+      send(test_pid, :recovered)
+      {:ok, 1}
+    end)
+
+    expect(Messaging.Chat.RepoMock, :list_cleanable_attachments, fn _before, _limit ->
+      assert_received :recovered
+      {:ok, [doc(1)]}
+    end)
+
+    expect(Messaging.StorageMock, :delete, fn ["chan-1/att-1.png"] -> :ok end)
+    expect(Messaging.Chat.RepoMock, :delete_attachments, fn ["att-1"] -> :ok end)
+
+    assert {:ok, 1} = AttachmentCleaner.sweep()
+  end
+
+  test "still cleans what it can when marking those files fails" do
+    expect(Messaging.Chat.RepoMock, :orphan_deleted_message_attachments, fn _at, _limit ->
+      {:error, :timeout}
+    end)
+
+    expect(Messaging.Chat.RepoMock, :list_cleanable_attachments, fn _b, _l -> {:ok, [doc(1)]} end)
+    expect(Messaging.StorageMock, :delete, fn _paths -> :ok end)
+    expect(Messaging.Chat.RepoMock, :delete_attachments, fn ["att-1"] -> :ok end)
+
+    assert {:ok, 1} = AttachmentCleaner.sweep()
+  end
 
   test "removes the files from storage and then their records" do
     expect(Messaging.Chat.RepoMock, :list_cleanable_attachments, fn %DateTime{} = before, 100 ->
