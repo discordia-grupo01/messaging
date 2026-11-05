@@ -148,6 +148,61 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.ConversationList
       x-validate:
+    CustomEmoji:
+      properties:
+        animated:
+          type: boolean
+          x-struct:
+          x-validate:
+        deleted:
+          description: Ya no se puede usar, pero el contenido viejo lo sigue mostrando.
+          type: boolean
+          x-struct:
+          x-validate:
+        id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+        image_url:
+          type: string
+          x-struct:
+          x-validate:
+        name:
+          example: party
+          type: string
+          x-struct:
+          x-validate:
+        server_id:
+          format: uuid
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - id
+        - server_id
+        - name
+        - animated
+        - image_url
+        - deleted
+      title: CustomEmoji
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.CustomEmoji
+      x-validate:
+    CustomEmojiList:
+      properties:
+        emojis:
+          items:
+            $ref: '#/components/schemas/CustomEmoji'
+          type: array
+          x-struct:
+          x-validate:
+      required:
+        - emojis
+      title: CustomEmojiList
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.CustomEmojiList
+      x-validate:
     EditMessageRequest:
       properties:
         content:
@@ -330,6 +385,7 @@ components:
                 x-struct:
                 x-validate:
               emoji:
+                description: Un emoji Unicode, o uno personalizado como `<:nombre:id>` o `<a:nombre:id>`
                 type: string
                 x-struct:
                 x-validate:
@@ -1053,6 +1109,48 @@ paths:
       summary: Marcar una conversación como leída
       tags:
         - conversations
+  /v1/custom-emojis:
+    get:
+      callbacks: {}
+      description: 'Devuelve el nombre y la imagen de los emojis que aparecen en mensajes y reacciones como `<:nombre:id>` o `<a:nombre:id>`. Incluye los borrados, porque el contenido viejo los sigue mostrando, y no pide ser miembro del servidor: alguien con Premium puede usar en un canal el emoji de un servidor donde los demás no están. Los ids desconocidos no aparecen (por ejemplo, si se borró su servidor): ahí el cliente muestra `:nombre:`. Para elegir qué emoji usar está `GET /v1/servers/{serverId}/emojis`.'
+      operationId: MessagingWeb.CustomEmojiController.index
+      parameters:
+        - description: Ids separados por coma (hasta 100)
+          in: query
+          name: ids
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomEmojiList'
+          description: Emojis encontrados
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Más de 100 ids
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudieron leer los emojis
+      summary: Datos de emojis personalizados
+      tags:
+        - custom-emojis
   /v1/mentions:
     get:
       callbacks: {}

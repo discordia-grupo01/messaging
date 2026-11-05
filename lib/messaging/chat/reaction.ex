@@ -1,4 +1,6 @@
 defmodule Messaging.Chat.Reaction do
+  alias Messaging.Chat.CustomEmoji
+
   @max_emoji_bytes 64
   @max_per_message 20
   @keycap 0x20E3
@@ -29,10 +31,21 @@ defmodule Messaging.Chat.Reaction do
 
   @doc """
   A reaction is exactly one emoji: one grapheme whose first code point is
-  pictographic, or a keycap (1️⃣, #️⃣).
+  pictographic, a keycap (1️⃣, #️⃣), or a custom emoji token (`<:name:id>`,
+  `<a:name:id>`). Whether a custom emoji can be used is checked separately.
   """
   @spec validate_emoji(term()) :: {:ok, String.t()} | {:error, :invalid_emoji}
-  def validate_emoji(emoji) when is_binary(emoji) and byte_size(emoji) <= @max_emoji_bytes do
+  def validate_emoji(emoji) when is_binary(emoji) do
+    cond do
+      CustomEmoji.token?(emoji) -> {:ok, emoji}
+      byte_size(emoji) <= @max_emoji_bytes -> validate_unicode(emoji)
+      true -> {:error, :invalid_emoji}
+    end
+  end
+
+  def validate_emoji(_other), do: {:error, :invalid_emoji}
+
+  defp validate_unicode(emoji) do
     with true <- String.valid?(emoji),
          [^emoji] <- String.graphemes(emoji),
          true <- emoji?(String.to_charlist(emoji)) do
@@ -41,8 +54,6 @@ defmodule Messaging.Chat.Reaction do
       _other -> {:error, :invalid_emoji}
     end
   end
-
-  def validate_emoji(_other), do: {:error, :invalid_emoji}
 
   defp emoji?([first | _rest] = codepoints),
     do: pictographic?(first) or List.last(codepoints) == @keycap

@@ -93,6 +93,7 @@ defmodule Messaging.Application do
 
       [
         {Messaging.Events.ChannelLifecycleConsumer, url: rabbitmq_url},
+        {Messaging.Events.ServerEmojisConsumer, url: rabbitmq_url},
         {Messaging.Events.BroadcastPublisher, url: rabbitmq_url},
         {Messaging.Events.BroadcastConsumer, url: rabbitmq_url}
       ] ++ admin_events_children(rabbitmq_url) ++ billing_events_children(rabbitmq_url)

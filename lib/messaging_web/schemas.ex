@@ -89,7 +89,11 @@ defmodule MessagingWeb.Schemas do
           items: %Schema{
             type: :object,
             properties: %{
-              emoji: %Schema{type: :string},
+              emoji: %Schema{
+                type: :string,
+                description:
+                  "Un emoji Unicode, o uno personalizado como `<:nombre:id>` o `<a:nombre:id>`"
+              },
               count: %Schema{type: :integer, minimum: 1},
               reacted_by_me: %Schema{
                 type: :boolean,
@@ -318,6 +322,38 @@ defmodule MessagingWeb.Schemas do
       type: :object,
       properties: %{mentions: %Schema{type: :array, items: Mention}},
       required: [:mentions]
+    })
+  end
+
+  defmodule CustomEmoji do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "CustomEmoji",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        server_id: %Schema{type: :string, format: :uuid},
+        name: %Schema{type: :string, example: "party"},
+        animated: %Schema{type: :boolean},
+        image_url: %Schema{type: :string},
+        deleted: %Schema{
+          type: :boolean,
+          description: "Ya no se puede usar, pero el contenido viejo lo sigue mostrando."
+        }
+      },
+      required: [:id, :server_id, :name, :animated, :image_url, :deleted]
+    })
+  end
+
+  defmodule CustomEmojiList do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "CustomEmojiList",
+      type: :object,
+      properties: %{emojis: %Schema{type: :array, items: CustomEmoji}},
+      required: [:emojis]
     })
   end
 

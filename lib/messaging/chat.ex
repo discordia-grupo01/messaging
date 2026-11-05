@@ -15,6 +15,7 @@ defmodule Messaging.Chat do
     WordFilter
   }
 
+  alias Messaging.Chat.CustomEmoji
   alias Messaging.Events.{DomainEvent, MentionNotifier}
   alias Messaging.Log
   alias Messaging.Outbox
@@ -83,6 +84,7 @@ defmodule Messaging.Chat do
          {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          {:ok, true} <- check_permission(channel, user_id),
          :ok <- check_word_filter(channel, trimmed),
+         :ok <- CustomEmoji.authorize(user_id, CustomEmoji.tokens(trimmed), channel.server_id),
          {:ok, mentions} <- resolve_mentions(channel, trimmed, user_id),
          {:ok, message, outcome} <-
            persist_message(
@@ -182,6 +184,7 @@ defmodule Messaging.Chat do
          :ok <- ensure_not_muted(channel, user_id),
          {:ok, emoji} <- Reaction.validate_emoji(emoji),
          {:ok, true} <- Access.for_channel(channel).can_react?(channel, user_id),
+         :ok <- CustomEmoji.authorize(user_id, CustomEmoji.tokens(emoji), channel.server_id),
          {:ok, message} <- fetch_message(channel_id, message_id),
          :ok <- ensure_reaction_room(message, emoji),
          now = DateTime.utc_now() |> DateTime.truncate(:millisecond),
@@ -274,6 +277,7 @@ defmodule Messaging.Chat do
          {:ok, attachment_ids} <- validate_attachment_ids(Map.get(params, :attachment_ids)),
          {:ok, trimmed} <- validate_content(content, attachment_ids != []),
          :ok <- Blocks.check_contact(sender_id, recipient_id),
+         :ok <- CustomEmoji.authorize(sender_id, CustomEmoji.tokens(trimmed), nil),
          {:ok, channel} <- ensure_conversation(sender_id, recipient_id),
          {:ok, message, outcome} <-
            persist_message(
@@ -572,6 +576,10 @@ defmodule Messaging.Chat do
 
   @spec delete_channel(String.t()) :: :ok | {:error, term()}
   def delete_channel(channel_id), do: repo().delete_channel(channel_id)
+
+  @spec list_custom_emojis([String.t()]) ::
+          {:ok, [map()]} | {:error, MessagingWeb.ApiError.reason()}
+  def list_custom_emojis(ids), do: CustomEmoji.list(ids)
 
   @spec delete_server_data(String.t(), [String.t()]) :: :ok | {:error, term()}
   def delete_server_data(server_id, channel_ids) when is_list(channel_ids),
@@ -1156,7 +1164,10 @@ defmodule Messaging.Chat do
     do: {:ok, message, :unchanged}
 
   defp apply_edit(%ChannelCache{} = channel, %Message{} = message, new_content, actor_id) do
+    added = CustomEmoji.added_tokens(new_content, message.content)
+
     with :ok <- check_word_filter(channel, new_content),
+         :ok <- CustomEmoji.authorize(actor_id, added, channel.server_id),
          {:ok, mentions} <- resolve_mentions(channel, new_content, actor_id) do
       update_content(channel, message, new_content, mentions)
     end

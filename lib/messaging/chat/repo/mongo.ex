@@ -15,6 +15,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @replica_overrides "replica_overrides"
   @replica_users "replica_users"
   @replica_word_filters "replica_word_filters"
+  @replica_emojis "replica_emojis"
   @suspended_users "suspended_users"
   @suspended_servers "suspended_servers"
   @premium_users "premium_users"
@@ -684,6 +685,7 @@ defmodule Messaging.Chat.Repo.Mongo do
     with {:ok, _result} <- Mongo.delete_many(@conn, @replica_overrides, filter),
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_members, filter),
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_roles, filter),
+         {:ok, _result} <- Mongo.delete_many(@conn, @replica_emojis, filter),
          {:ok, _result} <- Mongo.delete_one(@conn, @replica_word_filters, %{"_id" => server_id}) do
       Mongo.delete_one(@conn, @replica_servers, %{"_id" => server_id})
     end
@@ -859,6 +861,32 @@ defmodule Messaging.Chat.Repo.Mongo do
       {:error, _reason} = error -> error
     end
   end
+
+  # $setOnInsert leaves an existing row alone: an emoji never changes after it
+  # is created, and if the deletion arrived first this keeps it deleted.
+  @impl true
+  def apply_emoji_created(%{"_id" => id} = emoji) do
+    update = %{"$setOnInsert" => emoji |> Map.delete("_id") |> Map.put("deleted", false)}
+
+    case Mongo.update_one(@conn, @replica_emojis, %{"_id" => id}, update, upsert: true) do
+      {:ok, _result} -> :ok
+      {:error, error} -> if duplicate_key?(error), do: :ok, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def apply_emoji_deleted(%{"_id" => id} = emoji) do
+    update = %{"$set" => emoji |> Map.delete("_id") |> Map.put("deleted", true)}
+
+    case Mongo.update_one(@conn, @replica_emojis, %{"_id" => id}, update, upsert: true) do
+      {:ok, _result} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  @impl true
+  def get_custom_emojis([]), do: {:ok, []}
+  def get_custom_emojis(ids), do: list(@replica_emojis, %{"_id" => %{"$in" => ids}})
 
   @impl true
   def get_server_owner(server_id) do
@@ -1042,7 +1070,8 @@ defmodule Messaging.Chat.Repo.Mongo do
          :ok <- Mongo.create_indexes(@conn, @reactions, reaction_indexes),
          :ok <- Mongo.create_indexes(@conn, @replica_roles, replica_ttl ++ replica_by_server),
          :ok <- Mongo.create_indexes(@conn, @replica_members, replica_ttl ++ replica_by_server),
-         :ok <- Mongo.create_indexes(@conn, @replica_overrides, replica_by_server) do
+         :ok <- Mongo.create_indexes(@conn, @replica_overrides, replica_by_server),
+         :ok <- Mongo.create_indexes(@conn, @replica_emojis, replica_by_server) do
       Mongo.create_indexes(@conn, @clocks, clock_indexes)
     end
   end
