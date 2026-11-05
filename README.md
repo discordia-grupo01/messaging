@@ -954,6 +954,20 @@ Es en dos pasos, porque los mensajes viajan por WebSocket y los archivos son bin
 - Los archivos tienen URL pública (de Cloudinary o de Supabase) con un identificador aleatorio
   `<canal>/<id>`: el nombre original nunca forma parte de la ruta.
 
+**Subida directa desde el navegador.** La web guarda el JWT en una cookie httpOnly, así que el
+navegador no lo tiene, y pasar el archivo por su backend en Vercel no sirve porque corta los pedidos
+en 4,5 MB. Por eso:
+1. El backend de la web pide `POST /v1/attachment-tickets` (con el Bearer normal) y recibe
+   `{ "ticket": "...", "expires_in": 60 }`.
+2. El navegador sube a `POST /v1/attachments/direct`, con el mismo query y el mismo cuerpo que
+   `POST /v1/attachments`, y el header `X-Upload-Ticket: <ticket>` en vez de `Authorization`.
+
+El ticket es de un solo uso (se gasta aunque el pedido falle), se guarda hasheado junto con los del
+socket y no se puede usar para conectar el socket, ni al revés. Las reglas son las mismas de arriba.
+Kong tiene que dejar pasar el archivo sin guardarlo antes (`request_buffering: false`): `messaging`
+canjea el ticket al recibir el pedido, y con el archivo guardado primero, una subida lenta llegaría
+con el ticket vencido.
+
 **Editar** un mensaje no cambia sus adjuntos; si tiene adjuntos, se puede dejar el texto vacío.
 
 **Huérfanos.** Cada subida queda registrada en la colección `attachments`. Un proceso

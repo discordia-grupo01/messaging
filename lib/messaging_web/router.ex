@@ -9,6 +9,10 @@ defmodule MessagingWeb.Router do
     plug MessagingWeb.Plugs.Authenticate
   end
 
+  pipeline :upload_ticket do
+    plug MessagingWeb.Plugs.AuthenticateUploadTicket
+  end
+
   scope "/", MessagingWeb do
     pipe_through :api
 
@@ -35,6 +39,13 @@ defmodule MessagingWeb.Router do
     get "/custom-emojis", CustomEmojiController, :index
     get "/voice-access/:recipient_id", VoiceAccessController, :show
     post "/socket-tickets", SocketTicketController, :create
+    post "/attachment-tickets", UploadTicketController, :create
     post "/attachments", AttachmentController, :create
+  end
+
+  scope "/v1", MessagingWeb do
+    pipe_through [:api, :upload_ticket]
+
+    post "/attachments/direct", AttachmentController, :direct
   end
 end

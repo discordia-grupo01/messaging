@@ -26,6 +26,7 @@ defmodule MessagingWeb.SuspendedUserTest do
     {:post, "/v1/blocks"},
     {:delete, "/v1/blocks/#{@other}"},
     {:post, "/v1/socket-tickets"},
+    {:post, "/v1/attachment-tickets"},
     {:post, "/v1/attachments?channel_id=chan-1"}
   ]
 

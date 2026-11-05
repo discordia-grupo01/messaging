@@ -399,6 +399,27 @@ defmodule MessagingWeb.Schemas do
     })
   end
 
+  defmodule UploadTicket do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "UploadTicket",
+      type: :object,
+      properties: %{
+        ticket: %Schema{
+          type: :string,
+          description:
+            "Ticket de un solo uso. Se manda en el header `X-Upload-Ticket` al subir el archivo."
+        },
+        expires_in: %Schema{
+          type: :integer,
+          description: "Segundos que el ticket es válido desde que se emite."
+        }
+      },
+      required: [:ticket, :expires_in]
+    })
+  end
+
   defmodule MessageSearchResult do
     require OpenApiSpex
 
