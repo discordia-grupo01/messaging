@@ -19,6 +19,7 @@ defmodule Messaging.Chat.Repo.Mongo do
   @suspended_users "suspended_users"
   @suspended_servers "suspended_servers"
   @premium_users "premium_users"
+  @server_boosts "server_boosts"
   @tombstone_ttl_seconds 7 * 24 * 60 * 60
 
   @impl true
@@ -686,7 +687,8 @@ defmodule Messaging.Chat.Repo.Mongo do
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_members, filter),
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_roles, filter),
          {:ok, _result} <- Mongo.delete_many(@conn, @replica_emojis, filter),
-         {:ok, _result} <- Mongo.delete_one(@conn, @replica_word_filters, %{"_id" => server_id}) do
+         {:ok, _result} <- Mongo.delete_one(@conn, @replica_word_filters, %{"_id" => server_id}),
+         {:ok, _result} <- Mongo.delete_one(@conn, @server_boosts, %{"_id" => server_id}) do
       Mongo.delete_one(@conn, @replica_servers, %{"_id" => server_id})
     end
   end
@@ -858,6 +860,29 @@ defmodule Messaging.Chat.Repo.Mongo do
     case Mongo.find_one(@conn, @premium_users, %{"_id" => user_id}) do
       %{"active" => active} -> active
       nil -> false
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def apply_server_boost(server_id, level, version) do
+    filter = %{"_id" => server_id, "version" => %{"$lt" => version}}
+
+    update = %{
+      "$set" => %{"level" => level, "version" => version, "updated_at" => DateTime.utc_now()}
+    }
+
+    case Mongo.update_one(@conn, @server_boosts, filter, update, upsert: true) do
+      {:ok, _result} -> {:ok, :applied}
+      {:error, error} -> if duplicate_key?(error), do: {:ok, :stale}, else: {:error, error}
+    end
+  end
+
+  @impl true
+  def server_boost_level(server_id) do
+    case Mongo.find_one(@conn, @server_boosts, %{"_id" => server_id}) do
+      %{"level" => level} -> level
+      nil -> 0
       {:error, _reason} = error -> error
     end
   end

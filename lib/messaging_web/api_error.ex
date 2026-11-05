@@ -116,7 +116,7 @@ defmodule MessagingWeb.ApiError do
   def describe(:file_too_large),
     do:
       {"FILE_TOO_LARGE",
-       "El archivo supera el tamaño máximo permitido (#{div(Messaging.Chat.Attachment.max_bytes(), 1_048_576)} MB, o #{div(Messaging.Chat.Attachment.premium_max_bytes(), 1_048_576)} MB con Premium)."}
+       "El archivo supera el tamaño máximo permitido (#{div(Messaging.Chat.Attachment.max_bytes(), 1_048_576)} MB, #{div(Messaging.Chat.Attachment.boosted_max_bytes(), 1_048_576)} MB en un servidor de nivel #{Messaging.Chat.Attachment.boosted_level()}, o #{div(Messaging.Chat.Attachment.premium_max_bytes(), 1_048_576)} MB con Premium)."}
 
   def describe(:unsupported_file_type),
     do:
