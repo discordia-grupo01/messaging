@@ -66,8 +66,14 @@ defmodule MessagingWeb.MentionController do
     end
   end
 
-  defp respond_error(conn, reason) when reason in [:channel_not_found, :channel_not_text],
-    do: conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
+  defp respond_error(conn, reason)
+       when reason in [
+              :channel_not_found,
+              :channel_not_text,
+              :server_suspended,
+              :suspension_unavailable
+            ],
+       do: conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
 
   defp respond_error(conn, _reason),
     do: conn |> put_status(503) |> json(ApiError.payload(:mentions_unavailable))

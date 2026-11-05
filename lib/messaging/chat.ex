@@ -20,6 +20,7 @@ defmodule Messaging.Chat do
   alias Messaging.Outbox
   alias Messaging.Outbox.Applier
   alias Messaging.Premium
+  alias Messaging.ServerSuspension
   alias Messaging.Suspension
   alias Messaging.Storage
   alias Messaging.UUID
@@ -31,7 +32,7 @@ defmodule Messaging.Chat do
   @max_page_limit 100
   @max_changes 200
   @max_lookup_ids 50
-  @hidden_channel_errors [:channel_not_found, :channel_not_text]
+  @hidden_channel_errors [:channel_not_found, :channel_not_text, :server_suspended]
   @clock_skew_ms 5_000
   @message_namespace "6c1b7f0e-2d4a-4b8e-9f35-1a7e0c5d3b92"
 
@@ -525,6 +526,10 @@ defmodule Messaging.Chat do
   end
 
   @spec search_messages(Search.params()) :: {:ok, Search.page()} | {:error, term()}
+  def search_messages(%{server_id: server_id} = params) when is_binary(server_id) do
+    with :ok <- ServerSuspension.ensure_active(server_id), do: Search.run(params)
+  end
+
   def search_messages(params), do: Search.run(params)
 
   @spec list_changes(String.t(), DateTime.t()) ::
@@ -599,13 +604,29 @@ defmodule Messaging.Chat do
   @spec mongo_ready?() :: boolean()
   def mongo_ready?, do: repo().ping() == :ok
 
+  # Every operation on a channel resolves it here, so this is where a server
+  # suspended by the platform staff is shut: reading, writing, reacting and
+  # uploading all stop, for anyone. Direct messages have no server.
   defp fetch_channel(channel_id) do
     case repo().get_channel(channel_id) do
-      nil -> {:error, :channel_not_found}
-      {:error, _reason} = error -> error
-      doc -> validate_messageable(ChannelCache.from_doc(doc))
+      nil ->
+        {:error, :channel_not_found}
+
+      {:error, _reason} = error ->
+        error
+
+      doc ->
+        with {:ok, channel} <- validate_messageable(ChannelCache.from_doc(doc)),
+             :ok <- ensure_server_active(channel) do
+          {:ok, channel}
+        end
     end
   end
+
+  defp ensure_server_active(%ChannelCache{server_id: nil}), do: :ok
+
+  defp ensure_server_active(%ChannelCache{server_id: server_id}),
+    do: ServerSuspension.ensure_active(server_id)
 
   defp fetch_text_channel(channel_id) do
     with {:ok, channel} <- fetch_channel(channel_id) do
