@@ -25,6 +25,14 @@ defmodule Messaging.Suspension.Signature do
               version: integer(),
               occurred_at: String.t()
             }
+          # The event once `verify/2` has picked its subject (the user or the server).
+          | %{
+              routing_key: String.t(),
+              event_id: String.t(),
+              subject: String.t(),
+              version: integer(),
+              occurred_at: String.t()
+            }
 
   @spec sign(signed(), String.t()) :: String.t()
   def sign(signed, secret) when is_binary(secret) do
