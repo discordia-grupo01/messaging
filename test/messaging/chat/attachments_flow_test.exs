@@ -19,6 +19,8 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :get_word_filter, fn _server_id -> {:ok, []} end)
     stub(Messaging.Chat.RepoMock, :premium?, fn _user -> false end)
+    stub(Messaging.Chat.RepoMock, :get_channel, fn _id -> nil end)
+    stub(Messaging.Chat.RepoMock, :server_boost_level, fn _server_id -> 0 end)
     :ok
   end
 
@@ -172,6 +174,96 @@ defmodule Messaging.Chat.AttachmentsFlowTest do
 
       assert {:ok, %Attachment{size: 10_485_761}} =
                Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+    end
+
+    defp store_ok do
+      stub(Messaging.Chat.RepoMock, :count_pending_attachments, fn @user -> {:ok, 0} end)
+      stub(Messaging.Chat.RepoMock, :insert_attachment, fn _doc -> :ok end)
+
+      stub(Messaging.StorageMock, :put, fn key, _body, _type ->
+        {:ok, %{url: "https://cdn.test/" <> key, path: "supabase/" <> key}}
+      end)
+    end
+
+    defp boosted(level) do
+      stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel() end)
+      stub(Messaging.Chat.RepoMock, :server_boost_level, fn @server_id -> level end)
+    end
+
+    test "in a level 2 server anyone can store up to 25 MB" do
+      store_ok()
+      boosted(2)
+      big = FileFixtures.sized(:pdf, 25 * 1024 * 1024)
+
+      assert {:ok, %Attachment{size: 26_214_400}} =
+               Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+
+      assert {:error, :file_too_large} =
+               Chat.store_attachment(@channel_id, @user, "a.pdf", big <> "x")
+    end
+
+    test "a level 1 server keeps the 10 MB limit" do
+      boosted(1)
+      big = FileFixtures.sized(:pdf, 10 * 1024 * 1024 + 1)
+
+      assert {:error, :file_too_large} = Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+    end
+
+    test "a level 2 server doesn't allow GIF: that is only for Premium" do
+      boosted(2)
+
+      assert {:error, :unsupported_file_type} =
+               Chat.store_attachment(@channel_id, @user, "a.gif", "GIF89a" <> <<0, 0, 0>>)
+    end
+
+    test "Premium in a level 2 server gets the highest limit, without reading the level" do
+      store_ok()
+      stub(Messaging.Chat.RepoMock, :premium?, fn @user -> true end)
+      expect(Messaging.Chat.RepoMock, :server_boost_level, 0, fn _server_id -> 2 end)
+      big = FileFixtures.sized(:pdf, 25 * 1024 * 1024 + 1)
+
+      assert {:ok, %Attachment{}} = Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+    end
+
+    test "a level that can't be read applies the 10 MB limit" do
+      stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel() end)
+      stub(Messaging.Chat.RepoMock, :server_boost_level, fn _server_id -> {:error, :down} end)
+      big = FileFixtures.sized(:pdf, 10 * 1024 * 1024 + 1)
+
+      assert capture_log(fn ->
+               assert {:error, :file_too_large} =
+                        Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+             end) =~ "server_boost_lookup_failed"
+    end
+
+    test "if Premium can't be read, the server's level still applies" do
+      store_ok()
+      boosted(2)
+      stub(Messaging.Chat.RepoMock, :premium?, fn _user -> {:error, :down} end)
+      big = FileFixtures.sized(:pdf, 25 * 1024 * 1024)
+
+      capture_log(fn ->
+        assert {:ok, %Attachment{}} = Chat.store_attachment(@channel_id, @user, "a.pdf", big)
+      end)
+    end
+
+    test "a direct message has no server, so it keeps the 10 MB limit" do
+      conversation = Conversation.id(@user, @other)
+
+      stub(Messaging.Chat.RepoMock, :get_channel, fn ^conversation ->
+        %{"_id" => conversation, "kind" => "dm", "participants" => [@user, @other]}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :server_boost_level, 0, fn _server_id -> 2 end)
+      big = FileFixtures.sized(:pdf, 10 * 1024 * 1024 + 1)
+
+      assert {:error, :file_too_large} = Chat.store_attachment(conversation, @user, "a.pdf", big)
+    end
+
+    test "max_upload_bytes/2 follows the target" do
+      boosted(2)
+      assert Chat.max_upload_bytes(@user, {:channel, @channel_id}) == 25 * 1024 * 1024
+      assert Chat.max_upload_bytes(@user, {:direct, @other}) == 10 * 1024 * 1024
     end
 
     test "a file up to 10 MB doesn't need to look up Premium" do

@@ -18,6 +18,8 @@ defmodule MessagingWeb.AttachmentController do
     description:
       "El cuerpo del pedido es el archivo en binario (no multipart ni base64). Se acepta JPEG, " <>
         "PNG, WebP o PDF de hasta #{div(Attachment.max_bytes(), 1_048_576)} MB, o " <>
+        "#{div(Attachment.boosted_max_bytes(), 1_048_576)} MB en un servidor de nivel " <>
+        "#{Attachment.boosted_level()} de boosts, o " <>
         "#{div(Attachment.premium_max_bytes(), 1_048_576)} MB con Premium, que también permite " <>
         "GIF; el formato se reconoce por el contenido real del archivo, no por la extensión ni por el " <>
         "`Content-Type`. Indicá el destino con `channel_id` (canal de un servidor) o con `to` " <>
@@ -72,7 +74,7 @@ defmodule MessagingWeb.AttachmentController do
     user_id = conn.assigns.user_id
 
     with {:ok, target} <- target(params),
-         max_bytes = Chat.max_upload_bytes(user_id),
+         max_bytes = Chat.max_upload_bytes(user_id, target),
          :ok <- check_declared_size(conn, max_bytes),
          {:ok, channel_id} <- Chat.prepare_upload(target, user_id) do
       store(conn, channel_id, user_id, Map.get(params, "filename"), max_bytes)
