@@ -159,6 +159,17 @@ y se cierra (`phx_close`, sin reconexión automática del cliente de Phoenix). S
 el cliente intenta volver a unirse, el `join` consulta permisos y lo rechaza.
 Los DM no se tocan: no dependen de ningún servidor.
 
+Cuando un usuario deja de ser miembro (se fue, lo echaron o se borró el
+servidor), además se le avisa en su sala personal `user:<id>`, que tiene
+abierta aunque no esté mirando ese servidor:
+
+```json
+{"server_id": "…"}
+```
+
+con el evento `server_left`. El cliente lo usa para sacar el servidor de su
+lista y, si lo tenía abierto, volver al inicio.
+
 Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)
 (`channels/events.go` + `channels/events.ex`, `servers/events.go` +
@@ -292,7 +303,7 @@ Los consume `notifications` (no leídos, menciones, historial y push). El contra
 La propagación de mensajes enviados entre instancias es un detalle interno de escalado
 (`messaging.broadcast`, ver ADR), no un evento de dominio para otros servicios. Lo que viaja por ahí
 es siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
-`mention` y `access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+`mention`, `access_revoked` y `server_left`, y todo sale por el outbox. Las excepciones salen directo al fanout:
 `disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
 `presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
 perderlo.

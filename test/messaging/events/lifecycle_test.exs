@@ -213,6 +213,23 @@ defmodule Messaging.Events.LifecycleTest do
       }
     end
 
+    test "a leave tells the user's personal room, so the server leaves their list" do
+      MessagingWeb.Endpoint.subscribe("user:user-1")
+
+      expect(Messaging.Chat.RepoMock, :apply_clock, fn _k, "left", _a, _e -> {:ok, :applied} end)
+      expect(Messaging.Chat.RepoMock, :delete_member, fn _s, _u, _a -> {:ok, :applied} end)
+      expect(Messaging.Chat.RepoMock, :delete_member_mentions, fn _s, _u -> :ok end)
+      expect(Messaging.Chat.RepoMock, :list_channel_ids, fn _s -> {:ok, []} end)
+
+      assert :ok = Lifecycle.handle(member(ChannelEvent.MemberLeft))
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "user:user-1",
+        event: "server_left",
+        payload: %{"server_id" => "srv-1"}
+      }
+    end
+
     test "a stale leave, from before a newer join, neither kicks anybody nor drops mentions" do
       MessagingWeb.Endpoint.subscribe("channel:c-1")
       expect(Messaging.Chat.RepoMock, :apply_clock, fn _k, "left", _a, _e -> {:ok, :stale} end)
