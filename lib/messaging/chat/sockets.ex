@@ -9,7 +9,8 @@ defmodule Messaging.Chat.Sockets do
   def revoke_member(server_id, user_id, reason) do
     with {:ok, channel_ids} <- Repo.impl().list_channel_ids(server_id),
          :ok <- publish_all(channel_ids, reason, user_id),
-         :ok <- revoke_presence(server_id, user_id, reason) do
+         :ok <- revoke_presence(server_id, user_id, reason),
+         :ok <- notify_server_left(server_id, user_id) do
       Logger.info("access_revoked",
         server_id: server_id,
         user_id: user_id,
@@ -40,6 +41,11 @@ defmodule Messaging.Chat.Sockets do
   defp revoke_presence(server_id, user_id, reason) do
     payload = %{"server_id" => server_id, "reason" => reason, "user_id" => user_id}
     Broadcaster.publish_to(Audience.server_topic(server_id), "access_revoked", payload)
+  end
+
+  # Reaches the user even without the server open, so the client drops it from its list.
+  defp notify_server_left(server_id, user_id) do
+    Broadcaster.publish_to("user:" <> user_id, "server_left", %{"server_id" => server_id})
   end
 
   defp publish_all(channel_ids, reason, user_id),
