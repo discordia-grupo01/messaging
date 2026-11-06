@@ -15,6 +15,8 @@ defmodule Messaging.Events.BroadcastConsumer do
     "mention",
     "access_revoked",
     "server_left",
+    "server_suspended",
+    "server_reactivated",
     "disconnect",
     "presence_updated",
     "own_status_updated"

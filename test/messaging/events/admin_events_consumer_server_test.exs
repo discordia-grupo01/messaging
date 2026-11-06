@@ -40,6 +40,7 @@ defmodule Messaging.Events.AdminEventsConsumerServerTest do
       end)
 
       expect(Messaging.Chat.RepoMock, :list_channel_ids, fn ^server -> {:ok, ["c-1", "c-2"]} end)
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server -> {:ok, []} end)
 
       assert :ack = process(@suspended, server, 3)
 
@@ -60,6 +61,7 @@ defmodule Messaging.Events.AdminEventsConsumerServerTest do
       end)
 
       expect(Messaging.Chat.RepoMock, :list_channel_ids, fn ^server -> {:ok, []} end)
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server -> {:ok, []} end)
 
       assert :ack = process(@suspended, server, 1)
     end
@@ -72,6 +74,7 @@ defmodule Messaging.Events.AdminEventsConsumerServerTest do
       end)
 
       expect(Messaging.Chat.RepoMock, :list_channel_ids, fn ^server -> {:error, :timeout} end)
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server -> {:ok, []} end)
 
       log =
         capture_log([level: :warning], fn ->
@@ -90,7 +93,84 @@ defmodule Messaging.Events.AdminEventsConsumerServerTest do
         {:ok, :applied}
       end)
 
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server -> {:ok, []} end)
+
       assert :ack = process(@reactivated, server, 4)
+      refute_receive %Phoenix.Socket.Broadcast{}, 50
+    end
+  end
+
+  describe "the members' personal rooms" do
+    test "a suspension tells every member, wherever they are", %{server: server} do
+      for id <- ["u-1", "u-2"], do: MessagingWeb.Endpoint.subscribe("user:" <> id)
+
+      expect(Messaging.Chat.RepoMock, :apply_server_suspension, fn ^server, true, 3 ->
+        {:ok, :applied}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :list_channel_ids, fn ^server -> {:ok, []} end)
+
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server ->
+        {:ok, [%{"user_id" => "u-1"}, %{"user_id" => "u-2"}]}
+      end)
+
+      assert :ack = process(@suspended, server, 3)
+
+      for id <- ["u-1", "u-2"] do
+        assert_receive %Phoenix.Socket.Broadcast{
+          topic: "user:" <> ^id,
+          event: "server_suspended",
+          payload: %{"server_id" => ^server}
+        }
+      end
+    end
+
+    test "a reactivation tells every member", %{server: server} do
+      MessagingWeb.Endpoint.subscribe("user:u-1")
+
+      expect(Messaging.Chat.RepoMock, :apply_server_suspension, fn ^server, false, 4 ->
+        {:ok, :applied}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server ->
+        {:ok, [%{"user_id" => "u-1"}]}
+      end)
+
+      assert :ack = process(@reactivated, server, 4)
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "user:u-1",
+        event: "server_reactivated",
+        payload: %{"server_id" => ^server}
+      }
+    end
+
+    test "is acknowledged even if the members cannot be listed, as the state is stored", %{
+      server: server
+    } do
+      expect(Messaging.Chat.RepoMock, :apply_server_suspension, fn ^server, true, 2 ->
+        {:ok, :applied}
+      end)
+
+      expect(Messaging.Chat.RepoMock, :list_channel_ids, fn ^server -> {:ok, []} end)
+      expect(Messaging.Chat.RepoMock, :list_members, fn ^server -> {:error, :timeout} end)
+
+      log =
+        capture_log([level: :warning], fn ->
+          assert :ack = process(@suspended, server, 2)
+        end)
+
+      assert log =~ "admin_events_consumer_notify_members_failed"
+    end
+
+    test "a stale event tells nobody", %{server: server} do
+      MessagingWeb.Endpoint.subscribe("user:u-1")
+
+      expect(Messaging.Chat.RepoMock, :apply_server_suspension, fn ^server, true, 2 ->
+        {:ok, :stale}
+      end)
+
+      assert :ack = process(@suspended, server, 2)
       refute_receive %Phoenix.Socket.Broadcast{}, 50
     end
   end

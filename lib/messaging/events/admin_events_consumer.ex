@@ -4,7 +4,8 @@ defmodule Messaging.Events.AdminEventsConsumer do
   into the suspended-user state (`Messaging.Suspension`) and the signed
   `admin.server_suspended` / `admin.server_reactivated` events into the
   suspended-server state (`Messaging.ServerSuspension`). Suspending a server also
-  cuts the sockets of all its channels. `admin.server_deletion_requested` is not
+  cuts the sockets of all its channels, and both server events tell each member's
+  personal room (`server_suspended` / `server_reactivated`). `admin.server_deletion_requested` is not
   consumed here: servers runs the deletion and messaging reacts to the
   `servers.server_deleted` it publishes.
 
@@ -17,7 +18,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
   require Logger
 
   alias Messaging.Chat.{Repo, Sockets}
-  alias Messaging.Events.{Audit, Backoff, EventPublisher}
+  alias Messaging.Events.{Audit, Backoff, Broadcaster, EventPublisher}
   alias Messaging.Log
   alias Messaging.ServerSuspension
   alias Messaging.Suspension
@@ -209,6 +210,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
     case ServerSuspension.apply_event(server_id, suspended, event.version) do
       {:ok, :applied} ->
         if suspended, do: close_server_sockets(server_id)
+        notify_members(server_id, suspended)
         audit(event.event_id, event.routing_key, payload, :processed, nil)
         :ack
 
@@ -262,6 +264,29 @@ defmodule Messaging.Events.AdminEventsConsumer do
     else
       {:error, reason} ->
         Logger.warning("admin_events_consumer_close_sockets_failed",
+          server_id: server_id,
+          reason: Log.reason(reason)
+        )
+    end
+  end
+
+  # Reaches every member wherever they are (not only in an open channel), so their
+  # client grays the server out or brings it back without reloading. Like the
+  # socket cut, a failure is only logged: the state is stored and `GET /v1/servers`
+  # says `suspended` on the next load.
+  defp notify_members(server_id, suspended) do
+    event = if suspended, do: "server_suspended", else: "server_reactivated"
+    payload = %{"server_id" => server_id}
+
+    with {:ok, members} <- Repo.impl().list_members(server_id),
+         :ok <-
+           Broadcaster.publish_many(
+             for(%{"user_id" => user_id} <- members, do: {"user:" <> user_id, event, payload})
+           ) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("admin_events_consumer_notify_members_failed",
           server_id: server_id,
           reason: Log.reason(reason)
         )
