@@ -247,8 +247,14 @@ al reactivar todo vuelve. Los DM no se ven afectados.
   canales del servidor (`Sockets.close_channels/2`, motivo `server_suspended`, el mismo mecanismo
   que `server_deleted`). Si el aviso se pierde, el siguiente mensaje o join igual se rechaza.
   Reactivar no corta nada.
+- **Aviso a cada miembro.** Al aplicar una suspensión o una reactivación se publica
+  `server_suspended` o `server_reactivated` (`{"server_id": "…"}`) en la sala `user:<id>` de cada
+  miembro de la réplica (`Repo.list_members/1`), así el cliente marca el servidor como suspendido
+  (o lo recupera) aunque no tenga ningún canal abierto. Un evento viejo no avisa a nadie. Si no se
+  pueden listar los miembros se registra y el evento se confirma igual: `GET /v1/servers` de
+  `servers` informa `suspended` en la próxima carga.
 - **Pendiente de decidir:** el topic de presencia `presence:<server_id>` y el listado de menciones
-  sin leer no distinguen servidores suspendidos.
+  sin leer no distinguen servidores suspendidos (los clientes ocultan esas menciones).
 - **Despliegue.** Desplegar `messaging` antes que `admin`; las suspensiones que ya existían se
   re-publican con `make republish-suspensions` en `discordia-admin`.
 
@@ -303,7 +309,8 @@ Los consume `notifications` (no leídos, menciones, historial y push). El contra
 La propagación de mensajes enviados entre instancias es un detalle interno de escalado
 (`messaging.broadcast`, ver ADR), no un evento de dominio para otros servicios. Lo que viaja por ahí
 es siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
-`mention`, `access_revoked` y `server_left`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+`mention`, `access_revoked`, `server_left`, `server_suspended` y `server_reactivated`, y todo sale
+por el outbox. Las excepciones salen directo al fanout:
 `disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
 `presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
 perderlo.
