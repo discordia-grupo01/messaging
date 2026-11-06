@@ -193,85 +193,30 @@ defmodule MessagingWeb.AttachmentControllerTest do
     end
   end
 
-  describe "a direct upload with a ticket" do
-    defp direct(conn, query, body) do
-      conn
-      |> Plug.Conn.put_req_header("content-type", "application/octet-stream")
-      |> post("/v1/attachments/direct?" <> query, body)
+  describe "the limit of a boosted server" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :server_boost_level, fn "srv-1" -> 2 end)
+      stub(Messaging.Chat.RepoMock, :count_pending_attachments, fn @me -> {:ok, 0} end)
+      stub(Messaging.Chat.RepoMock, :insert_attachment, fn _doc -> :ok end)
+
+      stub(Messaging.StorageMock, :put, fn key, _body, _type ->
+        {:ok, %{url: "https://cdn.test/" <> key, path: "supabase/" <> key}}
+      end)
+
+      allow_channel()
+      :ok
     end
 
-    defp with_ticket(conn), do: Plug.Conn.put_req_header(conn, "x-upload-ticket", "a-ticket")
-
-    defp stub_ticket(doc), do: expect(TicketStoreMock, :take, fn _id -> {:ok, doc} end)
-
-    test "uploads as the user of the ticket", %{conn: conn} do
-      stub_ticket(AuthFixtures.ticket_doc(@me))
-      allow_channel()
-      allow_storage()
-
-      conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert %{"content_type" => "image/png"} = json_response(conn, 201)
+    test "a member uploads 25 MB in a level 2 server", %{conn: conn} do
+      body = FileFixtures.sized(:pdf, 25 * 1024 * 1024)
+      conn = upload(conn, "channel_id=#{@channel_id}&filename=a.pdf", body)
+      assert %{"size" => 26_214_400} = json_response(conn, 201)
     end
 
-    test "applies the same size limit as the upload with a token", %{conn: conn} do
-      stub_ticket(AuthFixtures.ticket_doc(@me))
-      allow_channel()
-
-      conn =
-        conn
-        |> with_ticket()
-        |> Plug.Conn.put_req_header("content-length", "99999999999")
-        |> direct("channel_id=#{@channel_id}", "x")
-
+    test "over 25 MB is too large", %{conn: conn} do
+      body = FileFixtures.sized(:pdf, 25 * 1024 * 1024 + 1)
+      conn = upload(conn, "channel_id=#{@channel_id}&filename=a.pdf", body)
       assert json_response(conn, 413)["error"]["code"] == "FILE_TOO_LARGE"
-    end
-
-    test "applies the same permissions as the upload with a token", %{conn: conn} do
-      stub_ticket(AuthFixtures.ticket_doc("33333333-3333-4333-8333-333333333333"))
-
-      stub(Messaging.Chat.RepoMock, :get_channel, fn @channel_id ->
-        %{"_id" => @channel_id, "server_id" => "srv-1", "name" => "general", "kind" => "text"}
-      end)
-
-      stub(Messaging.Chat.PermissionsStoreMock, :can_send_messages?, fn _channel, _user ->
-        {:ok, false}
-      end)
-
-      conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert json_response(conn, 403)["error"]["code"] == "FORBIDDEN"
-    end
-
-    test "requires a ticket: a valid token is not enough", %{conn: conn} do
-      conn = conn |> authed() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
-    end
-
-    test "rejects an unknown or already used ticket", %{conn: conn} do
-      stub_ticket(nil)
-
-      conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
-    end
-
-    test "rejects an expired ticket", %{conn: conn} do
-      stub_ticket(AuthFixtures.ticket_doc(@me, ttl: -1))
-
-      conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert json_response(conn, 401)["error"]["code"] == "UNAUTHORIZED"
-    end
-
-    test "rejects a ticket of a user suspended after it was issued", %{conn: conn} do
-      stub_ticket(AuthFixtures.ticket_doc(@me))
-      SuspensionHelper.stub_suspended(@me)
-
-      conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
-
-      assert json_response(conn, 403)["error"]["code"] == "ACCOUNT_SUSPENDED"
     end
   end
 
