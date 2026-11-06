@@ -571,6 +571,25 @@ components:
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.SocketTicket
       x-validate:
+    UploadTicket:
+      properties:
+        expires_in:
+          description: Segundos que el ticket es válido desde que se emite.
+          type: integer
+          x-struct:
+          x-validate:
+        ticket:
+          description: Ticket de un solo uso. Se manda en el header `X-Upload-Ticket` al subir el archivo.
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - ticket
+        - expires_in
+      title: UploadTicket
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.UploadTicket
+      x-validate:
 info:
   description: Mensajes de canal en tiempo real (envío por WebSocket, historial por REST). Todos los endpoints responden 403 ACCOUNT_SUSPENDED a una cuenta suspendida por el staff y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado. Las rutas de un canal de un servidor suspendido por el staff responden 403 SERVER_SUSPENDED, al owner también; los mensajes se conservan y vuelven al reactivarlo.
   title: Discordia — Messaging
@@ -619,6 +638,34 @@ paths:
       summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo y Postgres)
       tags:
         - ops
+  /v1/attachment-tickets:
+    post:
+      callbacks: {}
+      description: 'Para un cliente que no tiene el JWT en el navegador: lo pide su backend con el Bearer normal, y el navegador sube el archivo a `POST /v1/attachments/direct` con el header `X-Upload-Ticket`. Cada ticket sirve para un solo pedido, aunque ese pedido falle.'
+      operationId: MessagingWeb.UploadTicketController.create
+      parameters: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadTicket'
+          description: Ticket emitido
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo guardar el ticket
+      summary: Emite un ticket de un solo uso para subir un archivo
+      tags:
+        - attachments
   /v1/attachments:
     post:
       callbacks: {}
@@ -715,6 +762,112 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: No se pudo guardar el archivo
       summary: Subir un archivo para adjuntarlo a un mensaje
+      tags:
+        - attachments
+  /v1/attachments/direct:
+    post:
+      callbacks: {}
+      description: Igual que `POST /v1/attachments`, pero se autentica con un ticket de `POST /v1/attachment-tickets` en vez del JWT. Se canjea antes de leer el archivo y no se puede reusar, aunque el pedido falle.
+      operationId: MessagingWeb.AttachmentController.direct
+      parameters:
+        - description: Ticket de un solo uso
+          in: header
+          name: X-Upload-Ticket
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Canal de texto de un servidor donde se va a enviar el mensaje
+          in: query
+          name: channel_id
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Id del usuario destinatario de un mensaje directo
+          in: query
+          name: to
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Nombre con el que se muestra el archivo (máx 100 caracteres)
+          in: query
+          name: filename
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              format: binary
+              type: string
+              x-struct:
+              x-validate:
+        description: Contenido del archivo
+        required: false
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+          description: Archivo subido
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Archivo vacío, destino mal indicado, o demasiados archivos sin enviar
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Falta el ticket, o es inválido, vencido o ya usado
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Sin permiso para escribir en ese canal, silenciado, o bloqueado en el mensaje directo
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El canal o el destinatario no existen
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El archivo supera el máximo permitido
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Formato no soportado
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Demasiados archivos subidos sin enviar
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo guardar el archivo
+      summary: Subir un archivo con un ticket, directo desde el navegador
       tags:
         - attachments
   /v1/blocks:

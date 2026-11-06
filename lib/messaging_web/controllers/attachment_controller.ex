@@ -13,6 +13,44 @@ defmodule MessagingWeb.AttachmentController do
 
   tags ["attachments"]
 
+  @target_parameters [
+    channel_id: [
+      in: :query,
+      type: :string,
+      required: false,
+      description: "Canal de texto de un servidor donde se va a enviar el mensaje"
+    ],
+    to: [
+      in: :query,
+      type: :string,
+      required: false,
+      description: "Id del usuario destinatario de un mensaje directo"
+    ],
+    filename: [
+      in: :query,
+      type: :string,
+      required: false,
+      description: "Nombre con el que se muestra el archivo (máx 100 caracteres)"
+    ]
+  ]
+
+  @upload_body {"Contenido del archivo", "application/octet-stream",
+                %Schema{type: :string, format: :binary}}
+
+  @upload_errors %{
+    400 =>
+      {"Archivo vacío, destino mal indicado, o demasiados archivos sin enviar",
+       "application/json", Schemas.ErrorResponse},
+    403 =>
+      {"Sin permiso para escribir en ese canal, silenciado, o bloqueado en el mensaje directo",
+       "application/json", Schemas.ErrorResponse},
+    404 => {"El canal o el destinatario no existen", "application/json", Schemas.ErrorResponse},
+    413 => {"El archivo supera el máximo permitido", "application/json", Schemas.ErrorResponse},
+    415 => {"Formato no soportado", "application/json", Schemas.ErrorResponse},
+    429 => {"Demasiados archivos subidos sin enviar", "application/json", Schemas.ErrorResponse},
+    503 => {"No se pudo guardar el archivo", "application/json", Schemas.ErrorResponse}
+  }
+
   operation :create,
     summary: "Subir un archivo para adjuntarlo a un mensaje",
     description:
@@ -26,47 +64,41 @@ defmodule MessagingWeb.AttachmentController do
         "enviar el mensaje por el WebSocket (`new_message` o `send_dm`). Un archivo que no se " <>
         "adjunta a ningún mensaje en 24 horas se borra solo. Se pueden adjuntar hasta " <>
         "#{Attachment.max_per_message()} archivos por mensaje.",
-    parameters: [
-      channel_id: [
-        in: :query,
-        type: :string,
-        required: false,
-        description: "Canal de texto de un servidor donde se va a enviar el mensaje"
-      ],
-      to: [
-        in: :query,
-        type: :string,
-        required: false,
-        description: "Id del usuario destinatario de un mensaje directo"
-      ],
-      filename: [
-        in: :query,
-        type: :string,
-        required: false,
-        description: "Nombre con el que se muestra el archivo (máx 100 caracteres)"
-      ]
-    ],
-    request_body:
-      {"Contenido del archivo", "application/octet-stream",
-       %Schema{type: :string, format: :binary}},
-    responses: %{
-      201 => {"Archivo subido", "application/json", Schemas.Attachment},
-      400 =>
-        {"Archivo vacío, destino mal indicado, o demasiados archivos sin enviar",
-         "application/json", Schemas.ErrorResponse},
-      401 =>
-        {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
-         Schemas.ErrorResponse},
-      403 =>
-        {"Sin permiso para escribir en ese canal, silenciado, o bloqueado en el mensaje directo",
-         "application/json", Schemas.ErrorResponse},
-      404 => {"El canal o el destinatario no existen", "application/json", Schemas.ErrorResponse},
-      413 => {"El archivo supera el máximo permitido", "application/json", Schemas.ErrorResponse},
-      415 => {"Formato no soportado", "application/json", Schemas.ErrorResponse},
-      429 =>
-        {"Demasiados archivos subidos sin enviar", "application/json", Schemas.ErrorResponse},
-      503 => {"No se pudo guardar el archivo", "application/json", Schemas.ErrorResponse}
-    }
+    parameters: @target_parameters,
+    request_body: @upload_body,
+    responses:
+      Map.merge(@upload_errors, %{
+        201 => {"Archivo subido", "application/json", Schemas.Attachment},
+        401 =>
+          {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
+           Schemas.ErrorResponse}
+      })
+
+  operation :direct,
+    summary: "Subir un archivo con un ticket, directo desde el navegador",
+    description:
+      "Igual que `POST /v1/attachments`, pero se autentica con un ticket de " <>
+        "`POST /v1/attachment-tickets` en vez del JWT. Se canjea antes de leer el archivo y no " <>
+        "se puede reusar, aunque el pedido falle.",
+    parameters:
+      [
+        "X-Upload-Ticket": [
+          in: :header,
+          type: :string,
+          required: true,
+          description: "Ticket de un solo uso"
+        ]
+      ] ++ @target_parameters,
+    request_body: @upload_body,
+    responses:
+      Map.merge(@upload_errors, %{
+        201 => {"Archivo subido", "application/json", Schemas.Attachment},
+        401 =>
+          {"Falta el ticket, o es inválido, vencido o ya usado", "application/json",
+           Schemas.ErrorResponse}
+      })
+
+  def direct(conn, params), do: create(conn, params)
 
   def create(conn, params) do
     user_id = conn.assigns.user_id

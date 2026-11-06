@@ -159,6 +159,17 @@ y se cierra (`phx_close`, sin reconexión automática del cliente de Phoenix). S
 el cliente intenta volver a unirse, el `join` consulta permisos y lo rechaza.
 Los DM no se tocan: no dependen de ningún servidor.
 
+Cuando un usuario deja de ser miembro (se fue, lo echaron o se borró el
+servidor), además se le avisa en su sala personal `user:<id>`, que tiene
+abierta aunque no esté mirando ese servidor:
+
+```json
+{"server_id": "…"}
+```
+
+con el evento `server_left`. El cliente lo usa para sacar el servidor de su
+lista y, si lo tenía abierto, volver al inicio.
+
 Definidos en
 [`events-contract`](https://github.com/discordia-grupo01/events-contract)
 (`channels/events.go` + `channels/events.ex`, `servers/events.go` +
@@ -236,8 +247,14 @@ al reactivar todo vuelve. Los DM no se ven afectados.
   canales del servidor (`Sockets.close_channels/2`, motivo `server_suspended`, el mismo mecanismo
   que `server_deleted`). Si el aviso se pierde, el siguiente mensaje o join igual se rechaza.
   Reactivar no corta nada.
+- **Aviso a cada miembro.** Al aplicar una suspensión o una reactivación se publica
+  `server_suspended` o `server_reactivated` (`{"server_id": "…"}`) en la sala `user:<id>` de cada
+  miembro de la réplica (`Repo.list_members/1`), así el cliente marca el servidor como suspendido
+  (o lo recupera) aunque no tenga ningún canal abierto. Un evento viejo no avisa a nadie. Si no se
+  pueden listar los miembros se registra y el evento se confirma igual: `GET /v1/servers` de
+  `servers` informa `suspended` en la próxima carga.
 - **Pendiente de decidir:** el topic de presencia `presence:<server_id>` y el listado de menciones
-  sin leer no distinguen servidores suspendidos.
+  sin leer no distinguen servidores suspendidos (los clientes ocultan esas menciones).
 - **Despliegue.** Desplegar `messaging` antes que `admin`; las suspensiones que ya existían se
   re-publican con `make republish-suspensions` en `discordia-admin`.
 
@@ -292,7 +309,8 @@ Los consume `notifications` (no leídos, menciones, historial y push). El contra
 La propagación de mensajes enviados entre instancias es un detalle interno de escalado
 (`messaging.broadcast`, ver ADR), no un evento de dominio para otros servicios. Lo que viaja por ahí
 es siempre `new_message`, `message_updated`, `message_deleted`, `reaction_updated`, `new_dm`,
-`mention` y `access_revoked`, y todo sale por el outbox. Las excepciones salen directo al fanout:
+`mention`, `access_revoked`, `server_left`, `server_suspended` y `server_reactivated`, y todo sale
+por el outbox. Las excepciones salen directo al fanout:
 `disconnect` (corte de los sockets de un usuario suspendido, ver "Usuarios suspendidos") y
 `presence_updated` y `own_status_updated`, que son efímeros: reintentar uno viejo sería peor que
 perderlo.
@@ -944,6 +962,20 @@ Es en dos pasos, porque los mensajes viajan por WebSocket y los archivos son bin
   hace que se lea un archivo entero.
 - Los archivos tienen URL pública (de Cloudinary o de Supabase) con un identificador aleatorio
   `<canal>/<id>`: el nombre original nunca forma parte de la ruta.
+
+**Subida directa desde el navegador.** La web guarda el JWT en una cookie httpOnly, así que el
+navegador no lo tiene, y pasar el archivo por su backend en Vercel no sirve porque corta los pedidos
+en 4,5 MB. Por eso:
+1. El backend de la web pide `POST /v1/attachment-tickets` (con el Bearer normal) y recibe
+   `{ "ticket": "...", "expires_in": 60 }`.
+2. El navegador sube a `POST /v1/attachments/direct`, con el mismo query y el mismo cuerpo que
+   `POST /v1/attachments`, y el header `X-Upload-Ticket: <ticket>` en vez de `Authorization`.
+
+El ticket es de un solo uso (se gasta aunque el pedido falle), se guarda hasheado junto con los del
+socket y no se puede usar para conectar el socket, ni al revés. Las reglas son las mismas de arriba.
+Kong tiene que dejar pasar el archivo sin guardarlo antes (`request_buffering: false`): `messaging`
+canjea el ticket al recibir el pedido, y con el archivo guardado primero, una subida lenta llegaría
+con el ticket vencido.
 
 **Editar** un mensaje no cambia sus adjuntos; si tiene adjuntos, se puede dejar el texto vacío.
 

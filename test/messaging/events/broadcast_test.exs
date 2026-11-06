@@ -282,6 +282,41 @@ if rabbitmq_url do
       assert_receive %Phoenix.Socket.Broadcast{event: "access_revoked", payload: ^payload}, 5_000
     end
 
+    test "a server_left notice reaches the user's personal topic through the fanout" do
+      user_id = "user-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> user_id)
+
+      payload = %{"server_id" => "srv-1"}
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "user:" <> user_id,
+                 "server_left",
+                 payload
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "server_left", payload: ^payload}, 5_000
+    end
+
+    test "server_suspended and server_reactivated reach the member's personal topic" do
+      user_id = "user-#{System.unique_integer([:positive])}"
+      Phoenix.PubSub.subscribe(Messaging.PubSub, "user:" <> user_id)
+      payload = %{"server_id" => "srv-1"}
+
+      for event <- ["server_suspended", "server_reactivated"] do
+        assert :ok =
+                 BroadcastPublisher.publish_event(
+                   Messaging.UUID.generate(),
+                   "user:" <> user_id,
+                   event,
+                   payload
+                 )
+
+        assert_receive %Phoenix.Socket.Broadcast{event: ^event, payload: ^payload}, 5_000
+      end
+    end
+
     test "events published while an instance was away are waiting for it when it comes back" do
       stop_supervised!(BroadcastConsumer)
       Process.sleep(200)
