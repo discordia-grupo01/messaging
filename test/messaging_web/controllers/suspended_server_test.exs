@@ -84,6 +84,7 @@ defmodule MessagingWeb.SuspendedServerTest do
 
   test "an upload to one of its channels is refused", %{conn: conn} do
     stub(Messaging.Chat.RepoMock, :premium?, fn _user -> false end)
+    stub(Messaging.Chat.RepoMock, :server_boost_level, fn _server_id -> 0 end)
 
     conn =
       conn

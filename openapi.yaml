@@ -669,7 +669,7 @@ paths:
   /v1/attachments:
     post:
       callbacks: {}
-      description: El cuerpo del pedido es el archivo en binario (no multipart ni base64). Se acepta JPEG, PNG, WebP o PDF de hasta 10 MB, o 50 MB con Premium, que también permite GIF; el formato se reconoce por el contenido real del archivo, no por la extensión ni por el `Content-Type`. Indicá el destino con `channel_id` (canal de un servidor) o con `to` (id del usuario, para un mensaje directo), nunca los dos. Hay que tener permiso de escribir ahí. La respuesta trae el `id` que se manda después en `attachment_ids` al enviar el mensaje por el WebSocket (`new_message` o `send_dm`). Un archivo que no se adjunta a ningún mensaje en 24 horas se borra solo. Se pueden adjuntar hasta 5 archivos por mensaje.
+      description: El cuerpo del pedido es el archivo en binario (no multipart ni base64). Se acepta JPEG, PNG, WebP o PDF de hasta 10 MB, o 25 MB en un servidor de nivel 2 de boosts, o 50 MB con Premium, que también permite GIF; el formato se reconoce por el contenido real del archivo, no por la extensión ni por el `Content-Type`. Indicá el destino con `channel_id` (canal de un servidor) o con `to` (id del usuario, para un mensaje directo), nunca los dos. Hay que tener permiso de escribir ahí. La respuesta trae el `id` que se manda después en `attachment_ids` al enviar el mensaje por el WebSocket (`new_message` o `send_dm`). Un archivo que no se adjunta a ningún mensaje en 24 horas se borra solo. Se pueden adjuntar hasta 5 archivos por mensaje.
       operationId: MessagingWeb.AttachmentController.create
       parameters:
         - description: Canal de texto de un servidor donde se va a enviar el mensaje
