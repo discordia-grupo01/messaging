@@ -912,10 +912,19 @@ duplican). Reaccionar mueve el `changed_at` del mensaje, así quien vuelve de un
 desconexión recibe el mensaje en `changed_messages` con sus reacciones al día. Se
 borran junto con el mensaje, el canal o el servidor.
 
+## Nivel de boosts (`servers.server_boost_updated`)
+`discordia-servers` lleva los boosts y publica el nivel completo de cada servidor en
+`servers.server_boost_updated`. `Messaging.Events.ServerBoostsConsumer` lo lee de la cola durable
+`messaging.server_boosts` y lo guarda en la colección `server_boosts`:
+`{_id: server_id, level, version, updated_at}`. Un evento se aplica solo si su `version` es mayor a
+la guardada. Un servidor sin documento es de nivel 0, y al borrar el servidor se borra su documento.
+Si no se puede leer el nivel, se aplica el límite anterior: la subida no se bloquea.
+
 ## Adjuntar archivos
 Se puede adjuntar a un mensaje (de un canal o directo) una imagen JPEG, PNG o WebP, o un PDF, de
-hasta **10 MB** cada uno y hasta **5 por mensaje**. Con Premium el límite es **50 MB** y también se
-pueden adjuntar **GIF**. Los archivos de hasta
+hasta **10 MB** cada uno y hasta **5 por mensaje**. En un servidor de nivel 2 de boosts el límite es
+**25 MB** para todos sus miembros. Con Premium es **50 MB**, en cualquier lado, y también se pueden
+adjuntar **GIF**. Si se aplican varios, vale el más alto. Los archivos de hasta
 10 MB viven en **Cloudinary** y los más grandes en **Supabase Storage**; en `messaging` (Mongo) solo
 se guarda la URL y los metadatos, nunca los bytes, y el archivo tampoco se escribe en el disco del
 servidor.

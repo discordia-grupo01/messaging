@@ -13,6 +13,7 @@ defmodule MessagingWeb.AttachmentControllerTest do
   setup do
     stub(Messaging.Chat.RepoMock, :get_clock, fn _key -> nil end)
     stub(Messaging.Chat.RepoMock, :premium?, fn _user -> false end)
+    stub(Messaging.Chat.RepoMock, :server_boost_level, fn _server_id -> 0 end)
     :ok
   end
 
@@ -272,6 +273,49 @@ defmodule MessagingWeb.AttachmentControllerTest do
       conn = conn |> with_ticket() |> direct("channel_id=#{@channel_id}", FileFixtures.png())
 
       assert json_response(conn, 403)["error"]["code"] == "ACCOUNT_SUSPENDED"
+    end
+
+    test "a direct upload gets the limit of a level 2 server", %{conn: conn} do
+      stub_ticket(AuthFixtures.ticket_doc(@me))
+      stub(Messaging.Chat.RepoMock, :server_boost_level, fn "srv-1" -> 2 end)
+      allow_channel()
+      allow_storage()
+
+      body = FileFixtures.sized(:pdf, 25 * 1024 * 1024)
+
+      conn =
+        conn
+        |> with_ticket()
+        |> direct("channel_id=#{@channel_id}&filename=a.pdf", body)
+
+      assert %{"size" => 26_214_400} = json_response(conn, 201)
+    end
+  end
+
+  describe "the limit of a boosted server" do
+    setup do
+      stub(Messaging.Chat.RepoMock, :server_boost_level, fn "srv-1" -> 2 end)
+      stub(Messaging.Chat.RepoMock, :count_pending_attachments, fn @me -> {:ok, 0} end)
+      stub(Messaging.Chat.RepoMock, :insert_attachment, fn _doc -> :ok end)
+
+      stub(Messaging.StorageMock, :put, fn key, _body, _type ->
+        {:ok, %{url: "https://cdn.test/" <> key, path: "supabase/" <> key}}
+      end)
+
+      allow_channel()
+      :ok
+    end
+
+    test "a member uploads 25 MB in a level 2 server", %{conn: conn} do
+      body = FileFixtures.sized(:pdf, 25 * 1024 * 1024)
+      conn = upload(conn, "channel_id=#{@channel_id}&filename=a.pdf", body)
+      assert %{"size" => 26_214_400} = json_response(conn, 201)
+    end
+
+    test "over 25 MB is too large", %{conn: conn} do
+      body = FileFixtures.sized(:pdf, 25 * 1024 * 1024 + 1)
+      conn = upload(conn, "channel_id=#{@channel_id}&filename=a.pdf", body)
+      assert json_response(conn, 413)["error"]["code"] == "FILE_TOO_LARGE"
     end
   end
 

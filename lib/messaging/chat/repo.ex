@@ -132,6 +132,9 @@ defmodule Messaging.Chat.Repo do
   @callback apply_premium(user_id :: String.t(), active :: boolean(), version :: integer()) ::
               {:ok, :applied | :stale} | {:error, term()}
   @callback premium?(user_id :: String.t()) :: boolean() | {:error, term()}
+  @callback apply_server_boost(server_id :: String.t(), level :: integer(), version :: integer()) ::
+              {:ok, :applied | :stale} | {:error, term()}
+  @callback server_boost_level(server_id :: String.t()) :: integer() | {:error, term()}
   @callback apply_emoji_created(emoji :: map()) :: :ok | {:error, term()}
   @callback apply_emoji_deleted(emoji :: map()) :: :ok | {:error, term()}
   @callback get_custom_emojis(ids :: [String.t()]) :: {:ok, [map()]} | {:error, term()}

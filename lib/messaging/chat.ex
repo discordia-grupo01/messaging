@@ -316,21 +316,41 @@ defmodule Messaging.Chat do
     end
   end
 
-  @spec max_upload_bytes(String.t()) :: pos_integer()
-  def max_upload_bytes(user_id), do: Attachment.max_bytes_for(upload_plan(user_id))
+  @spec max_upload_bytes(String.t(), upload_target()) :: pos_integer()
+  def max_upload_bytes(user_id, {:channel, channel_id}),
+    do: Attachment.max_bytes_for(upload_plan(user_id, channel_id))
 
-  # If the Premium state can't be read the user gets the free plan: a failed
-  # lookup must not block normal uploads.
-  defp upload_plan(user_id) do
+  def max_upload_bytes(user_id, {:direct, _recipient_id}),
+    do: Attachment.max_bytes_for(upload_plan(user_id, nil))
+
+  # Premium is the highest limit, so the server's level is only read without it.
+  # If a lookup fails the next plan down applies: it must not block normal uploads.
+  defp upload_plan(user_id, channel_id) do
     case Premium.premium?(user_id) do
       {:ok, true} ->
         :premium
 
       {:ok, false} ->
-        :free
+        boost_plan(channel_id)
 
       {:error, reason} ->
         Logger.warning("premium_lookup_failed", reason: Log.reason(reason))
+        boost_plan(channel_id)
+    end
+  end
+
+  defp boost_plan(nil), do: :free
+
+  defp boost_plan(channel_id) do
+    with %{"server_id" => server_id} when is_binary(server_id) <- repo().get_channel(channel_id),
+         level when is_integer(level) <- repo().server_boost_level(server_id) do
+      if level >= Attachment.boosted_level(), do: :boosted, else: :free
+    else
+      {:error, reason} ->
+        Logger.warning("server_boost_lookup_failed", reason: Log.reason(reason))
+        :free
+
+      _no_server ->
         :free
     end
   end
@@ -339,7 +359,7 @@ defmodule Messaging.Chat do
           {:ok, Attachment.t()} | {:error, MessagingWeb.ApiError.reason()}
   def store_attachment(channel_id, user_id, filename, binary) do
     with :ok <- Suspension.ensure_active(user_id),
-         {:ok, detected} <- validate_upload(user_id, binary),
+         {:ok, detected} <- validate_upload(channel_id, user_id, binary),
          :ok <- ensure_pending_room(user_id) do
       id = UUID.generate_v7()
 
@@ -361,9 +381,9 @@ defmodule Messaging.Chat do
     end
   end
 
-  defp validate_upload(user_id, binary) do
+  defp validate_upload(channel_id, user_id, binary) do
     if byte_size(binary) > Attachment.max_bytes() or Attachment.gif?(binary) do
-      Attachment.validate(binary, upload_plan(user_id))
+      Attachment.validate(binary, upload_plan(user_id, channel_id))
     else
       Attachment.validate(binary)
     end

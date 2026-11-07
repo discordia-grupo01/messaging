@@ -9,7 +9,7 @@ defmodule Messaging.Events.ServerEmojisConsumer do
   require Logger
 
   alias Messaging.Chat.Repo
-  alias Messaging.Events.{Audit, Backoff}
+  alias Messaging.Events.{Audit, Backoff, DeadLetter}
   alias Messaging.Log
 
   @exchange "discordia.events"
@@ -26,7 +26,9 @@ defmodule Messaging.Events.ServerEmojisConsumer do
     url = Keyword.fetch!(opts, :url)
     queue = Keyword.get(opts, :queue, @default_queue)
     send(self(), :connect)
-    {:ok, %{url: url, queue: queue, backoff: Backoff.initial(), conn: nil, chan: nil}}
+
+    {:ok,
+     %{url: url, queue: queue, backoff: Backoff.initial(), conn: nil, chan: nil, attempts: %{}}}
   end
 
   @impl true
@@ -67,11 +69,10 @@ defmodule Messaging.Events.ServerEmojisConsumer do
 
   @impl true
   def handle_info({:basic_deliver, payload, meta}, state) do
-    payload
-    |> process(meta.routing_key)
-    |> finish(state.chan, meta)
+    outcome = process(payload, meta.routing_key)
+    attempts = DeadLetter.finish(outcome, state, meta, payload)
 
-    {:noreply, state}
+    {:noreply, %{state | attempts: attempts}}
   end
 
   @impl true
@@ -95,13 +96,6 @@ defmodule Messaging.Events.ServerEmojisConsumer do
       {:ok, _not_an_object} -> malformed(payload, routing_key, :not_an_object)
       {:error, reason} -> malformed(payload, routing_key, reason)
     end
-  end
-
-  defp finish(:ack, chan, meta), do: AMQP.Basic.ack(chan, meta.delivery_tag)
-
-  defp finish(:retry, chan, meta) do
-    Process.sleep(Application.get_env(:messaging, :event_retry_delay_ms, 1_000))
-    AMQP.Basic.nack(chan, meta.delivery_tag, requeue: true)
   end
 
   defp handle_decoded(_decoded, payload, routing_key)
@@ -206,6 +200,7 @@ defmodule Messaging.Events.ServerEmojisConsumer do
          {:ok, chan} <- AMQP.Channel.open(conn),
          :ok <- AMQP.Exchange.declare(chan, @exchange, :topic, durable: true),
          {:ok, _info} <- AMQP.Queue.declare(chan, queue, durable: true),
+         :ok <- DeadLetter.declare(chan, queue),
          :ok <- bind_all(chan, queue),
          {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
       {:ok, conn, chan}
