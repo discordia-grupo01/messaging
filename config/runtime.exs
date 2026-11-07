@@ -23,6 +23,21 @@ log_level =
 
 config :logger, level: log_level
 
+otlp_endpoint = System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
+config :opentelemetry,
+  text_map_propagators: [:trace_context],
+  resource: [service: [name: System.get_env("OTEL_SERVICE_NAME", "messaging")]]
+
+if config_env() != :test do
+  if otlp_endpoint == "" do
+    config :opentelemetry, traces_exporter: :none
+  else
+    config :opentelemetry, traces_exporter: :otlp
+    config :opentelemetry_exporter, otlp_protocol: :http_protobuf
+  end
+end
+
 config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   mongo_pool_size: String.to_integer(System.get_env("MONGO_POOL_SIZE", "10")),

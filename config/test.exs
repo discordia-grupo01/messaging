@@ -23,5 +23,7 @@ config :messaging, :suspension_cache_ttl_ms, 0
 config :messaging, :presence_store, Messaging.Presence.StoreMock
 config :messaging, :start_presence, false
 
+config :opentelemetry, traces_exporter: :none, processors: [{:otel_simple_processor, %{}}]
+
 config :logger, level: :warning
 config :logger, :console, colors: [enabled: false]
