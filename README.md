@@ -1110,6 +1110,21 @@ Los logs son **estructurados**: una línea de JSON por evento, en la salida est�
 - **Lo que sigue visible fuera de `messaging`:** el log de acceso de Kong escribe la ruta real de cada pedido (por ejemplo `DELETE /v1/blocks/<id>`, y la query string del WebSocket con el ticket) y la IP del cliente. Ver `planes/logs-y-datos-privados-en-messaging.md`.
 - **Reportes de caídas.** Si un proceso se cae, el reporte de Erlang incluye el último mensaje recibido. Phoenix le aplica el mismo filtro de parámetros (sale `"content" => "[FILTERED]"`) y no escribe el estado del proceso, que es donde estaría el JWT. Está cubierto por tests.
 
+## Trazas (OpenTelemetry)
+
+El servicio manda trazas a cualquier backend que hable OTLP por HTTP (New Relic, Grafana Cloud, un colector propio). Está **apagado por defecto**: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se exporta nada y el servicio funciona igual.
+
+| Variable | Para qué |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | URL base del backend. En New Relic (cuenta de EE. UU.): `https://otlp.nr-data.net` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Credenciales, por ejemplo `api-key=<clave de licencia de ingesta>`. Es un secreto: va solo en las variables de entorno del despliegue, nunca en el repositorio |
+| `OTEL_SERVICE_NAME` | Nombre con el que aparece el servicio (por defecto `messaging`) |
+
+- **Pedidos HTTP:** un span por pedido (`Messaging.Tracing`), llamado como el patrón de la ruta (`DELETE /v1/blocks/:user_id`). Solo guarda `http.request.method`, `http.route` y `http.response.status_code`: nunca el path real, la query string, headers ni la IP. Si el pedido trae un `traceparent`, la traza continúa desde ahí.
+- **Eventos de RabbitMQ:** los consumidores de `messaging.channel_lifecycle` (los eventos de `servers` e `identify-service`), `messaging.admin_events`, `messaging.billing_events`, `messaging.server_boosts` y `messaging.server_emojis` abren un span `<routing key> process` dentro de la traza que llega en la cabecera `traceparent` del mensaje; si el evento va a reintento, el span queda marcado como error. Si el mensaje no la trae, empieza una traza nueva.
+- **Logs:** las líneas escritas mientras corre un pedido o un evento llevan `trace_id` y `span_id`.
+- **Todavía sin instrumentar:** las consultas a Mongo y a Postgres, los canales de WebSocket y los eventos que `messaging` publica (nacen en los WebSockets y los publica un proceso aparte, así que hace falta resolver los dos juntos).
+
 ## Setup local
 
 Este repo es autocontenido: su propio `docker-compose.yml` trae Mongo y
