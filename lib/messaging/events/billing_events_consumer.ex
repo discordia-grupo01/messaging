@@ -13,6 +13,7 @@ defmodule Messaging.Events.BillingEventsConsumer do
 
   alias Messaging.Events.{Audit, Backoff, DeadLetter}
   alias Messaging.Log
+  alias Messaging.Tracing
   alias Messaging.Premium
   alias Messaging.Premium.Signature
 
@@ -88,8 +89,12 @@ defmodule Messaging.Events.BillingEventsConsumer do
 
   @impl true
   def handle_info({:basic_deliver, payload, meta}, state) do
-    outcome = process(payload, meta.routing_key, state.secret)
-    attempts = DeadLetter.finish(outcome, state, meta, payload)
+    attempts =
+      Tracing.consumer_span(meta, state.queue, fn ->
+        outcome = process(payload, meta.routing_key, state.secret)
+        Tracing.mark_outcome(outcome)
+        DeadLetter.finish(outcome, state, meta, payload)
+      end)
 
     {:noreply, %{state | attempts: attempts}}
   end

@@ -5,7 +5,14 @@ if rabbitmq_url && mongo_url do
   defmodule Messaging.Events.ChannelLifecycleConsumerTest do
     use ExUnit.Case, async: false
 
+    require Record
+
     alias Messaging.Chat
+
+    Record.defrecordp(
+      :span,
+      Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl")
+    )
 
     @exchange "discordia.events"
 
@@ -72,6 +79,40 @@ if rabbitmq_url && mongo_url do
 
       assert wait_until(fn ->
                match?(%{"status" => "processed"}, consumed_event(event_id))
+             end)
+    end
+
+    test "continues the trace that servers put in the traceparent header", %{chan: chan} do
+      :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
+      trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+      channel_id = "chan-#{System.unique_integer([:positive])}"
+
+      payload =
+        Jason.encode!(%{
+          "event_id" => Messaging.UUID.generate(),
+          "occurred_at" => DateTime.to_iso8601(DateTime.utc_now()),
+          "server_id" => "srv-#{System.unique_integer([:positive])}",
+          "channel_id" => channel_id,
+          "name" => "general",
+          "kind" => "text"
+        })
+
+      :ok =
+        AMQP.Basic.publish(chan, @exchange, "servers.channel_created", payload,
+          persistent: true,
+          headers: [{"traceparent", :longstr, "00-#{trace_id}-00f067aa0ba902b7-01"}]
+        )
+
+      assert_receive {:span, record}, 5_000
+      assert span(record, :name) == "servers.channel_created process"
+      assert span(record, :trace_id) == String.to_integer(trace_id, 16)
+      assert span(record, :parent_span_id) == String.to_integer("00f067aa0ba902b7", 16)
+
+      assert wait_until(fn ->
+               match?(
+                 {:ok, %Messaging.Chat.ChannelCache{channel_id: ^channel_id}},
+                 Chat.channel_exists?(channel_id)
+               )
              end)
     end
 
