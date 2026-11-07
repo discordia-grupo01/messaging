@@ -18,7 +18,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
   require Logger
 
   alias Messaging.Chat.{Repo, Sockets}
-  alias Messaging.Events.{Audit, Backoff, Broadcaster, EventPublisher}
+  alias Messaging.Events.{Audit, Backoff, Broadcaster, DeadLetter, EventPublisher}
   alias Messaging.Log
   alias Messaging.ServerSuspension
   alias Messaging.Suspension
@@ -51,7 +51,15 @@ defmodule Messaging.Events.AdminEventsConsumer do
       send(self(), :connect)
 
       {:ok,
-       %{url: url, queue: queue, secret: secret, backoff: Backoff.initial(), conn: nil, chan: nil}}
+       %{
+         url: url,
+         queue: queue,
+         secret: secret,
+         backoff: Backoff.initial(),
+         conn: nil,
+         chan: nil,
+         attempts: %{}
+       }}
     end
   end
 
@@ -93,11 +101,10 @@ defmodule Messaging.Events.AdminEventsConsumer do
 
   @impl true
   def handle_info({:basic_deliver, payload, meta}, state) do
-    payload
-    |> process(meta.routing_key, state.secret)
-    |> finish(state.chan, meta)
+    outcome = process(payload, meta.routing_key, state.secret)
+    attempts = DeadLetter.finish(outcome, state, meta, payload)
 
-    {:noreply, state}
+    {:noreply, %{state | attempts: attempts}}
   end
 
   @impl true
@@ -121,13 +128,6 @@ defmodule Messaging.Events.AdminEventsConsumer do
       {:ok, _not_an_object} -> malformed(payload, routing_key, :not_an_object)
       {:error, reason} -> malformed(payload, routing_key, reason)
     end
-  end
-
-  defp finish(:ack, chan, meta), do: AMQP.Basic.ack(chan, meta.delivery_tag)
-
-  defp finish(:retry, chan, meta) do
-    Process.sleep(Application.get_env(:messaging, :event_retry_delay_ms, 1_000))
-    AMQP.Basic.nack(chan, meta.delivery_tag, requeue: true)
   end
 
   defp handle_decoded(_decoded, payload, routing_key, _secret)
@@ -378,6 +378,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
          {:ok, chan} <- AMQP.Channel.open(conn),
          :ok <- AMQP.Exchange.declare(chan, @exchange, :topic, durable: true),
          {:ok, _info} <- AMQP.Queue.declare(chan, queue, durable: true),
+         :ok <- DeadLetter.declare(chan, queue),
          :ok <- bind_routing_keys(chan, queue),
          {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
       {:ok, conn, chan}
