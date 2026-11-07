@@ -11,6 +11,7 @@ defmodule Messaging.Events.ServerBoostsConsumer do
   alias Messaging.Chat.Repo
   alias Messaging.Events.{Audit, Backoff, DeadLetter}
   alias Messaging.Log
+  alias Messaging.Tracing
 
   @exchange "discordia.events"
   @default_queue "messaging.server_boosts"
@@ -67,8 +68,12 @@ defmodule Messaging.Events.ServerBoostsConsumer do
 
   @impl true
   def handle_info({:basic_deliver, payload, meta}, state) do
-    outcome = process(payload, meta.routing_key)
-    attempts = DeadLetter.finish(outcome, state, meta, payload)
+    attempts =
+      Tracing.consumer_span(meta, state.queue, fn ->
+        outcome = process(payload, meta.routing_key)
+        Tracing.mark_outcome(outcome)
+        DeadLetter.finish(outcome, state, meta, payload)
+      end)
 
     {:noreply, %{state | attempts: attempts}}
   end

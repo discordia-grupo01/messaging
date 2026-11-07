@@ -46,7 +46,9 @@ config :logger, :console,
     :transport,
     :version,
     :instance_id,
-    :log_level
+    :log_level,
+    :trace_id,
+    :span_id
   ]
 
 config :phoenix, :logger, false

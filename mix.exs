@@ -9,6 +9,7 @@ defmodule Messaging.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      releases: releases(),
       test_coverage: [tool: ExCoveralls]
     ]
   end
@@ -17,6 +18,14 @@ defmodule Messaging.MixProject do
     [
       mod: {Messaging.Application, []},
       extra_applications: [:logger, :runtime_tools]
+    ]
+  end
+
+  defp releases do
+    [
+      messaging: [
+        applications: [opentelemetry_exporter: :permanent, opentelemetry: :temporary]
+      ]
     ]
   end
 
@@ -33,6 +42,9 @@ defmodule Messaging.MixProject do
       {:postgrex, "~> 0.19"},
       {:amqp, "~> 3.3"},
       {:req, "~> 0.5"},
+      {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry, "~> 1.5"},
+      {:opentelemetry_exporter, "~> 1.8"},
       {:open_api_spex, "~> 3.21"},
       {:ymlr, "~> 5.0", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
