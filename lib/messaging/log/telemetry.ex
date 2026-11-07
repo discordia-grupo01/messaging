@@ -75,8 +75,8 @@ defmodule Messaging.Log.Telemetry do
     end
   end
 
-  defp request_level(_status, route) when route in @quiet_routes, do: :debug
   defp request_level(status, _route) when is_integer(status) and status >= 500, do: :error
+  defp request_level(_status, route) when route in @quiet_routes, do: :debug
   defp request_level(_status, _route), do: :info
 
   defp socket_level(:ok), do: :info
