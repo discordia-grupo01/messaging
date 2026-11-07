@@ -503,6 +503,56 @@ if rabbitmq_url && mongo_url do
 
         assert wait_until(fn -> status(event_id) == "processed" end)
       end
+
+      test "an event that keeps failing is moved to the dead letter queue and does not block the next one",
+           %{chan: chan} do
+        previous = Application.get_env(:messaging, :broadcaster)
+        Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+        Application.put_env(:messaging, :event_retry_delay_ms, 10)
+        Application.put_env(:messaging, :event_max_attempts, 3)
+
+        on_exit(fn ->
+          Application.put_env(:messaging, :broadcaster, previous)
+          Application.delete_env(:messaging, :event_retry_delay_ms)
+          Application.delete_env(:messaging, :event_max_attempts)
+        end)
+
+        queue = :sys.get_state(Messaging.Events.ChannelLifecycleConsumer).queue
+        dead_letter_queue = Messaging.Events.DeadLetter.queue_for(queue)
+
+        server = "srv-#{Messaging.UUID.generate()}"
+        seed_channels(server, 1)
+        user = "user-#{Messaging.UUID.generate()}"
+
+        poison_id =
+          publish(chan, "servers.member_left", %{"server_id" => server, "user_id" => user})
+
+        assert {:ok, payload, meta} = wait_for_dead_letter(chan, dead_letter_queue)
+        assert Jason.decode!(payload)["event_id"] == poison_id
+
+        headers = Map.new(meta.headers, fn {name, _type, value} -> {name, value} end)
+        assert headers["x-original-queue"] == queue
+        assert headers["x-original-routing-key"] == "servers.member_left"
+        assert headers["x-failure-reason"] == "retries_exhausted"
+        assert headers["x-attempts"] == 3
+        assert headers["x-event-id"] == poison_id
+
+        refute status(poison_id) == "processed"
+
+        Application.put_env(:messaging, :broadcaster, Messaging.Events.LocalBroadcaster)
+        channel = "chan-#{Messaging.UUID.generate()}"
+
+        next_id =
+          publish(chan, "servers.channel_created", %{
+            "server_id" => server,
+            "channel_id" => channel,
+            "name" => "general",
+            "kind" => "text"
+          })
+
+        assert wait_until(fn -> status(next_id) == "processed" end)
+        AMQP.Queue.delete(chan, dead_letter_queue)
+      end
     end
 
     describe "permission replica" do
@@ -588,6 +638,20 @@ if rabbitmq_url && mongo_url do
         })
 
         assert wait_until(fn -> Messaging.Chat.Repo.Mongo.user_known?(user) == true end)
+      end
+    end
+
+    defp wait_for_dead_letter(chan, queue, attempts \\ 50)
+    defp wait_for_dead_letter(_chan, _queue, 0), do: :timeout
+
+    defp wait_for_dead_letter(chan, queue, attempts) do
+      case AMQP.Basic.get(chan, queue, no_ack: true) do
+        {:ok, payload, meta} ->
+          {:ok, payload, meta}
+
+        {:empty, _meta} ->
+          Process.sleep(100)
+          wait_for_dead_letter(chan, queue, attempts - 1)
       end
     end
 
