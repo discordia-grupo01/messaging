@@ -11,6 +11,7 @@ defmodule Messaging.Application do
     Messaging.ServerSuspension.init()
     Messaging.Log.Telemetry.attach()
     Messaging.Tracing.attach()
+    Messaging.Metrics.setup()
 
     Logger.info("service_started",
       version: to_string(Application.spec(:messaging, :vsn)),
