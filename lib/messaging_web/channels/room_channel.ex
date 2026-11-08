@@ -7,10 +7,19 @@ defmodule MessagingWeb.RoomChannel do
   alias Messaging.Events.Broadcaster
   alias Messaging.Log
   alias Messaging.Suspension
+  alias Messaging.Tracing
   alias MessagingWeb.ApiError
   alias MessagingWeb.MessagePayload
 
   @dialyzer {:nowarn_function, handle_info: 2}
+
+  @traced_events [
+    "new_message",
+    "edit_message",
+    "delete_message",
+    "add_reaction",
+    "remove_reaction"
+  ]
 
   intercept ["access_revoked"]
 
@@ -64,10 +73,20 @@ defmodule MessagingWeb.RoomChannel do
 
   @impl true
   def handle_in(event, payload, socket) do
-    case Suspension.ensure_active(socket.assigns.user_id) do
-      :ok -> dispatch(event, payload, socket)
-      {:error, reason} -> {:reply, {:error, ApiError.payload(reason)}, socket}
-    end
+    Tracing.ws_span(traced_event(event), fn ->
+      case Suspension.ensure_active(socket.assigns.user_id) do
+        :ok -> dispatch(event, payload, socket)
+        {:error, reason} -> error_reply(reason, socket)
+      end
+    end)
+  end
+
+  defp traced_event(event) when event in @traced_events, do: event
+  defp traced_event(_event), do: "other"
+
+  defp error_reply(reason, socket) do
+    if ApiError.http_status(reason) >= 500, do: Tracing.mark_error()
+    {:reply, {:error, ApiError.payload(reason)}, socket}
   end
 
   defp dispatch("new_message", payload, socket) when is_map(payload) do
@@ -86,10 +105,10 @@ defmodule MessagingWeb.RoomChannel do
           {:reply, {:ok, Message.to_api(message)}, socket}
 
         {:error, reason} ->
-          {:reply, {:error, ApiError.payload(reason)}, socket}
+          error_reply(reason, socket)
       end
     else
-      :error -> {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+      :error -> error_reply(:invalid_payload, socket)
     end
   end
 
@@ -106,7 +125,7 @@ defmodule MessagingWeb.RoomChannel do
         {:reply, {:ok, Message.to_api(message)}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, ApiError.payload(reason)}, socket}
+        error_reply(reason, socket)
     end
   end
 
@@ -122,7 +141,7 @@ defmodule MessagingWeb.RoomChannel do
         {:reply, :ok, socket}
 
       {:error, reason} ->
-        {:reply, {:error, ApiError.payload(reason)}, socket}
+        error_reply(reason, socket)
     end
   end
 
@@ -153,7 +172,7 @@ defmodule MessagingWeb.RoomChannel do
           }}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, ApiError.payload(reason)}, socket}
+        error_reply(reason, socket)
     end
   end
 
@@ -165,7 +184,7 @@ defmodule MessagingWeb.RoomChannel do
               "add_reaction",
               "remove_reaction"
             ] do
-    {:reply, {:error, ApiError.payload(:invalid_payload)}, socket}
+    error_reply(:invalid_payload, socket)
   end
 
   defp publish_reaction(reaction, user_id, action) do

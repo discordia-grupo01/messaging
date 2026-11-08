@@ -6,6 +6,13 @@ defmodule MessagingWeb.RoomChannelTest do
   alias Messaging.Chat
   alias MessagingWeb.RoomChannel
 
+  require Record
+
+  Record.defrecordp(
+    :span,
+    Record.extract(:span, from_lib: "opentelemetry/include/otel_span.hrl")
+  )
+
   setup :set_mox_global
   setup :verify_on_exit!
 
@@ -1068,6 +1075,77 @@ defmodule MessagingWeb.RoomChannelTest do
           }
         ]
       }
+    end
+  end
+
+  describe "tracing" do
+    defp hex(id, digits),
+      do: id |> Integer.to_string(16) |> String.pad_leading(digits, "0") |> String.downcase()
+
+    defp exported_span(name) do
+      receive do
+        {:span, record} ->
+          if span(record, :name) == name, do: record, else: exported_span(name)
+      after
+        1_000 -> flunk("no se exportó el span #{name}")
+      end
+    end
+
+    defp capture_outbox_rows do
+      test_pid = self()
+
+      stub(Messaging.Outbox.StoreMock, :insert, fn rows ->
+        send(test_pid, {:rows, rows})
+        Enum.each(rows, &MessagingWeb.Endpoint.broadcast!(&1.topic, &1.event, &1.payload))
+        :ok
+      end)
+    end
+
+    setup do
+      :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
+      :ok
+    end
+
+    test "a message sent through the socket opens a WS span and its outbox rows carry that trace" do
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      capture_outbox_rows()
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+
+      ref = push(socket, "new_message", %{"content" => "hola"})
+      assert_reply ref, :ok
+
+      record = exported_span("WS new_message")
+      assert span(record, :kind) == :server
+      assert span(record, :parent_span_id) == :undefined
+      refute match?({:status, :error, _}, span(record, :status))
+      refute inspect(record) =~ "hola"
+
+      assert_received {:rows, rows}
+      assert rows != []
+
+      for row <- rows do
+        assert [_version, trace_id, _span_id, _flags] = String.split(row.traceparent, "-")
+        assert trace_id == hex(span(record, :trace_id), 32)
+      end
+    end
+
+    test "a client error does not mark the span, but a failure of the server does" do
+      stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
+      capture_outbox_rows()
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(join_socket("user-a"), RoomChannel, "channel:" <> @channel_id)
+
+      ref = push(socket, "new_message", %{"content" => ""})
+      assert_reply ref, :error
+      refute match?({:status, :error, _}, span(exported_span("WS new_message"), :status))
+
+      Messaging.SuspensionHelper.stub_suspension_check_failing()
+      ref = push(socket, "new_message", %{"content" => "hola"})
+      assert_reply ref, :error, %{error: %{code: "SUSPENSION_UNAVAILABLE"}}
+      assert {:status, :error, _} = span(exported_span("WS new_message"), :status)
     end
   end
 end

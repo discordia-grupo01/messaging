@@ -80,13 +80,92 @@ defmodule Messaging.Tracing do
     end
   end
 
-  @spec mark_outcome(atom()) :: :ok
-  def mark_outcome(:retry) do
+  @spec ws_span(String.t(), (-> result)) :: result when result: var
+  def ws_span(event, fun) do
+    Tracer.with_span "WS #{event}",
+                     %{
+                       kind: :server,
+                       attributes: %{
+                         "network.protocol.name" => "websocket",
+                         "messaging.websocket.event" => event
+                       }
+                     } do
+      put_log_metadata(Tracer.current_span_ctx())
+
+      try do
+        mark_failures(fun)
+      after
+        Logger.metadata(trace_id: nil, span_id: nil)
+      end
+    end
+  end
+
+  @spec publish_span(map(), (-> result)) :: result when result: var
+  def publish_span(row, fun) do
+    parent =
+      :otel_propagator_text_map.extract_to(
+        Ctx.get_current(),
+        traceparent_carrier(Map.get(row, :traceparent))
+      )
+
+    token = Ctx.attach(parent)
+
+    try do
+      Tracer.with_span "outbox publish #{row.event}",
+                       %{
+                         kind: :producer,
+                         attributes: %{
+                           "messaging.system" => "rabbitmq",
+                           "messaging.rabbitmq.destination.routing_key" => row.event
+                         }
+                       } do
+        put_log_metadata(Tracer.current_span_ctx())
+        mark_failures(fun)
+      end
+    after
+      Logger.metadata(trace_id: nil, span_id: nil)
+      Ctx.detach(token)
+    end
+  end
+
+  @spec current_traceparent() :: String.t() | nil
+  def current_traceparent do
+    case List.keyfind(:otel_propagator_text_map.inject([]), "traceparent", 0) do
+      {_name, value} when is_binary(value) -> value
+      _none -> nil
+    end
+  end
+
+  @spec amqp_headers() :: [{String.t(), :longstr, String.t()}]
+  def amqp_headers do
+    case current_traceparent() do
+      nil -> []
+      traceparent -> [{"traceparent", :longstr, traceparent}]
+    end
+  end
+
+  @spec mark_error() :: :ok
+  def mark_error do
     Tracer.set_status(OpenTelemetry.status(:error, ""))
     :ok
   end
 
+  @spec mark_outcome(atom()) :: :ok
+  def mark_outcome(:retry), do: mark_error()
   def mark_outcome(_outcome), do: :ok
+
+  defp mark_failures(fun) do
+    fun.()
+  catch
+    kind, reason ->
+      mark_error()
+      :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp traceparent_carrier(value) when is_binary(value) and value != "",
+    do: [{"traceparent", value}]
+
+  defp traceparent_carrier(_value), do: []
 
   defp carrier(%{headers: headers}) when is_list(headers) do
     for {name, _type, value} <- headers, is_binary(name), is_binary(value), do: {name, value}

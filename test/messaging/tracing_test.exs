@@ -216,4 +216,117 @@ defmodule Messaging.TracingTest do
       assert OpenTelemetry.Tracer.current_span_ctx() == :undefined
     end
   end
+
+  describe "ws_span/2" do
+    test "opens a server span named after the event and returns what the function returns" do
+      assert :result = Messaging.Tracing.ws_span("new_message", fn -> :result end)
+
+      record = exported()
+      assert span(record, :name) == "WS new_message"
+      assert span(record, :kind) == :server
+      assert span(record, :parent_span_id) == :undefined
+
+      assert attributes(record) == %{
+               "network.protocol.name" => "websocket",
+               "messaging.websocket.event" => "new_message"
+             }
+    end
+
+    test "the log lines written while it runs carry the ids, and they are cleared afterwards" do
+      log =
+        capture_log([level: :debug], fn ->
+          Messaging.Tracing.ws_span("new_message", fn ->
+            require Logger
+            Logger.info("inside")
+          end)
+        end)
+
+      assert %{"trace_id" => trace_id, "span_id" => span_id} = Jason.decode!(String.trim(log))
+      record = exported()
+      assert trace_id == hex(span(record, :trace_id), 32)
+      assert span_id == hex(span(record, :span_id), 16)
+      refute Keyword.has_key?(Logger.metadata(), :trace_id)
+    end
+
+    test "mark_error/0 marks the span as an error, and without it the span is not" do
+      Messaging.Tracing.ws_span("new_message", fn -> Messaging.Tracing.mark_error() end)
+      assert {:status, :error, _message} = span(exported(), :status)
+
+      Messaging.Tracing.ws_span("new_message", fn -> :ok end)
+      refute match?({:status, :error, _}, span(exported(), :status))
+    end
+
+    test "an exception is raised again and the span is exported as an error" do
+      assert_raise RuntimeError, "boom", fn ->
+        Messaging.Tracing.ws_span("new_message", fn -> raise "boom" end)
+      end
+
+      assert {:status, :error, _message} = span(exported(), :status)
+      refute Keyword.has_key?(Logger.metadata(), :trace_id)
+    end
+  end
+
+  describe "the traceparent that travels through the outbox" do
+    defp outbox_row(overrides \\ %{}),
+      do: Map.merge(%{event: "new_message", traceparent: nil}, overrides)
+
+    test "there is none outside a span, and inside one it is the w3c header of that span" do
+      assert Messaging.Tracing.current_traceparent() == nil
+      assert Messaging.Tracing.amqp_headers() == []
+
+      Messaging.Tracing.ws_span("new_message", fn ->
+        traceparent = Messaging.Tracing.current_traceparent()
+        assert traceparent =~ ~r/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/
+        assert [{"traceparent", :longstr, ^traceparent}] = Messaging.Tracing.amqp_headers()
+      end)
+
+      record = exported()
+      assert span(record, :name) == "WS new_message"
+    end
+
+    test "publish_span/2 continues the trace stored in the row and puts its own span in the header" do
+      Messaging.Tracing.publish_span(outbox_row(%{traceparent: @traceparent}), fn ->
+        assert [{"traceparent", :longstr, header}] = Messaging.Tracing.amqp_headers()
+        send(self(), {:header, header})
+      end)
+
+      record = exported()
+      assert span(record, :name) == "outbox publish new_message"
+      assert span(record, :kind) == :producer
+      assert hex(span(record, :trace_id), 32) == @trace_id
+      assert hex(span(record, :parent_span_id), 16) == @parent_span_id
+
+      assert attributes(record) == %{
+               "messaging.system" => "rabbitmq",
+               "messaging.rabbitmq.destination.routing_key" => "new_message"
+             }
+
+      assert_received {:header, header}
+      assert header == "00-#{@trace_id}-#{hex(span(record, :span_id), 16)}-01"
+    end
+
+    test "publish_span/2 starts a new trace when the row has none, and still gives headers" do
+      for traceparent <- [nil, ""] do
+        Messaging.Tracing.publish_span(outbox_row(%{traceparent: traceparent}), fn ->
+          assert [{"traceparent", :longstr, _header}] = Messaging.Tracing.amqp_headers()
+        end)
+
+        record = exported()
+        assert span(record, :parent_span_id) == :undefined
+        assert span(record, :trace_id) != 0
+      end
+    end
+
+    test "publish_span/2 clears the ids it put in the log metadata" do
+      Messaging.Tracing.publish_span(outbox_row(), fn -> :ok end)
+      _record = exported()
+
+      refute Keyword.has_key?(Logger.metadata(), :trace_id)
+    end
+
+    test "a row without the traceparent key at all is accepted" do
+      assert :ok = Messaging.Tracing.publish_span(%{event: "new_message"}, fn -> :ok end)
+      assert span(exported(), :name) == "outbox publish new_message"
+    end
+  end
 end

@@ -347,7 +347,7 @@ poller (cada 1 s, o apenas se anota) ──▶ completa Mongo si hace falta ─�
   si todo falla espera el intervalo de 1 s, para no reintentar en un bucle.
 - **Qué se guarda.** Tabla `outbox_events` (`migrations/0001_outbox_events.up.sql`): `id`
   (UUIDv7), `event`, `topic`, `payload` y `apply` (JSONB), `message_id`, `channel_id`,
-  `created_at`, `published_at`, `attempts` y `last_error`. **Las filas no se borran** (auditoría).
+  `created_at`, `published_at`, `attempts`, `last_error` y `traceparent` (migración `0003`, nula en las filas viejas). **Las filas no se borran** (auditoría).
   Al publicar se vacían `payload` y `apply`, así el texto de los mensajes no queda en Postgres;
   quedan el tipo de evento, los ids, las fechas, los intentos y el último error.
 - **Reintentos.** Un RabbitMQ que no responde o no confirma se reintenta sin límite y sin contar.
@@ -1124,7 +1124,10 @@ El servicio manda trazas y métricas a cualquier backend que hable OTLP por HTTP
 - **Eventos de RabbitMQ:** los consumidores de `messaging.channel_lifecycle` (los eventos de `servers` e `identify-service`), `messaging.admin_events`, `messaging.billing_events`, `messaging.server_boosts` y `messaging.server_emojis` abren un span `<routing key> process` dentro de la traza que llega en la cabecera `traceparent` del mensaje; si el evento va a reintento, el span queda marcado como error. Si el mensaje no la trae, empieza una traza nueva.
 - **Métricas HTTP:** el histograma `http.server.request.duration` (en segundos, temporalidad delta, exportado cada 60 s) lo registra `Messaging.Metrics` al terminar cada pedido, con `http.request.method`, `http.route` y `http.response.status_code`; si el estado es 5xx suma `error.type`. De ahí salen el throughput, la latencia y la tasa de errores del resumen de APM en New Relic. Los pedidos a rutas inexistentes se agrupan en la ruta `unmatched`. Nunca guarda la ruta real ni la query string.
 - **Logs:** las líneas escritas mientras corre un pedido o un evento llevan `trace_id` y `span_id`.
-- **Todavía sin instrumentar:** las consultas a Mongo y a Postgres, los canales de WebSocket y los eventos que `messaging` publica (nacen en los WebSockets y los publica un proceso aparte, así que hace falta resolver los dos juntos).
+- **WebSockets:** cada mensaje que llega por un canal de sala (`new_message`, `edit_message`, `delete_message`, `add_reaction` y `remove_reaction`) abre un span `WS <evento>`, de tipo servidor, que es el inicio de la traza porque el navegador no manda `traceparent`. Solo guarda `network.protocol.name` y el nombre del evento (cualquier evento desconocido se agrupa como `other`): nunca el contenido, ni ids de canal o de usuario. Si la respuesta es un error del servidor (5xx, como `SUSPENSION_UNAVAILABLE`) o el manejador lanza una excepción, el span queda marcado como error; un error del cliente (payload inválido, sin permiso) no. Los logs de ese manejador llevan `trace_id` y `span_id`.
+- **Del socket a RabbitMQ:** `Messaging.Outbox.enqueue/1` guarda en `outbox_events.traceparent` la traza que está abierta en ese momento (la del span `WS ...` o la del pedido HTTP). El poller la retoma, crea un span `outbox publish <evento>` de tipo productor y publica el mensaje con la cabecera `traceparent` de ese span, tanto en el exchange `discordia.events` como en el fanout entre instancias. Así `notifications` continúa la misma traza al procesar `messaging.message_created`. Una fila sin `traceparent` se publica igual y empieza una traza nueva.
+- **Volumen:** cada mensaje de chat genera tres spans (el del socket, el de publicación y el del consumidor). Si hace falta bajar el gasto en New Relic, `OTEL_TRACES_SAMPLER=parentbased_traceidratio` con `OTEL_TRACES_SAMPLER_ARG=0.2` muestrea una de cada cinco trazas completas.
+- **Todavía sin instrumentar:** las consultas a Mongo y a Postgres, la presencia y el canal de usuario (sus eventos no pasan por el outbox) y los eventos que publica el consumidor de `messaging.admin_events`.
 
 ## Envío de logs (New Relic)
 
