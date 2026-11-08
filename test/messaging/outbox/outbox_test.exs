@@ -57,4 +57,26 @@ defmodule Messaging.OutboxTest do
     assert :ok = Outbox.enqueue([@entry])
     assert_receive :polled, 1_000
   end
+
+  test "the rows carry the traceparent of the span that was open when they were enqueued" do
+    expect(Messaging.Outbox.StoreMock, :insert, fn rows ->
+      assert [%{traceparent: first}, %{traceparent: second}] = rows
+      assert first =~ ~r/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/
+      assert first == second
+      :ok
+    end)
+
+    Messaging.Tracing.ws_span("new_message", fn ->
+      assert :ok = Outbox.enqueue([@entry, %{@entry | event: "new_dm"}])
+    end)
+  end
+
+  test "without a span the rows carry no traceparent" do
+    expect(Messaging.Outbox.StoreMock, :insert, fn rows ->
+      assert [%{traceparent: nil}] = rows
+      :ok
+    end)
+
+    assert :ok = Outbox.enqueue([@entry])
+  end
 end

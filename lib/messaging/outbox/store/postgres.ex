@@ -66,8 +66,8 @@ defmodule Messaging.Outbox.Store.Postgres do
 
   defp insert_sql do
     """
-    INSERT INTO #{table()} (id, event, topic, payload, apply, message_id, channel_id)
-    VALUES ($1::text::uuid, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, $7)
+    INSERT INTO #{table()} (id, event, topic, payload, apply, message_id, channel_id, traceparent)
+    VALUES ($1::text::uuid, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, $7, $8)
     ON CONFLICT DO NOTHING
     """
   end
@@ -80,7 +80,8 @@ defmodule Messaging.Outbox.Store.Postgres do
       Jason.encode!(row.payload),
       encode_optional(Map.get(row, :apply)),
       Map.get(row, :message_id),
-      Map.get(row, :channel_id)
+      Map.get(row, :channel_id),
+      Map.get(row, :traceparent)
     ]
   end
 
@@ -90,7 +91,7 @@ defmodule Messaging.Outbox.Store.Postgres do
   defp select_pending(conn, limit) do
     sql = """
     SELECT o.id::text, o.event, o.topic, o.payload::text, o.apply::text,
-           o.message_id, o.channel_id, o.attempts
+           o.message_id, o.channel_id, o.traceparent, o.attempts
       FROM #{table()} o
      WHERE o.published_at IS NULL
        AND o.attempts < $2
@@ -106,7 +107,17 @@ defmodule Messaging.Outbox.Store.Postgres do
 
     %Postgrex.Result{rows: rows} = Postgrex.query!(conn, sql, [limit, @max_attempts])
 
-    Enum.map(rows, fn [id, event, topic, payload, apply, message_id, channel_id, attempts] ->
+    Enum.map(rows, fn [
+                        id,
+                        event,
+                        topic,
+                        payload,
+                        apply,
+                        message_id,
+                        channel_id,
+                        traceparent,
+                        attempts
+                      ] ->
       %{
         id: id,
         event: event,
@@ -115,6 +126,7 @@ defmodule Messaging.Outbox.Store.Postgres do
         apply: decode(apply),
         message_id: message_id,
         channel_id: channel_id,
+        traceparent: traceparent,
         attempts: attempts
       }
     end)

@@ -6,7 +6,8 @@ defmodule Messaging.Outbox.Store do
           required(:payload) => map(),
           optional(:apply) => map() | nil,
           optional(:message_id) => String.t() | nil,
-          optional(:channel_id) => String.t() | nil
+          optional(:channel_id) => String.t() | nil,
+          optional(:traceparent) => String.t() | nil
         }
 
   @type pending :: %{
@@ -17,6 +18,7 @@ defmodule Messaging.Outbox.Store do
           apply: map() | nil,
           message_id: String.t() | nil,
           channel_id: String.t() | nil,
+          traceparent: String.t() | nil,
           attempts: non_neg_integer()
         }
 

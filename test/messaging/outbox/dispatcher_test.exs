@@ -102,4 +102,42 @@ defmodule Messaging.Outbox.DispatcherTest do
       assert [{"evt-1", {:error, {:invalid, _}}}, {"evt-2", :ok}] = Dispatcher.handle_batch(rows)
     end)
   end
+
+  describe "tracing" do
+    @trace_id "4bf92f3577b34da6a3ce929d0e0e4736"
+    @traceparent "00-#{@trace_id}-00f067aa0ba902b7-01"
+
+    defp trace_id_of(traceparent), do: traceparent |> String.split("-") |> Enum.at(1)
+
+    test "the event is published inside the trace that came with the row" do
+      test_pid = self()
+
+      expect(Messaging.EventPublisherMock, :publish_event, fn _id, _topic, _event, _payload ->
+        send(test_pid, {:inside, Messaging.Tracing.current_traceparent()})
+        :ok
+      end)
+
+      assert :ok = Dispatcher.handle(row(%{traceparent: @traceparent}))
+
+      assert_received {:inside, inside}
+      assert trace_id_of(inside) == @trace_id
+      refute inside == @traceparent
+    end
+
+    test "a row without traceparent is still published" do
+      expect(Messaging.EventPublisherMock, :publish_event, fn _, _, _, _ -> :ok end)
+
+      assert :ok = Dispatcher.handle(row(%{traceparent: nil}))
+    end
+
+    test "a failed publication returns the same outcome it always did" do
+      expect(Messaging.EventPublisherMock, :publish_event, fn _, _, _, _ ->
+        {:error, :not_connected}
+      end)
+
+      capture_log(fn ->
+        assert {:retry, :not_connected} = Dispatcher.handle(row(%{traceparent: @traceparent}))
+      end)
+    end
+  end
 end
