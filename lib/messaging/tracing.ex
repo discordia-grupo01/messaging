@@ -38,10 +38,11 @@ defmodule Messaging.Tracing do
     :ok
   end
 
-  def handle_event([:phoenix, :endpoint, :stop], _measurements, %{conn: conn}, _config) do
+  def handle_event([:phoenix, :endpoint, :stop], measurements, %{conn: conn}, _config) do
     case Process.delete(@span_key) do
       {span, token} ->
         route = route(conn)
+        record_duration(conn, route, measurements)
         Span.update_name(span, "#{conn.method} #{route}")
         Span.set_attribute(span, "http.route", route)
         Span.set_attribute(span, "http.response.status_code", conn.status)
@@ -100,6 +101,11 @@ defmodule Messaging.Tracing do
 
     :ok
   end
+
+  defp record_duration(conn, route, %{duration: duration}),
+    do: Messaging.Metrics.record_request(conn.method, route, conn.status, duration)
+
+  defp record_duration(_conn, _route, _measurements), do: :ok
 
   defp error_status?(status), do: is_integer(status) and status >= 500
 
