@@ -6,6 +6,7 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   alias Messaging.Events.{Backoff, DomainEvent}
   alias Messaging.Log
+  alias Messaging.Tracing
 
   @exchange "messaging.broadcast"
   @events_exchange "discordia.events"
@@ -16,7 +17,13 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   @impl Messaging.Events.EventPublisher
   def publish_event(id, topic, event, payload) do
-    GenServer.call(__MODULE__, {:publish, id, topic, event, payload}, @confirm_timeout_ms * 2)
+    headers = Tracing.amqp_headers()
+
+    GenServer.call(
+      __MODULE__,
+      {:publish, id, topic, event, payload, headers},
+      @confirm_timeout_ms * 2
+    )
   catch
     :exit, reason -> {:error, reason}
   end
@@ -30,17 +37,21 @@ defmodule Messaging.Events.BroadcastPublisher do
   end
 
   @impl GenServer
-  def handle_call({:publish, _id, _topic, _event, _payload}, _from, %{chan: nil} = state) do
+  def handle_call(
+        {:publish, _id, _topic, _event, _payload, _headers},
+        _from,
+        %{chan: nil} = state
+      ) do
     {:reply, {:error, :not_connected}, state}
   end
 
-  def handle_call({:publish, id, topic, event, payload}, _from, state) do
+  def handle_call({:publish, id, topic, event, payload, headers}, _from, state) do
     domain_topic = DomainEvent.topic()
 
     result =
       case topic do
-        ^domain_topic -> publish_domain(state.chan, id, event, payload)
-        _channel_topic -> publish_broadcast(state.chan, id, topic, event, payload)
+        ^domain_topic -> publish_domain(state.chan, id, event, payload, headers)
+        _channel_topic -> publish_broadcast(state.chan, id, topic, event, payload, headers)
       end
 
     {:reply, result, state}
@@ -88,23 +99,29 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   def terminate(_reason, _state), do: :ok
 
-  defp publish_broadcast(chan, id, topic, event, payload) do
+  defp publish_broadcast(chan, id, topic, event, payload, headers) do
     body =
       Jason.encode!(%{"event_id" => id, "topic" => topic, "event" => event, "payload" => payload})
 
-    with :ok <- AMQP.Basic.publish(chan, @exchange, "", body, persistent: true, message_id: id) do
+    with :ok <-
+           AMQP.Basic.publish(chan, @exchange, "", body,
+             persistent: true,
+             message_id: id,
+             headers: headers
+           ) do
       confirm(chan)
     end
   end
 
-  defp publish_domain(chan, id, routing_key, payload) do
+  defp publish_domain(chan, id, routing_key, payload, headers) do
     body = payload |> Map.put("event_id", id) |> Jason.encode!()
 
     with :ok <-
            AMQP.Basic.publish(chan, @events_exchange, routing_key, body,
              persistent: true,
              message_id: id,
-             content_type: "application/json"
+             content_type: "application/json",
+             headers: headers
            ) do
       confirm(chan)
     end

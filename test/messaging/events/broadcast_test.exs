@@ -154,6 +154,62 @@ if rabbitmq_url do
       AMQP.Connection.close(conn)
     end
 
+    test "the traceparent of the span that is open travels in the header of the message" do
+      {:ok, conn} = AMQP.Connection.open(System.fetch_env!("RABBITMQ_URL"))
+      {:ok, chan} = AMQP.Channel.open(conn)
+      :ok = AMQP.Exchange.declare(chan, "discordia.events", :topic, durable: true)
+      {:ok, %{queue: queue}} = AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true)
+
+      :ok =
+        AMQP.Queue.bind(chan, queue, "discordia.events", routing_key: "messaging.message_created")
+
+      traceparent =
+        Messaging.Tracing.ws_span("new_message", fn ->
+          assert :ok =
+                   BroadcastPublisher.publish_event(
+                     Messaging.UUID.generate(),
+                     "domain",
+                     "messaging.message_created",
+                     %{"message_id" => "m"}
+                   )
+
+          Messaging.Tracing.current_traceparent()
+        end)
+
+      assert {_body, meta} = get_message(chan, queue, 50)
+
+      assert [{"traceparent", :longstr, header}] =
+               Enum.filter(meta.headers, &match?({"traceparent", _, _}, &1))
+
+      assert String.split(header, "-") |> Enum.at(1) ==
+               traceparent |> String.split("-") |> Enum.at(1)
+
+      AMQP.Connection.close(conn)
+    end
+
+    test "a message published outside any span carries no traceparent" do
+      {:ok, conn} = AMQP.Connection.open(System.fetch_env!("RABBITMQ_URL"))
+      {:ok, chan} = AMQP.Channel.open(conn)
+      :ok = AMQP.Exchange.declare(chan, "discordia.events", :topic, durable: true)
+      {:ok, %{queue: queue}} = AMQP.Queue.declare(chan, "", exclusive: true, auto_delete: true)
+
+      :ok =
+        AMQP.Queue.bind(chan, queue, "discordia.events", routing_key: "messaging.message_created")
+
+      assert :ok =
+               BroadcastPublisher.publish_event(
+                 Messaging.UUID.generate(),
+                 "domain",
+                 "messaging.message_created",
+                 %{"message_id" => "m"}
+               )
+
+      assert {_body, meta} = get_message(chan, queue, 50)
+      refute Enum.any?(List.wrap(meta.headers), &match?({"traceparent", _, _}, &1))
+
+      AMQP.Connection.close(conn)
+    end
+
     defp get_message(_chan, _queue, 0), do: nil
 
     defp get_message(chan, queue, attempts) do

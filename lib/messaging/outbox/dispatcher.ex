@@ -4,6 +4,7 @@ defmodule Messaging.Outbox.Dispatcher do
   alias Messaging.Events.EventPublisher
   alias Messaging.Log
   alias Messaging.Outbox.{Applier, Store}
+  alias Messaging.Tracing
 
   @spec handle_batch([Store.pending()]) :: [{String.t(), Store.outcome()}]
   def handle_batch(rows) do
@@ -22,6 +23,17 @@ defmodule Messaging.Outbox.Dispatcher do
 
   @spec handle(Store.pending()) :: Store.outcome()
   def handle(row) do
+    Tracing.publish_span(row, fn ->
+      outcome = publish(row)
+      mark_outcome(outcome)
+      outcome
+    end)
+  end
+
+  defp mark_outcome(:ok), do: :ok
+  defp mark_outcome(_failure), do: Tracing.mark_error()
+
+  defp publish(row) do
     with :ok <- Applier.apply(row.apply),
          :ok <- EventPublisher.publish_event(row.id, row.topic, row.event, row.payload) do
       :ok

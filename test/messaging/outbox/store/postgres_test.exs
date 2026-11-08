@@ -108,6 +108,22 @@ if database_host do
 
     defp publish_all(rows), do: Enum.map(rows, &{&1.id, :ok})
 
+    test "the traceparent is stored and comes back with the pending row" do
+      traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+      assert :ok = Store.insert([row("tp1", "new_message", %{traceparent: traceparent})])
+      assert :ok = Store.insert([row("tp2")])
+
+      test_pid = self()
+
+      assert {:ok, 2} =
+               Store.process_pending(10, fn rows ->
+                 send(test_pid, {:rows, Map.new(rows, &{&1.message_id, &1.traceparent})})
+                 publish_all(rows)
+               end)
+
+      assert_received {:rows, %{"tp1" => ^traceparent, "tp2" => nil}}
+    end
+
     test "ping/0 answers when the database does" do
       assert :ok = Store.ping()
     end
@@ -236,7 +252,11 @@ if database_host do
     end
 
     test "adding the creation index keeps only the first of the creation events already repeated" do
-      reset_schema(["migrations/0001_outbox_events.up.sql"])
+      reset_schema([
+        "migrations/0001_outbox_events.up.sql",
+        "migrations/0003_outbox_events_traceparent.up.sql"
+      ])
+
       first = row("m1")
       repeated = row("m1")
       updates = for _ <- 1..2, do: row("m1", "message_updated", %{apply: nil})
