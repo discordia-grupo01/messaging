@@ -1088,7 +1088,7 @@ Los logs son **estructurados**: una línea de JSON por evento, en la salida est�
 
 - **`message`** es el nombre del evento, en inglés y en `snake_case` (`message_sent`, `permissions_client_request_failed`, …). El resto de los campos son datos del evento. Los logs de pedidos HTTP y de sockets/canales **no** son texto de Phoenix: están desactivados (`config :phoenix, :logger, false`) y los reemplaza `Messaging.Log.Telemetry`, que emite eventos con campos propios (ver abajo).
 - **Eventos que salen del framework** (todos con campos, ninguno con texto libre):
-  - `http_request`: `method`, `route`, `status`, `duration_ms` y `user_id` (quien hizo el pedido, si está autenticado), más el `request_id` que comparten todas las líneas de ese pedido. **`route` es el patrón** (`/v1/blocks/:user_id`), nunca la ruta real: así no se escriben ids ni la query string (donde viaja, por ejemplo, el ticket del WebSocket). Un pedido sin ruta sale como `unmatched`, sin su path. Nivel `info`; `error` si el status es 5xx; `debug` para `/livez` y `/readyz`, que se consultan todo el tiempo.
+  - `http_request`: `method`, `route`, `status`, `duration_ms` y `user_id` (quien hizo el pedido, si está autenticado), más el `request_id` que comparten todas las líneas de ese pedido. **`route` es el patrón** (`/v1/blocks/:user_id`), nunca la ruta real: así no se escriben ids ni la query string (donde viaja, por ejemplo, el ticket del WebSocket). Un pedido sin ruta sale como `unmatched`, sin su path. Nivel `info`; `error` si el status es 5xx; `debug` para `/livez` y `/readyz` mientras responden bien, porque se consultan todo el tiempo (un 503 de `/readyz` sigue siendo `error`).
   - `http_error_rendered` (`error`): una excepción convertida en respuesta de error, con la causa sanitizada.
   - `socket_connected` (`info`, o `warning` si falló): resultado y transporte. Nunca los parámetros (el ticket).
   - `channel_joined` (`info`): `topic`, `user_id` y `result` (`ok` o `error` si se rechazó el acceso).
@@ -1109,6 +1109,37 @@ Los logs son **estructurados**: una línea de JSON por evento, en la salida est�
 - **Qué campos se escriben** lo define una lista en `config/config.exs` (`metadata: [...]`). Una clave nueva no aparece en los logs hasta que alguien la agrega a propósito, y Credo avisa si se usa una clave que falta en esa lista.
 - **Lo que sigue visible fuera de `messaging`:** el log de acceso de Kong escribe la ruta real de cada pedido (por ejemplo `DELETE /v1/blocks/<id>`, y la query string del WebSocket con el ticket) y la IP del cliente. Ver `planes/logs-y-datos-privados-en-messaging.md`.
 - **Reportes de caídas.** Si un proceso se cae, el reporte de Erlang incluye el último mensaje recibido. Phoenix le aplica el mismo filtro de parámetros (sale `"content" => "[FILTERED]"`) y no escribe el estado del proceso, que es donde estaría el JWT. Está cubierto por tests.
+
+## Trazas y métricas (OpenTelemetry)
+
+El servicio manda trazas y métricas a cualquier backend que hable OTLP por HTTP (New Relic, Grafana Cloud, un colector propio). Está **apagado por defecto**: sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se exporta nada y el servicio funciona igual.
+
+| Variable | Para qué |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | URL base del backend. En New Relic (cuenta de EE. UU.): `https://otlp.nr-data.net` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Credenciales, por ejemplo `api-key=<clave de licencia de ingesta>`. Es un secreto: va solo en las variables de entorno del despliegue, nunca en el repositorio |
+| `OTEL_SERVICE_NAME` | Nombre con el que aparece el servicio (por defecto `messaging`) |
+
+- **Pedidos HTTP:** un span por pedido (`Messaging.Tracing`), llamado como el patrón de la ruta (`DELETE /v1/blocks/:user_id`). Solo guarda `http.request.method`, `http.route` y `http.response.status_code`: nunca el path real, la query string, headers ni la IP. Si el pedido trae un `traceparent`, la traza continúa desde ahí.
+- **Eventos de RabbitMQ:** los consumidores de `messaging.channel_lifecycle` (los eventos de `servers` e `identify-service`), `messaging.admin_events`, `messaging.billing_events`, `messaging.server_boosts` y `messaging.server_emojis` abren un span `<routing key> process` dentro de la traza que llega en la cabecera `traceparent` del mensaje; si el evento va a reintento, el span queda marcado como error. Si el mensaje no la trae, empieza una traza nueva.
+- **Métricas HTTP:** el histograma `http.server.request.duration` (en segundos, temporalidad delta, exportado cada 60 s) lo registra `Messaging.Metrics` al terminar cada pedido, con `http.request.method`, `http.route` y `http.response.status_code`; si el estado es 5xx suma `error.type`. De ahí salen el throughput, la latencia y la tasa de errores del resumen de APM en New Relic. Los pedidos a rutas inexistentes se agrupan en la ruta `unmatched`. Nunca guarda la ruta real ni la query string.
+- **Logs:** las líneas escritas mientras corre un pedido o un evento llevan `trace_id` y `span_id`.
+- **Todavía sin instrumentar:** las consultas a Mongo y a Postgres, los canales de WebSocket y los eventos que `messaging` publica (nacen en los WebSockets y los publica un proceso aparte, así que hace falta resolver los dos juntos).
+
+## Envío de logs (New Relic)
+
+Además de la salida estándar, el servicio puede enviar sus logs al Log API de New Relic. Está **apagado por defecto**: solo se activa si hay `LOG_SHIP_URL` y una clave (`LOG_SHIP_API_KEY` o la `api-key` de `OTEL_EXPORTER_OTLP_HEADERS`).
+
+| Variable | Para qué |
+|---|---|
+| `LOG_SHIP_URL` | URL del Log API. En New Relic (cuenta de EE. UU.): `https://log-api.newrelic.com/log/v1` |
+| `LOG_SHIP_API_KEY` | Opcional: clave de ingesta para `LOG_SHIP_URL`. Si no está, se toma la `api-key` de `OTEL_EXPORTER_OTLP_HEADERS`. Es un secreto: va solo en las variables de entorno del despliegue |
+
+- **Qué se envía:** las mismas entradas que salen por la salida estándar, con el mismo filtrado de datos sensibles (`token`, `ticket`, `content`, etc.) y solo los campos de metadata permitidos. `trace_id` y `span_id` viajan como `trace.id` y `span.id`, que es como New Relic enlaza cada log con su traza. El servicio se identifica con `service.name` (el valor de `OTEL_SERVICE_NAME`).
+- **Cómo se envía:** `Messaging.Log.Shipper` junta las entradas en lotes de hasta 200 o cada 5 segundos, las comprime en gzip y las manda por HTTPS. Los pedidos no esperan al envío.
+- **Si el backend falla:** reintenta con espera creciente (de 1 s hasta 60 s) ante errores de red, 408, 429 y 5xx; un lote rechazado de forma definitiva (por ejemplo 400 o 403) se descarta. La cola está acotada a 5.000 entradas: si se llena descarta las más viejas, para no crecer sin límite en memoria.
+- **Sin bucles:** los avisos del propio envío (`log_shipping_failed`, `log_shipping_recovered`, `log_batch_discarded`, `log_entries_dropped`) salen por la salida estándar pero nunca se reenvían.
+- **Al apagar:** intenta enviar lo que quedó pendiente durante unos 3 segundos.
 
 ## Setup local
 

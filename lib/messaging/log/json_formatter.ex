@@ -29,20 +29,22 @@ defmodule Messaging.Log.JSONFormatter do
 
   @spec format(Logger.level(), Logger.message(), term(), keyword()) :: IO.chardata()
   def format(level, message, _timestamp, metadata) do
-    entry =
-      metadata
-      |> fields()
-      |> Map.merge(%{
-        time: DateTime.utc_now() |> DateTime.to_iso8601(),
-        level: level,
-        service: @service,
-        message: text(message)
-      })
-
-    [Jason.encode_to_iodata!(entry), ?\n]
+    [Jason.encode_to_iodata!(entry(level, message, metadata)), ?\n]
   rescue
     _error ->
       [~s({"level":"error","service":"messaging","message":"log_format_failed"}), ?\n]
+  end
+
+  @spec entry(atom(), Logger.message(), keyword()) :: map()
+  def entry(level, message, metadata) do
+    metadata
+    |> fields()
+    |> Map.merge(%{
+      time: DateTime.utc_now() |> DateTime.to_iso8601(),
+      level: level,
+      service: @service,
+      message: text(message)
+    })
   end
 
   defp fields(metadata) do

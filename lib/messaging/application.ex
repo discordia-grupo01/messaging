@@ -10,21 +10,19 @@ defmodule Messaging.Application do
     Messaging.Suspension.init()
     Messaging.ServerSuspension.init()
     Messaging.Log.Telemetry.attach()
-
-    Logger.info("service_started",
-      version: to_string(Application.spec(:messaging, :vsn)),
-      log_level: Logger.level()
-    )
+    Messaging.Tracing.attach()
+    Messaging.Metrics.setup()
 
     children =
-      [
-        {Phoenix.PubSub, name: Messaging.PubSub},
-        {Mongo,
-         Messaging.MongoOptions.build(
-           mongo_url,
-           Application.fetch_env!(:messaging, :mongo_pool_size)
-         )}
-      ] ++
+      log_shipper_children() ++
+        [
+          {Phoenix.PubSub, name: Messaging.PubSub},
+          {Mongo,
+           Messaging.MongoOptions.build(
+             mongo_url,
+             Application.fetch_env!(:messaging, :mongo_pool_size)
+           )}
+        ] ++
         postgres_children() ++
         index_children() ++
         amqp_children() ++
@@ -32,7 +30,22 @@ defmodule Messaging.Application do
         cleaner_children() ++ presence_children() ++ [MessagingWeb.Endpoint]
 
     opts = [strategy: :one_for_one, name: Messaging.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    with {:ok, supervisor} <- Supervisor.start_link(children, opts) do
+      Logger.info("service_started",
+        version: to_string(Application.spec(:messaging, :vsn)),
+        log_level: Logger.level()
+      )
+
+      {:ok, supervisor}
+    end
+  end
+
+  defp log_shipper_children do
+    case Application.get_env(:messaging, :log_shipper) do
+      nil -> []
+      options -> [{Messaging.Log.Shipper, options}]
+    end
   end
 
   defp postgres_children do

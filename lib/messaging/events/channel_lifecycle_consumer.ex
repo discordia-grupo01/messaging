@@ -4,6 +4,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
 
   alias Messaging.Events.{Audit, Backoff, ChannelEvent, DeadLetter, Lifecycle}
   alias Messaging.Log
+  alias Messaging.Tracing
 
   @exchange "discordia.events"
   @default_queue "messaging.channel_lifecycle"
@@ -94,13 +95,16 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   def terminate(_reason, _state), do: :ok
 
   defp handle_delivery(payload, meta, state) do
-    outcome =
-      case Jason.decode(payload) do
-        {:ok, decoded} -> handle_decoded(decoded, payload, meta)
-        {:error, reason} -> handle_malformed(payload, meta, reason)
-      end
+    Tracing.consumer_span(meta, state.queue, fn ->
+      outcome =
+        case Jason.decode(payload) do
+          {:ok, decoded} -> handle_decoded(decoded, payload, meta)
+          {:error, reason} -> handle_malformed(payload, meta, reason)
+        end
 
-    DeadLetter.finish(outcome, state, meta, payload)
+      Tracing.mark_outcome(outcome)
+      DeadLetter.finish(outcome, state, meta, payload)
+    end)
   end
 
   defp handle_decoded(decoded, payload, meta) do

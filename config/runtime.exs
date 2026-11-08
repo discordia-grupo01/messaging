@@ -23,6 +23,70 @@ log_level =
 
 config :logger, level: log_level
 
+otlp_endpoint = System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
+config :opentelemetry,
+  text_map_propagators: [:trace_context],
+  resource: [service: [name: System.get_env("OTEL_SERVICE_NAME", "messaging")]]
+
+if config_env() != :test do
+  if otlp_endpoint == "" do
+    config :opentelemetry, traces_exporter: :none
+    config :opentelemetry_experimental, readers: []
+  else
+    config :opentelemetry, traces_exporter: :otlp
+    config :opentelemetry_exporter, otlp_protocol: :http_protobuf
+
+    config :opentelemetry_experimental,
+      readers: [
+        %{
+          module: :otel_metric_reader,
+          config: %{
+            exporter: {:otel_exporter_metrics_otlp, %{}},
+            export_interval_ms: 60_000,
+            default_temporality_mapping: %{
+              counter: :temporality_delta,
+              observable_counter: :temporality_delta,
+              histogram: :temporality_delta,
+              observable_gauge: :temporality_cumulative,
+              updown_counter: :temporality_cumulative,
+              observable_updowncounter: :temporality_cumulative
+            }
+          }
+        }
+      ]
+  end
+end
+
+if config_env() != :test do
+  log_ship_url = System.get_env("LOG_SHIP_URL", "")
+
+  log_ship_key =
+    case System.get_env("LOG_SHIP_API_KEY", "") do
+      "" ->
+        System.get_env("OTEL_EXPORTER_OTLP_HEADERS", "")
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.split(&1, "=", parts: 2))
+        |> Enum.find_value("", fn
+          [name, value] ->
+            if String.downcase(String.trim(name)) == "api-key", do: String.trim(value)
+
+          _other ->
+            nil
+        end)
+
+      key ->
+        key
+    end
+
+  if log_ship_url != "" and log_ship_key != "" do
+    config :messaging, :log_shipper,
+      url: log_ship_url,
+      api_key: log_ship_key,
+      service: System.get_env("OTEL_SERVICE_NAME", "messaging")
+  end
+end
+
 config :messaging,
   mongo_url: System.get_env("MONGO_URL", default_mongo_url),
   mongo_pool_size: String.to_integer(System.get_env("MONGO_POOL_SIZE", "10")),

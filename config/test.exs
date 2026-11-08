@@ -23,5 +23,25 @@ config :messaging, :suspension_cache_ttl_ms, 0
 config :messaging, :presence_store, Messaging.Presence.StoreMock
 config :messaging, :start_presence, false
 
+config :opentelemetry, traces_exporter: :none, processors: [{:otel_simple_processor, %{}}]
+
+config :opentelemetry_experimental,
+  readers: [
+    %{
+      module: :otel_metric_reader,
+      config: %{
+        exporter: {:otel_metric_exporter_pid, {:otel_metric, :messaging_metric_sink}},
+        default_temporality_mapping: %{
+          counter: :temporality_delta,
+          observable_counter: :temporality_delta,
+          histogram: :temporality_delta,
+          observable_gauge: :temporality_cumulative,
+          updown_counter: :temporality_cumulative,
+          observable_updowncounter: :temporality_cumulative
+        }
+      }
+    }
+  ]
+
 config :logger, level: :warning
 config :logger, :console, colors: [enabled: false]
