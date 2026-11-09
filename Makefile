@@ -43,6 +43,8 @@ ci: ## corre lo mismo que el pipeline de CI, en local
 	mix credo --strict
 	@echo "--- compile ---"
 	mix compile --warnings-as-errors
+	@echo "--- sobelow ---"
+	mix sobelow --config
 	@echo "--- test ---"
 	MIX_ENV=test mix coveralls
 	@echo "--- dialyzer ---"

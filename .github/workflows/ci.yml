@@ -65,6 +65,9 @@ jobs:
 
       - run: mix compile --warnings-as-errors
 
+      - name: Analisis de seguridad (Sobelow)
+        run: mix sobelow --config
+
       - name: Regenerar openapi.yaml
         run: make openapi
       - name: Commitear openapi.yaml si cambió

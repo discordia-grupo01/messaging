@@ -1,0 +1,13 @@
+[
+  verbose: false,
+  private: false,
+  skip: true,
+  router: "lib/messaging_web/router.ex",
+  exit: "Low",
+  format: "txt",
+  out: nil,
+  threshold: "Low",
+  ignore: ["Config.HTTPS", "Config.CSWH", "Config.TLSVerify"],
+  ignore_files: [],
+  version: false
+]
