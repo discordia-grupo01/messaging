@@ -1329,6 +1329,24 @@ base de datos. Siempre entra por la API publica del Context: `Messaging.Chat.<ac
 ```bash
 make ci
 ```
+
+`make ci` incluye el análisis estático de seguridad con [Sobelow](https://github.com/nccgroup/sobelow)
+(`mix sobelow --config`, configurado en `.sobelow-conf`). Falla ante cualquier hallazgo, y el
+mismo paso corre en el pipeline de GitHub, que bloquea el merge a `main`.
+
+Reglas ignoradas en la configuración, a propósito:
+- `Config.HTTPS`: el TLS lo termina el gateway (Kong), delante de la aplicación.
+- `Config.CSWH`: el `check_origin` del WebSocket se configura en `config/runtime.exs` con la lista
+  de orígenes permitidos (`CHECK_ORIGIN`), no en la definición del socket.
+- `Config.TLSVerify`: con `DATABASE_SSLMODE=require` la conexión a Postgres va cifrada pero no se
+  verifica el certificado del servidor, como el `sslmode=require` de Postgres. Es necesario con el
+  pooler de Supabase, cuyo certificado no está en el almacén público. Es un riesgo aceptado: para
+  verificar el certificado completo está `DATABASE_SSLMODE=verify-full`.
+
+Hallazgos omitidos de a uno (sus huellas están en `.sobelow-skips`):
+- `Crypto.WeakHash` en `Messaging.Storage.Cloudinary`: la API de Cloudinary exige firmar con SHA-1.
+- `Crypto.WeakHash` en `Messaging.UUID`: el UUID v5 se define con SHA-1 (RFC 4122) y no se usa
+  como defensa de seguridad.
 # Autorización de llamadas privadas
 
 Messaging expone internamente `GET /v1/voice-access/:recipient_id?conversation_id=...`
