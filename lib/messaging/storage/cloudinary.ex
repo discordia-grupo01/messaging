@@ -19,16 +19,16 @@ defmodule Messaging.Storage.Cloudinary do
       timestamp = System.os_time(:second) |> Integer.to_string()
 
       signed = [
-        {"overwrite", "false"},
-        {"public_id", public_id},
-        {"timestamp", timestamp},
-        {"unique_filename", "false"}
+        overwrite: "false",
+        public_id: public_id,
+        timestamp: timestamp,
+        unique_filename: "false"
       ]
 
       form =
         [file: {body, filename: "upload", content_type: content_type}, api_key: config.api_key] ++
           [signature: signature(signed, config.api_secret)] ++
-          Enum.map(signed, fn {name, value} -> {String.to_atom(name), value} end)
+          signed
 
       opts = [form_multipart: form, receive_timeout: 30_000, retry: false] ++ plug_opt()
 
