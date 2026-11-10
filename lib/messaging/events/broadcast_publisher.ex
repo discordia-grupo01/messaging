@@ -4,7 +4,7 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   @behaviour Messaging.Events.EventPublisher
 
-  alias Messaging.Events.{Backoff, DomainEvent}
+  alias Messaging.Events.{Backoff, Contract, DomainEvent}
   alias Messaging.Log
   alias Messaging.Tracing
 
@@ -103,6 +103,8 @@ defmodule Messaging.Events.BroadcastPublisher do
     body =
       Jason.encode!(%{"event_id" => id, "topic" => topic, "event" => event, "payload" => payload})
 
+    Contract.check("broadcast." <> event, body)
+
     with :ok <-
            AMQP.Basic.publish(chan, @exchange, "", body,
              persistent: true,
@@ -115,6 +117,7 @@ defmodule Messaging.Events.BroadcastPublisher do
 
   defp publish_domain(chan, id, routing_key, payload, headers) do
     body = payload |> Map.put("event_id", id) |> Jason.encode!()
+    Contract.check(routing_key, body)
 
     with :ok <-
            AMQP.Basic.publish(chan, @events_exchange, routing_key, body,

@@ -41,6 +41,7 @@ defmodule Messaging.MixProject do
       {:mongodb_driver, "~> 1.4"},
       {:postgrex, "~> 0.19"},
       {:amqp, "~> 3.3"},
+      {:events_contract, github: "discordia-grupo01/events-contract", tag: "v0.17.0"},
       {:req, "~> 0.5"},
       {:opentelemetry_api, "~> 1.4"},
       {:opentelemetry, "~> 1.5"},

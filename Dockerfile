@@ -1,6 +1,6 @@
 FROM hexpm/elixir:1.16.2-erlang-26.2.1-alpine-3.19.1 AS builder
 WORKDIR /app
-RUN mix local.hex --force && mix local.rebar --force
+RUN apk add --no-cache git && mix local.hex --force && mix local.rebar --force
 COPY mix.exs mix.lock* ./
 RUN mix deps.get --only prod
 COPY . .
