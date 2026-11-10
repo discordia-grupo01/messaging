@@ -34,7 +34,7 @@ defmodule Messaging.Events.Contract do
       {:error, reasons} ->
         Logger.warning("event_contract_violation",
           routing_key: routing_key,
-          reasons: Enum.take(reasons, 5)
+          reason: reasons |> Enum.take(5) |> Enum.join("; ")
         )
 
         {:error, reasons}
