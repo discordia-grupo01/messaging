@@ -9,7 +9,7 @@ defmodule Messaging.Events.ServerEmojisConsumer do
   require Logger
 
   alias Messaging.Chat.Repo
-  alias Messaging.Events.{Audit, Backoff, DeadLetter}
+  alias Messaging.Events.{Audit, Backoff, Contract, DeadLetter}
   alias Messaging.Log
   alias Messaging.Tracing
 
@@ -115,6 +115,8 @@ defmodule Messaging.Events.ServerEmojisConsumer do
   end
 
   defp handle_decoded(decoded, payload, routing_key) do
+    Contract.check(routing_key, decoded)
+
     if valid_shape?(decoded),
       do: apply_event(decoded, payload, routing_key),
       else: invalid_payload(decoded, payload, routing_key)
