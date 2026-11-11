@@ -11,7 +11,7 @@ defmodule Messaging.Events.BillingEventsConsumer do
   use GenServer
   require Logger
 
-  alias Messaging.Events.{Audit, Backoff, DeadLetter}
+  alias Messaging.Events.{Audit, Backoff, Contract, DeadLetter}
   alias Messaging.Log
   alias Messaging.Tracing
   alias Messaging.Premium
@@ -134,6 +134,8 @@ defmodule Messaging.Events.BillingEventsConsumer do
   end
 
   defp handle_decoded(decoded, payload, routing_key, secret) do
+    Contract.check(routing_key, decoded)
+
     cond do
       not valid_shape?(decoded) ->
         invalid_payload(decoded, payload, routing_key)

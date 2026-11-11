@@ -2,7 +2,7 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   use GenServer
   require Logger
 
-  alias Messaging.Events.{Audit, Backoff, ChannelEvent, DeadLetter, Lifecycle}
+  alias Messaging.Events.{Audit, Backoff, ChannelEvent, Contract, DeadLetter, Lifecycle}
   alias Messaging.Log
   alias Messaging.Tracing
 
@@ -108,6 +108,8 @@ defmodule Messaging.Events.ChannelLifecycleConsumer do
   end
 
   defp handle_decoded(decoded, payload, meta) do
+    Contract.check(meta.routing_key, decoded)
+
     case ChannelEvent.parse(meta.routing_key, decoded) do
       {:ok, event} ->
         case Lifecycle.handle(event) do

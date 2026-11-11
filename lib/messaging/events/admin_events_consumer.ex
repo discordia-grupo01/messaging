@@ -18,7 +18,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
   require Logger
 
   alias Messaging.Chat.{Repo, Sockets}
-  alias Messaging.Events.{Audit, Backoff, Broadcaster, DeadLetter, EventPublisher}
+  alias Messaging.Events.{Audit, Backoff, Broadcaster, Contract, DeadLetter, EventPublisher}
   alias Messaging.Log
   alias Messaging.Tracing
   alias Messaging.ServerSuspension
@@ -147,6 +147,8 @@ defmodule Messaging.Events.AdminEventsConsumer do
   end
 
   defp handle_decoded(decoded, payload, routing_key, secret) do
+    Contract.check(routing_key, decoded)
+
     case parse(routing_key, decoded) do
       {:ok, event} ->
         if Signature.verify(event, secret) do

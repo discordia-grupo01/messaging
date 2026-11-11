@@ -6,6 +6,7 @@ config :messaging, MessagingWeb.Endpoint,
   server: false,
   debug_errors: false
 
+config :messaging, :event_contract_check, :off
 config :messaging, :start_amqp_consumers, false
 config :messaging, :ensure_indexes, false
 config :messaging, :chat_repo, Messaging.Chat.RepoMock
