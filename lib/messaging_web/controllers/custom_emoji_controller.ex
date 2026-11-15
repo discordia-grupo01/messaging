@@ -22,8 +22,8 @@ defmodule MessagingWeb.CustomEmojiController do
       ids: [
         in: :query,
         type: :string,
-        required: true,
-        description: "Ids separados por coma (hasta 100)"
+        required: false,
+        description: "Ids separados por coma (hasta 100); sin ids devuelve la lista vacía"
       ]
     ],
     responses: [

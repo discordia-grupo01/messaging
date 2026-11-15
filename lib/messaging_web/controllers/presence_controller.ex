@@ -23,7 +23,7 @@ defmodule MessagingWeb.PresenceController do
     parameters: [
       user_ids: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, pattern: "[^,\\s]"},
         required: true,
         description: "Ids separados por coma, hasta #{Presence.max_snapshot_users()}"
       ]

@@ -129,6 +129,8 @@ defmodule MessagingWeb.Schemas do
       properties: %{
         content: %Schema{
           type: :string,
+          pattern: "\\S",
+          maxLength: 2000,
           description: "Contenido nuevo (máx. 2000 caracteres, se recorta)"
         }
       },

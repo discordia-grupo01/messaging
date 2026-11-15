@@ -1,0 +1,113 @@
+# Ajustes de Schemathesis para messaging. Cada excepcion dice por que existe.
+
+# Cowboy contesta 501 (sin cuerpo) a TRACE antes de que el pedido llegue a Phoenix, y
+# Schemathesis prueba TRACE como metodo no declarado. Un 501 por un metodo que el servidor no
+# implementa no es una falla de la API, asi que se acepta; el resto de los 5xx siguen fallando.
+[checks.not_a_server_error]
+expected-statuses = ["2xx", "3xx", "4xx", "501"]
+
+# Los ids fijos de "parameters" los deja scripts/contract/seed.exs. Con ids inventados casi todo da
+# 404; con estos las operaciones llegan a su camino feliz (2xx). El canal es de texto de un
+# servidor cuyo dueno es el usuario de la prueba, y los ids de mensaje salen de (canal, autor,
+# client_id) y son fijos. Cada operacion tiene un unico bloque para que no se pisen.
+#
+# Reglas de negocio que el contrato no puede expresar (por eso se apagan positive_data_acceptance
+# o negative_data_rejection en cada caso):
+# - limit lo lee Integer.parse y, si no es un entero, usa el valor por defecto en vez de dar 400:
+#   es mas permisivo que el contrato y endurecerlo cambia el status que ve un cliente.
+
+[[operations]]
+include-path = "/v1/channels/{channel_id}/messages"
+include-method = "GET"
+parameters = { "path.channel_id" = "00000000-0000-4000-8000-0000000000b1" }
+# before/after/around no pueden usarse juntos ni apuntar a un mensaje de otro canal (400
+# INVALID_CURSOR) y limit se lee como se dijo arriba.
+checks.negative_data_rejection.enabled = false
+checks.positive_data_acceptance.enabled = false
+
+# Editar y borrar usan mensajes distintos: borrar uno ya borrado da 404.
+[[operations]]
+include-path = "/v1/channels/{channel_id}/messages/{message_id}"
+include-method = "PATCH"
+parameters = { "path.channel_id" = "00000000-0000-4000-8000-0000000000b1", "path.message_id" = "bcdb6279-b784-504d-9b91-6dd6b3c0d66a" }
+# El contenido no puede quedar vacio ni pasar de 2000 caracteres despues de recortarlo: el esquema
+# solo expresa parte de eso.
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+include-path = "/v1/channels/{channel_id}/messages/{message_id}"
+include-method = "DELETE"
+parameters = { "path.channel_id" = "00000000-0000-4000-8000-0000000000b1", "path.message_id" = "e9478bd2-2eae-56f9-9938-ad870d214ad7" }
+
+[[operations]]
+include-path = "/v1/channels/{channel_id}/mentions/read"
+include-method = "POST"
+parameters = { "path.channel_id" = "00000000-0000-4000-8000-0000000000b1" }
+
+# Hay que mandar q o author_id (si no, 400 INVALID_SEARCH_QUERY), q tiene un maximo de 100
+# caracteres, y channel_id/before tienen que ser del servidor: el esquema no lo expresa.
+[[operations]]
+include-path = "/v1/servers/{server_id}/messages/search"
+include-method = "GET"
+# El servidor y q se fijan en hooks.py (el config no los aplica a esta operacion).
+checks.positive_data_acceptance.enabled = false
+checks.negative_data_rejection.enabled = false
+
+[[operations]]
+include-path = "/v1/messages"
+include-method = "GET"
+parameters = { "query.ids" = "3383dc7d-a507-5963-af14-e48db711f323,bcdb6279-b784-504d-9b91-6dd6b3c0d66a" }
+
+# Cada id de user_ids tiene que ser un id de usuario valido y hay un maximo de ids; el esquema solo
+# sabe que es un string.
+[[operations]]
+include-path = "/v1/presence"
+include-method = "GET"
+parameters = { "query.user_ids" = "00000000-0000-4000-8000-0000000000e1,00000000-0000-4000-8000-0000000000e2" }
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+include-path = "/v1/conversations/{id}/read"
+include-method = "POST"
+parameters = { "path.id" = "9fe51d2b-5bae-5093-9094-50c3b8e90a9d" }
+
+# Desbloquearse a uno mismo es 400 (CANNOT_BLOCK_SELF) y el esquema no sabe quien es el usuario
+# autenticado.
+[[operations]]
+include-path = "/v1/blocks/{user_id}"
+include-method = "DELETE"
+parameters = { "path.user_id" = "00000000-0000-4000-8000-0000000000e3" }
+checks.positive_data_acceptance.enabled = false
+
+# POST /v1/blocks: el usuario a bloquear va en el cuerpo y se fija en hooks.py. Bloquearse a uno
+# mismo es 400 y el esquema no sabe quien es el usuario autenticado.
+[[operations]]
+include-path = "/v1/blocks"
+include-method = "POST"
+checks.positive_data_acceptance.enabled = false
+
+# Solo limit (ver arriba).
+[[operations]]
+include-path = "/v1/blocks"
+include-method = "GET"
+checks.negative_data_rejection.enabled = false
+
+[[operations]]
+include-path = "/v1/conversations"
+include-method = "GET"
+checks.negative_data_rejection.enabled = false
+
+[[operations]]
+include-path = "/v1/mentions"
+include-method = "GET"
+checks.negative_data_rejection.enabled = false
+
+# Subida de adjuntos: hay que indicar exactamente uno de channel_id o to (el esquema no lo expresa)
+# y el formato se reconoce por el contenido real del archivo. En esta prueba no hay Cloudinary ni
+# Supabase (nunca se usan los reales), asi que guardar el archivo responde 503, que el contrato
+# declara.
+[[operations]]
+include-path = "/v1/attachments"
+include-method = "POST"
+checks.positive_data_acceptance.enabled = false
+checks.not_a_server_error.expected-statuses = ["2xx", "3xx", "4xx", "501", "503"]
