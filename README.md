@@ -10,6 +10,7 @@ Servicio de mensajería de Discordia.
 - [Variables de entorno](#variables-de-entorno)
 - [Comandos Docker](#comandos-docker)
 - [Tests](#tests)
+- [Tests de contrato](#tests-de-contrato)
 - [Más documentación](#más-documentación)
 
 ## Introducción
@@ -188,6 +189,27 @@ El código se revisa con `make format`, `make lint` y `make dialyzer`. `make ci`
 ```bash
 git config core.hooksPath .githooks
 ```
+
+## Tests de contrato
+
+Schemathesis (`4.33.4`) corre `openapi.yaml` contra el servicio real, con Postgres, MongoDB y RabbitMQ locales: un 5xx, un status no declarado o una respuesta que no cumple el esquema hacen fallar la corrida. El WebSocket queda fuera (es REST solamente).
+
+```bash
+python -m venv .contract-venv
+.contract-venv/bin/pip install schemathesis==4.33.4   # en Windows: .contract-venv/Scripts
+
+make contract-deps-up    # Postgres (55506), RabbitMQ (55516) y Mongo (55526) en contenedores contract-messaging-*
+make contract-test       # migra, siembra, arranca el servicio en 18086, corre Schemathesis y lo apaga
+make contract-deps-down
+```
+
+- El servicio arranca con `MIX_ENV=prod` y secretos de juguete. La identidad sale del `sub` de un JWT sin firma (el servicio no verifica la firma; la valida Kong). No se configuran `CLOUDINARY_URL` ni `SUPABASE_*` (el almacenamiento de adjuntos no tiene backend real) ni los secretos HMAC de admin y billing.
+- `scripts/contract/seed.exs` siembra con las funciones del propio servicio un servidor, un canal, miembros, mensajes, una conversación directa y un bloqueo, con ids fijos que usa `scripts/contract/schemathesis.toml`. Así las operaciones llegan al camino feliz en vez de dar 404 con ids inventados. `scripts/contract/hooks.py` fija lo que el config no puede (el usuario a bloquear y la búsqueda).
+- Al final, `scripts/contract/coverage.py` lee el reporte HAR y exige al menos un 2xx real por operación. Hoy son 18 de 20; `POST /v1/attachments` y `POST /v1/attachments/direct` están excluidas del camino feliz porque guardar el archivo necesita Cloudinary o Supabase (servicios reales que la prueba nunca usa; llegan hasta el 503 declarado) y la segunda exige además un ticket de un solo uso.
+- `scripts/contract-test.sh` se niega a correr si `DATABASE_HOST`, `MONGO_URL` o `RABBITMQ_URL` no apuntan a `localhost`/`127.0.0.1`. Se ajusta con `APP_PORT`, `CONTRACT_MAX_EXAMPLES` (50; 25 en el CI), `CONTRACT_SEED` (1) y `CONTRACT_REPORT_DIR` (`contract-report/`, con los reportes JUnit y HAR y los logs).
+- `CONTRACT_APP_MODE=docker` arranca el servicio dentro de un contenedor `elixir:1.16` en vez de usar el `mix` local; sirve si el Erlang instalado es muy nuevo para compilar las dependencias (el CI usa Elixir 1.16 / OTP 26).
+- Excepciones documentadas (con su motivo en `schemathesis.toml`): Cowboy responde 501 a `TRACE` antes de llegar a Phoenix, así que se acepta ese 501 y se apaga el check `unsupported_method`; `limit` no entero se ignora en vez de dar 400; y varias reglas de negocio (no bloquearse a uno mismo, cursores excluyentes, `q` o `author_id` obligatorio) que el esquema no expresa.
+- El job `contract` del CI corre lo mismo en paralelo a `test`, sin `secrets.*`. Si el contrato cambia (specs de `open_api_spex`), regeneralo con `make openapi`.
 
 ## Más documentación
 

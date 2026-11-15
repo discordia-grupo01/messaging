@@ -56,7 +56,7 @@ defmodule MessagingWeb.SearchController do
       ],
       before: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1},
         required: false,
         description: "Id devuelto como next_cursor, para traer las coincidencias más viejas"
       ]
