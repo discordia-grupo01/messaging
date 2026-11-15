@@ -207,6 +207,8 @@ components:
       properties:
         content:
           description: Contenido nuevo (máx. 2000 caracteres, se recorta)
+          maxLength: 2000
+          pattern: \S
           type: string
           x-struct:
           x-validate:
@@ -1039,6 +1041,7 @@ paths:
           name: before
           required: false
           schema:
+            minLength: 1
             type: string
             x-struct:
             x-validate:
@@ -1047,6 +1050,7 @@ paths:
           name: after
           required: false
           schema:
+            minLength: 1
             type: string
             x-struct:
             x-validate:
@@ -1055,6 +1059,7 @@ paths:
           name: around
           required: false
           schema:
+            minLength: 1
             type: string
             x-struct:
             x-validate:
@@ -1268,10 +1273,10 @@ paths:
       description: 'Devuelve el nombre y la imagen de los emojis que aparecen en mensajes y reacciones como `<:nombre:id>` o `<a:nombre:id>`. Incluye los borrados, porque el contenido viejo los sigue mostrando, y no pide ser miembro del servidor: alguien con Premium puede usar en un canal el emoji de un servidor donde los demás no están. Los ids desconocidos no aparecen (por ejemplo, si se borró su servidor): ahí el cliente muestra `:nombre:`. Para elegir qué emoji usar está `GET /v1/servers/{serverId}/emojis`.'
       operationId: MessagingWeb.CustomEmojiController.index
       parameters:
-        - description: Ids separados por coma (hasta 100)
+        - description: Ids separados por coma (hasta 100); sin ids devuelve la lista vacía
           in: query
           name: ids
-          required: true
+          required: false
           schema:
             type: string
             x-struct:
@@ -1345,6 +1350,7 @@ paths:
           name: ids
           required: true
           schema:
+            pattern: '[^,\s]'
             type: string
             x-struct:
             x-validate:
@@ -1387,6 +1393,7 @@ paths:
           name: user_ids
           required: true
           schema:
+            pattern: '[^,\s]'
             type: string
             x-struct:
             x-validate:
@@ -1469,6 +1476,7 @@ paths:
           name: before
           required: false
           schema:
+            minLength: 1
             type: string
             x-struct:
             x-validate:

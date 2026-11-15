@@ -30,19 +30,19 @@ defmodule MessagingWeb.MessageController do
       ],
       before: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1},
         required: false,
         description: "Id de mensaje devuelto como next_cursor al pedir la página anterior"
       ],
       after: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1},
         required: false,
         description: "Id del último mensaje que el cliente ya tiene; devuelve los posteriores"
       ],
       around: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1},
         required: false,
         description:
           "Id de un mensaje: devuelve hasta limit/2 mensajes antes y después de él, y el mensaje"
@@ -94,7 +94,7 @@ defmodule MessagingWeb.MessageController do
     parameters: [
       ids: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, pattern: "[^,\\s]"},
         required: true,
         description: "Ids de mensaje separados por coma (de 1 a 50)"
       ]
