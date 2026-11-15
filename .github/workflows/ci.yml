@@ -104,6 +104,89 @@ jobs:
       - name: Analisis estatico (Dialyzer)
         run: mix dialyzer
 
+  contract:
+    # Valida openapi.yaml contra el servicio real con Schemathesis. Corre en paralelo a `test`, con
+    # Postgres, Mongo y RabbitMQ del propio runner, valores de juguete y sin secrets.*.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping: 1})'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: messaging_contract
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_HOST: localhost
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: messaging_contract
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      MONGO_URL: mongodb://localhost:27017/messaging_contract
+      RABBITMQ_URL: amqp://guest:guest@localhost:5672
+      APP_PORT: "18086"
+      CONTRACT_MAX_EXAMPLES: "25"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.16"
+          otp-version: "26"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-contract-${{ hashFiles('**/mix.lock') }}
+
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+
+      - name: Instalar Schemathesis
+        run: |
+          python -m venv .contract-venv
+          .contract-venv/bin/pip install schemathesis==4.33.4
+
+      - name: Contrato (Schemathesis contra el servicio)
+        run: ./scripts/contract-test.sh
+
+      - name: Reporte de contrato
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-report
+          path: contract-report/
+          if-no-files-found: ignore
+
   publish:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
