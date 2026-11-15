@@ -2,23 +2,43 @@ services:
   api:
     build: .
     ports:
-      - "4000:4000"
-    env_file: .env
+      - "${API_PORT:-4000}:4000"
+    env_file:
+      - path: .env
+        required: false
     environment:
-      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/messaging_dev}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      PORT: 4000
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-secreto-solo-local-que-no-sirve-para-produccion-0123456789-abcdefghijklmnop}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MONGO_URL: mongodb://mongo:27017/messaging_dev
+      RABBITMQ_URL: ${RABBITMQ_URL_DOCKER:-amqp://guest:guest@host.docker.internal:5672}
       DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-discordia_messaging}
+      DATABASE_USER: ${DATABASE_USER:-discordia}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-discordia}
       DATABASE_SCHEMA: public
       DATABASE_SSLMODE: disable
+      ADMIN_EVENTS_HMAC_SECRET: ${ADMIN_EVENTS_HMAC_SECRET:-secreto-admin-solo-local}
+      BILLING_EVENTS_HMAC_SECRET: ${BILLING_EVENTS_HMAC_SECRET:-secreto-billing-solo-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mongo:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
-      migrations:
+      migrate:
         condition: service_completed_successfully
-      rabbitmq:
+
+  migrate:
+    image: migrate/migrate
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${DATABASE_USER:-discordia}:${DATABASE_PASSWORD:-discordia}@postgres:5432/${DATABASE_NAME:-discordia_messaging}?sslmode=disable"
+      - "up"
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
         condition: service_healthy
 
   postgres:
@@ -37,22 +57,10 @@ services:
       timeout: 5s
       retries: 10
 
-  migrations:
-    image: migrate/migrate
-    command:
-      - -path=/migrations
-      - -database=postgres://${DATABASE_USER:-discordia}:${DATABASE_PASSWORD:-discordia}@postgres:5432/${DATABASE_NAME:-discordia_messaging}?sslmode=disable
-      - up
-    volumes:
-      - ./migrations:/migrations:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   mongo:
     image: mongo:7
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -61,20 +69,6 @@ services:
       timeout: 5s
       retries: 10
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
 volumes:
   mongo_data:
   postgres_data:
-  rabbitmq_data:
