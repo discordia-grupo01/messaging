@@ -64,10 +64,23 @@ defmodule Messaging.Events.DeadLetter do
           retry_in_ms: wait
         )
 
-        Process.sleep(wait)
-        AMQP.Basic.nack(state.chan, meta.delivery_tag, requeue: true)
+        requeue_later(state.chan, meta.delivery_tag, wait)
         track(state.attempts, key, attempt)
     end
+  end
+
+  # Waits off the consumer process, so the events behind this one keep
+  # flowing. If the channel closes meanwhile, the broker already requeued it.
+  defp requeue_later(chan, delivery_tag, wait) do
+    Task.start(fn ->
+      Process.sleep(wait)
+
+      try do
+        AMQP.Basic.nack(chan, delivery_tag, requeue: true)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
   end
 
   defp move_if_exhausted(state, meta, payload, attempt) do
