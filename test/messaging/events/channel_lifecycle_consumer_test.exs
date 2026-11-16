@@ -545,6 +545,40 @@ if rabbitmq_url && mongo_url do
         assert wait_until(fn -> status(event_id) == "processed" end)
       end
 
+      test "an event waiting to be retried does not hold up the ones behind it", %{chan: chan} do
+        previous = Application.get_env(:messaging, :broadcaster)
+        Application.put_env(:messaging, :broadcaster, Messaging.FailingBroadcaster)
+        Application.put_env(:messaging, :event_retry_delay_ms, 5_000)
+
+        on_exit(fn ->
+          Application.put_env(:messaging, :broadcaster, previous)
+          Application.delete_env(:messaging, :event_retry_delay_ms)
+        end)
+
+        server = "srv-#{Messaging.UUID.generate()}"
+        seed_channels(server, 1)
+        user = "user-#{Messaging.UUID.generate()}"
+
+        failing_id =
+          publish(chan, "servers.member_left", %{"server_id" => server, "user_id" => user})
+
+        Process.sleep(300)
+        Application.put_env(:messaging, :broadcaster, Messaging.Events.LocalBroadcaster)
+        channel = "chan-#{Messaging.UUID.generate()}"
+
+        next_id =
+          publish(chan, "servers.channel_created", %{
+            "server_id" => server,
+            "channel_id" => channel,
+            "name" => "general",
+            "kind" => "text"
+          })
+
+        assert wait_until(fn -> status(next_id) == "processed" end, 20)
+        assert status(failing_id) == nil
+        assert wait_until(fn -> status(failing_id) == "processed" end, 100)
+      end
+
       test "an event that keeps failing is moved to the dead letter queue and does not block the next one",
            %{chan: chan} do
         previous = Application.get_env(:messaging, :broadcaster)
