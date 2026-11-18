@@ -153,7 +153,7 @@ defmodule MessagingWeb.RoomChannelTest do
     test "an invalid client id is rejected", %{socket: socket} do
       for bad <- ["", 12, String.duplicate("x", 65)] do
         ref = push(socket, "new_message", %{"content" => "hola", "client_id" => bad})
-        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+        assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
       end
     end
   end
@@ -232,7 +232,7 @@ defmodule MessagingWeb.RoomChannelTest do
       assert_reply ref, :error, %{error: %{code: "INVALID_ATTACHMENT"}}
 
       ref = push(socket, "new_message", %{"attachment_ids" => "a1"})
-      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
     end
   end
 
@@ -431,11 +431,11 @@ defmodule MessagingWeb.RoomChannelTest do
 
       for payload <- [%{}, %{"id" => "msg-1"}, %{"content" => "hola"}] do
         ref = push(author, "edit_message", payload)
-        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+        assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
       end
 
       ref = push(author, "new_message", %{"texto" => "sin content"})
-      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
 
       stub(Messaging.Chat.RepoMock, :insert_message, fn doc -> {:ok, doc} end)
       ref = push(author, "new_message", %{"content" => "sigue funcionando"})
@@ -575,7 +575,7 @@ defmodule MessagingWeb.RoomChannelTest do
 
       for payload <- [%{}, %{"mensaje" => "msg-1"}] do
         ref = push(author, "delete_message", payload)
-        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+        assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
       end
     end
 
@@ -1042,7 +1042,7 @@ defmodule MessagingWeb.RoomChannelTest do
       assert_reply ref, :error, %{error: %{code: "INVALID_EMOJI"}}
 
       ref = push(socket, "remove_reaction", %{"emoji" => "👍"})
-      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
     end
 
     test "catch-up after a reconnect carries each message's reactions for that member" do

@@ -73,7 +73,7 @@ defmodule MessagingWeb.PresenceControllerTest do
 
     for query <- ["", "?user_ids=", "?user_ids=a.b", "?user_ids=$ne", "?user_ids=" <> too_many] do
       conn = conn |> authed() |> get("/v1/presence" <> query)
-      assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+      assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
     end
   end
 

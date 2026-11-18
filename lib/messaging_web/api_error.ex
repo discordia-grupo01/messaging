@@ -1,6 +1,21 @@
 defmodule MessagingWeb.ApiError do
+  @moduledoc """
+  Único punto que arma el sobre de error `{"error": {"code", "message", "details"}}`.
+
+  `code` es siempre un string SCREAMING_SNAKE; `details` es siempre un objeto. Los códigos
+  genéricos (`INVALID_BODY`, `NOT_FOUND`, `INTERNAL_ERROR`, ...) son los del catálogo común de
+  la plataforma; el resto son códigos de dominio.
+  """
+
+  require Logger
+
   @type reason ::
-          :empty_content
+          :unauthorized
+          | {:unauthorized, String.t()}
+          | {:forbidden, String.t()}
+          | {:invalid_query, String.t()}
+          | :service_unavailable
+          | :empty_content
           | :message_too_long
           | :forbidden
           | :member_muted
@@ -43,7 +58,19 @@ defmodule MessagingWeb.ApiError do
           | :not_server_member
           | :search_unavailable
 
-  @spec describe(reason()) :: {String.t(), String.t()}
+  @spec describe(reason() | term()) :: {String.t(), String.t()}
+  def describe(:unauthorized), do: describe({:unauthorized, "Token inválido o ausente."})
+  def describe({:unauthorized, message}), do: {"UNAUTHORIZED", message}
+  def describe({:forbidden, message}), do: {"FORBIDDEN", message}
+
+  def describe({:invalid_query, param}),
+    do: {"INVALID_QUERY", "El parámetro de query #{param} es inválido o falta."}
+
+  def describe(:service_unavailable),
+    do:
+      {"SERVICE_UNAVAILABLE",
+       "No se pudo completar la operación, intentá de nuevo en un momento."}
+
   def describe(:empty_content), do: {"EMPTY_CONTENT", "El mensaje no puede estar vacío."}
 
   def describe(:message_too_long),
@@ -104,7 +131,7 @@ defmodule MessagingWeb.ApiError do
     do: {"DM_NOT_DELIVERED", "No se pudo entregar el mensaje."}
 
   def describe(:invalid_payload),
-    do: {"INVALID_PAYLOAD", "El pedido no tiene el formato esperado."}
+    do: {"INVALID_BODY", "El pedido no tiene el formato esperado."}
 
   def describe(:invalid_emoji), do: {"INVALID_EMOJI", "La reacción tiene que ser un solo emoji."}
 
@@ -199,6 +226,27 @@ defmodule MessagingWeb.ApiError do
   def describe({:banned_word, _words}),
     do: {"BANNED_WORD", "El mensaje contiene palabras prohibidas en este servidor."}
 
+  # Error desconocido (por ejemplo un `%Mongo.Error{}` crudo de una dependencia): nunca debe
+  # romper el mapper ni filtrar el error interno al cliente; queda sólo en el log.
+  def describe(unknown) do
+    Logger.error("unmapped_api_error", reason: inspect(unknown))
+    describe(:service_unavailable)
+  end
+
+  @doc """
+  Código genérico del catálogo común para un status HTTP del framework (render_errors).
+  """
+  @spec code_for_status(integer()) :: String.t()
+  def code_for_status(400), do: "INVALID_BODY"
+  def code_for_status(401), do: "UNAUTHORIZED"
+  def code_for_status(403), do: "FORBIDDEN"
+  def code_for_status(404), do: "NOT_FOUND"
+  def code_for_status(405), do: "METHOD_NOT_ALLOWED"
+  def code_for_status(406), do: "NOT_ACCEPTABLE"
+  def code_for_status(413), do: "PAYLOAD_TOO_LARGE"
+  def code_for_status(415), do: "UNSUPPORTED_MEDIA_TYPE"
+  def code_for_status(_other), do: "INTERNAL_ERROR"
+
   @spec payload(reason(), map()) :: map()
   def payload(reason, details \\ %{})
 
@@ -212,7 +260,24 @@ defmodule MessagingWeb.ApiError do
     %{error: %{code: code, message: message, details: details}}
   end
 
-  @spec http_status(reason()) :: 400 | 403 | 404 | 413 | 415 | 429 | 503
+  @bad_request [
+    :empty_content,
+    :message_too_long,
+    :channel_not_text,
+    :invalid_cursor,
+    :cannot_message_self,
+    :cannot_block_self,
+    :invalid_payload,
+    :invalid_emoji,
+    :too_many_reactions,
+    :empty_file,
+    :too_many_attachments,
+    :invalid_attachment,
+    :invalid_status,
+    :invalid_search_query
+  ]
+
+  @spec http_status(reason() | term()) :: 400 | 401 | 403 | 404 | 413 | 415 | 429 | 503
   def http_status(:account_suspended), do: 403
   def http_status(:server_suspended), do: 403
   def http_status(:suspension_unavailable), do: 503
@@ -240,5 +305,13 @@ defmodule MessagingWeb.ApiError do
   def http_status(:file_too_large), do: 413
   def http_status(:unsupported_file_type), do: 415
   def http_status(:too_many_pending_attachments), do: 429
-  def http_status(_other), do: 400
+  def http_status(:unauthorized), do: 401
+  def http_status({:unauthorized, _message}), do: 401
+  def http_status({:forbidden, _message}), do: 403
+  def http_status({:invalid_query, _param}), do: 400
+  def http_status(:service_unavailable), do: 503
+  def http_status({:banned_word, _words}), do: 400
+  def http_status(reason) when reason in @bad_request, do: 400
+  # Error de una dependencia sin mapear (p. ej. `%Mongo.Error{}`): se trata como no disponible.
+  def http_status(_unknown), do: 503
 end

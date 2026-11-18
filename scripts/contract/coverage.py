@@ -24,6 +24,10 @@ EXPECTED_NO_2XX = {
     # Ademas del almacenamiento, exige un ticket de un solo uso en X-Upload-Ticket, y el ticket
     # lo emite POST /v1/attachment-tickets: Schemathesis no encadena una operacion con la otra.
     ("POST", "/v1/attachments/direct"),
+    # Da 200 solo si el destinatario es un usuario conocido y no hay bloqueos entre ambos; con los
+    # ids que genera Schemathesis (uuids al azar) lo mas lejos que llega es el 403, que el contrato
+    # declara. Sembrar un par de usuarios para esto queda fuera de la prueba de contrato.
+    ("GET", "/v1/voice-access/{recipient_id}"),
 }
 
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "head", "options"}

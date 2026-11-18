@@ -64,4 +64,63 @@ defmodule MessagingWeb.ApiErrorTest do
       assert message != ""
     end
   end
+
+  test "INVALID_PAYLOAD was renamed to INVALID_BODY" do
+    assert {"INVALID_BODY", _message} = ApiError.describe(:invalid_payload)
+  end
+
+  test "every code is SCREAMING_SNAKE and details is always a map" do
+    reasons = [
+      :unauthorized,
+      {:unauthorized, "otro mensaje"},
+      {:forbidden, "no podés"},
+      {:invalid_query, "limit"},
+      :service_unavailable,
+      :invalid_payload,
+      {:banned_word, ["x"]},
+      :empty_content
+    ]
+
+    for reason <- reasons do
+      assert %{error: %{code: code, message: message, details: details}} =
+               ApiError.payload(reason)
+
+      assert code =~ ~r/^[A-Z][A-Z0-9_]*$/
+      assert is_binary(message) and message != ""
+      assert is_map(details)
+    end
+  end
+
+  test "authorization reasons map to 401 and 403" do
+    assert ApiError.http_status(:unauthorized) == 401
+    assert ApiError.http_status({:unauthorized, "x"}) == 401
+    assert ApiError.http_status({:forbidden, "x"}) == 403
+    assert ApiError.http_status({:invalid_query, "x"}) == 400
+  end
+
+  describe "unknown errors from a dependency" do
+    test "a raw Mongo.Error does not crash the mapper and does not leak internals" do
+      error = %Mongo.Error{message: "connection refused to 10.0.0.5:27017"}
+
+      assert ApiError.http_status(error) == 503
+
+      assert %{error: %{code: "SERVICE_UNAVAILABLE", message: message, details: %{}}} =
+               ApiError.payload(error)
+
+      refute message =~ "10.0.0.5"
+    end
+
+    test "an unmapped atom or tuple falls into the same catch-all" do
+      for unknown <- [:timeout, {:error, :econnrefused}, "boom"] do
+        assert ApiError.http_status(unknown) == 503
+        assert %{error: %{code: "SERVICE_UNAVAILABLE"}} = ApiError.payload(unknown)
+      end
+    end
+  end
+
+  test "code_for_status/1 follows the common catalogue" do
+    assert ApiError.code_for_status(404) == "NOT_FOUND"
+    assert ApiError.code_for_status(500) == "INTERNAL_ERROR"
+    assert ApiError.code_for_status(504) == "INTERNAL_ERROR"
+  end
 end
