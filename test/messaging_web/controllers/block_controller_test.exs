@@ -75,7 +75,7 @@ defmodule MessagingWeb.BlockControllerTest do
             %{"id" => @other}
           ] do
         conn = conn |> authed() |> post("/v1/blocks", body)
-        assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+        assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
       end
     end
   end

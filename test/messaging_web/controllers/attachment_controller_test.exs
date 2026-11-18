@@ -382,7 +382,7 @@ defmodule MessagingWeb.AttachmentControllerTest do
     test "needs exactly one destination", %{conn: conn} do
       for query <- ["", "channel_id=&filename=a", "channel_id=#{@channel_id}&to=#{@other}"] do
         conn = upload(conn, query, FileFixtures.png())
-        assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+        assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
       end
     end
 

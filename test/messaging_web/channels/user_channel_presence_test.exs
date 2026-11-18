@@ -125,7 +125,7 @@ defmodule MessagingWeb.UserChannelPresenceTest do
       {:ok, _reply, socket} = join_own(@ana)
 
       ref = push(socket, "activity", %{"state" => "away"})
-      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
     end
 
     test "a store failure answers PRESENCE_UNAVAILABLE" do
@@ -143,7 +143,7 @@ defmodule MessagingWeb.UserChannelPresenceTest do
     {:ok, _reply, socket} = join_own(@ana)
 
     ref = push(socket, "something_else", %{})
-    assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+    assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
   end
 
   test "a suspended user cannot change their status" do

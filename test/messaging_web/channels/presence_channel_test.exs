@@ -191,6 +191,6 @@ defmodule MessagingWeb.PresenceChannelTest do
     {:ok, _reply, socket} = join_as(@ana)
 
     ref = push(socket, "set_status", %{"status" => "dnd"})
-    assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+    assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
   end
 end
