@@ -38,10 +38,12 @@ defmodule MessagingWeb.VoiceAccessControllerTest do
     expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
 
     conn = conn |> authed() |> get(path())
-    assert json_response(conn, 200) == %{"allowed" => true}
+    assert json_response(conn, 200) == %{"allowed" => true, "conversation_id" => @conversation}
   end
 
   test "403 FORBIDDEN with the envelope when the caller is not a participant", %{conn: conn} do
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+
     expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation ->
       dm_doc(["99999999-9999-4999-8999-999999999999", @recipient])
     end)
@@ -55,6 +57,8 @@ defmodule MessagingWeb.VoiceAccessControllerTest do
   end
 
   test "503 USERS_UNAVAILABLE with the envelope when users cannot be verified", %{conn: conn} do
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+
     expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation ->
       {:error, :users_unavailable}
     end)
@@ -63,15 +67,16 @@ defmodule MessagingWeb.VoiceAccessControllerTest do
     assert %{"error" => %{"code" => "USERS_UNAVAILABLE"}} = json_response(conn, 503)
   end
 
-  test "400 INVALID_QUERY with the envelope when conversation_id is missing", %{conn: conn} do
+  test "200 resolves the conversation when conversation_id is missing", %{conn: conn} do
+    conversation_id = Messaging.Chat.Conversation.id(@caller, @recipient)
+
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+    expect(Messaging.Chat.RepoMock, :get_channel, fn ^conversation_id -> nil end)
+    expect(Messaging.Chat.RepoMock, :user_known?, fn @recipient -> true end)
+    expect(Messaging.Chat.RepoMock, :ensure_conversation, fn _doc -> :ok end)
+
     conn = conn |> authed() |> get("/v1/voice-access/#{@recipient}")
 
-    assert %{
-             "error" => %{
-               "code" => "INVALID_QUERY",
-               "message" => _message,
-               "details" => _details
-             }
-           } = json_response(conn, 400)
+    assert json_response(conn, 200) == %{"allowed" => true, "conversation_id" => conversation_id}
   end
 end

@@ -390,7 +390,10 @@ defmodule MessagingWeb.Schemas do
     OpenApiSpex.schema(%{
       title: "VoiceAccess",
       type: :object,
-      properties: %{allowed: %Schema{type: :boolean}},
+      properties: %{
+        allowed: %Schema{type: :boolean},
+        conversation_id: %Schema{type: :string, description: "Conversación directa resuelta"}
+      },
       required: [:allowed]
     })
   end
