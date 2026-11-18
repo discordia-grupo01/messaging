@@ -13,29 +13,19 @@ components:
             - image/gif
             - application/pdf
           type: string
-          x-struct:
-          x-validate:
         id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         name:
           description: Nombre original, ya saneado
           type: string
-          x-struct:
-          x-validate:
         size:
           description: Tamaño en bytes
           type: integer
-          x-struct:
-          x-validate:
         url:
           description: URL pública del archivo en el almacenamiento (Supabase Storage)
           format: uri
           type: string
-          x-struct:
-          x-validate:
       required:
         - id
         - url
@@ -44,8 +34,6 @@ components:
         - size
       title: Attachment
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.Attachment
-      x-validate:
     BlockList:
       properties:
         blocks:
@@ -54,77 +42,51 @@ components:
               created_at:
                 format: date-time
                 type: string
-                x-struct:
-                x-validate:
               user_id:
                 description: El usuario que bloqueaste
                 type: string
-                x-struct:
-                x-validate:
             required:
               - user_id
               - created_at
             type: object
-            x-struct:
-            x-validate:
           type: array
-          x-struct:
-          x-validate:
       required:
         - blocks
       title: BlockList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.BlockList
-      x-validate:
     BlockRequest:
       properties:
         user_id:
           description: Id del usuario a bloquear
           type: string
-          x-struct:
-          x-validate:
       required:
         - user_id
       title: BlockRequest
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.BlockRequest
-      x-validate:
     Conversation:
       properties:
         blocked_by_me:
           description: true si bloqueaste al otro participante (nunca se informa lo contrario)
           type: boolean
-          x-struct:
-          x-validate:
         id:
           description: Id de la conversación (un canal)
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         last_message:
           allOf:
             - $ref: '#/components/schemas/Message'
           description: null si el último mensaje fue eliminado
           nullable: true
-          x-struct:
-          x-validate:
         last_message_at:
           format: date-time
           nullable: true
           type: string
-          x-struct:
-          x-validate:
         partner_id:
           description: El otro participante
           type: string
-          x-struct:
-          x-validate:
         unread:
           description: true si el último mensaje es del otro y todavía no lo marcaste como leído
           type: boolean
-          x-struct:
-          x-validate:
       required:
         - id
         - partner_id
@@ -132,52 +94,34 @@ components:
         - blocked_by_me
       title: Conversation
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.Conversation
-      x-validate:
     ConversationList:
       properties:
         conversations:
           items:
             $ref: '#/components/schemas/Conversation'
           type: array
-          x-struct:
-          x-validate:
       required:
         - conversations
       title: ConversationList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.ConversationList
-      x-validate:
     CustomEmoji:
       properties:
         animated:
           type: boolean
-          x-struct:
-          x-validate:
         deleted:
           description: Ya no se puede usar, pero el contenido viejo lo sigue mostrando.
           type: boolean
-          x-struct:
-          x-validate:
         id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         image_url:
           type: string
-          x-struct:
-          x-validate:
         name:
           example: party
           type: string
-          x-struct:
-          x-validate:
         server_id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
       required:
         - id
         - server_id
@@ -187,22 +131,16 @@ components:
         - deleted
       title: CustomEmoji
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.CustomEmoji
-      x-validate:
     CustomEmojiList:
       properties:
         emojis:
           items:
             $ref: '#/components/schemas/CustomEmoji'
           type: array
-          x-struct:
-          x-validate:
       required:
         - emojis
       title: CustomEmojiList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.CustomEmojiList
-      x-validate:
     EditMessageRequest:
       properties:
         content:
@@ -210,83 +148,59 @@ components:
           maxLength: 2000
           pattern: \S
           type: string
-          x-struct:
-          x-validate:
       required:
         - content
       title: EditMessageRequest
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.EditMessageRequest
-      x-validate:
     ErrorResponse:
       properties:
         error:
           properties:
             code:
+              example: CHANNEL_NOT_FOUND
+              pattern: ^[A-Z][A-Z0-9_]*$
               type: string
-              x-struct:
-              x-validate:
             details:
+              additionalProperties: true
               type: object
-              x-struct:
-              x-validate:
             message:
+              minLength: 1
               type: string
-              x-struct:
-              x-validate:
           required:
             - code
             - message
             - details
           type: object
-          x-struct:
-          x-validate:
       required:
         - error
       title: ErrorResponse
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.ErrorResponse
-      x-validate:
     Mention:
       description: 'Una notificación destacada: un mensaje que te mencionó y todavía no leíste.'
       properties:
         author_id:
           description: Quien te mencionó
           type: string
-          x-struct:
-          x-validate:
         channel_id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         id:
           description: '`<message_id>:<user_id>`'
           type: string
-          x-struct:
-          x-validate:
         inserted_at:
           format: date-time
           type: string
-          x-struct:
-          x-validate:
         message:
           allOf:
             - $ref: '#/components/schemas/Message'
           description: El mensaje; null si ya no está disponible
           nullable: true
-          x-struct:
-          x-validate:
         message_id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         server_id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
       required:
         - id
         - message_id
@@ -297,22 +211,16 @@ components:
         - message
       title: Mention
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.Mention
-      x-validate:
     MentionList:
       properties:
         mentions:
           items:
             $ref: '#/components/schemas/Mention'
           type: array
-          x-struct:
-          x-validate:
       required:
         - mentions
       title: MentionList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.MentionList
-      x-validate:
     Message:
       properties:
         attachments:
@@ -320,63 +228,39 @@ components:
           items:
             $ref: '#/components/schemas/Attachment'
           type: array
-          x-struct:
-          x-validate:
         channel_id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         content:
           type: string
-          x-struct:
-          x-validate:
         edited:
           description: true si el autor lo editó después de enviarlo
           type: boolean
-          x-struct:
-          x-validate:
         edited_at:
           description: Momento de la última edición (ISO 8601, UTC); null si nunca se editó
           format: date-time
           nullable: true
           type: string
-          x-struct:
-          x-validate:
         id:
           format: uuid
           type: string
-          x-struct:
-          x-validate:
         inserted_at:
           description: ISO 8601, UTC, always with a trailing Z
           format: date-time
           type: string
-          x-struct:
-          x-validate:
         mention_everyone:
           description: true si el mensaje mencionó `@everyone` y el autor tiene MENTION_EVERYONE; si no, queda como texto
           type: boolean
-          x-struct:
-          x-validate:
         mention_roles:
           description: Ids de los roles mencionados con `<@&id>`; solo cuentan si el autor tiene MENTION_EVERYONE
           items:
             type: string
-            x-struct:
-            x-validate:
           type: array
-          x-struct:
-          x-validate:
         mentions:
           description: Ids de los usuarios mencionados con `<@id>` que son miembros del servidor (vacío en mensajes directos)
           items:
             type: string
-            x-struct:
-            x-validate:
           type: array
-          x-struct:
-          x-validate:
         reactions:
           description: Reacciones del mensaje, en el orden en que se usó cada emoji por primera vez. Viene en el historial; los eventos `new_message` y `message_updated` no la traen.
           items:
@@ -384,39 +268,25 @@ components:
               count:
                 minimum: 1
                 type: integer
-                x-struct:
-                x-validate:
               emoji:
                 description: Un emoji Unicode, o uno personalizado como `<:nombre:id>` o `<a:nombre:id>`
                 type: string
-                x-struct:
-                x-validate:
               reacted_by_me:
                 description: true si quien pide el historial es uno de los que reaccionó
                 type: boolean
-                x-struct:
-                x-validate:
             required:
               - emoji
               - count
               - reacted_by_me
             type: object
-            x-struct:
-            x-validate:
           type: array
-          x-struct:
-          x-validate:
         server_id:
           description: null en los mensajes directos (no pertenecen a ningún servidor)
           format: uuid
           nullable: true
           type: string
-          x-struct:
-          x-validate:
         user_id:
           type: string
-          x-struct:
-          x-validate:
       required:
         - id
         - channel_id
@@ -431,49 +301,35 @@ components:
         - attachments
       title: Message
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.Message
-      x-validate:
     MessageList:
       properties:
         messages:
           items:
             $ref: '#/components/schemas/Message'
           type: array
-          x-struct:
-          x-validate:
         newer_cursor:
           description: 'Solo con `around`: id para pasar como `after` mientras haya mensajes más nuevos. null si ya se llegó al presente.'
           nullable: true
           type: string
-          x-struct:
-          x-validate:
         next_cursor:
           description: 'Hay más mensajes: id para pasar como `before` (o como `after` si se pidió con `after`). null si no hay más.'
           nullable: true
           type: string
-          x-struct:
-          x-validate:
       required:
         - messages
         - next_cursor
       title: MessageList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.MessageList
-      x-validate:
     MessageLookup:
       properties:
         messages:
           items:
             $ref: '#/components/schemas/Message'
           type: array
-          x-struct:
-          x-validate:
       required:
         - messages
       title: MessageLookup
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.MessageLookup
-      x-validate:
     MessageSearchResult:
       description: Coincidencias de la búsqueda, de la más nueva a la más vieja. Sin coincidencias, `messages` viene vacío (no es un error).
       properties:
@@ -481,26 +337,18 @@ components:
           items:
             $ref: '#/components/schemas/Message'
           type: array
-          x-struct:
-          x-validate:
         next_cursor:
           description: 'Hay más coincidencias: id para pasar como `before` y traer las más viejas. null si no hay más.'
           nullable: true
           type: string
-          x-struct:
-          x-validate:
         total:
           description: Cuántas coincidencias hay en total (con tope de 1000). Solo en la primera página; con `before` viene null.
           nullable: true
           type: integer
-          x-struct:
-          x-validate:
         total_capped:
           description: true si hay más coincidencias que el tope (mostrar "1000+")
           nullable: true
           type: boolean
-          x-struct:
-          x-validate:
       required:
         - messages
         - next_cursor
@@ -508,8 +356,6 @@ components:
         - total_capped
       title: MessageSearchResult
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.MessageSearchResult
-      x-validate:
     Presence:
       properties:
         status:
@@ -520,25 +366,17 @@ components:
             - dnd
             - offline
           type: string
-          x-struct:
-          x-validate:
         user_id:
           type: string
-          x-struct:
-          x-validate:
         version:
           description: Crece con cada cambio. Entre esta respuesta y los `presence_updated` del socket, vale el de versión más alta; 0 si el usuario nunca se conectó
           type: integer
-          x-struct:
-          x-validate:
       required:
         - user_id
         - status
         - version
       title: Presence
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.Presence
-      x-validate:
     PresenceList:
       properties:
         presences:
@@ -546,52 +384,44 @@ components:
           items:
             $ref: '#/components/schemas/Presence'
           type: array
-          x-struct:
-          x-validate:
       required:
         - presences
       title: PresenceList
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.PresenceList
-      x-validate:
     SocketTicket:
       properties:
         expires_in:
           description: Segundos que el ticket es válido desde que se emite.
           type: integer
-          x-struct:
-          x-validate:
         ticket:
           description: Ticket de un solo uso. Se manda como `?ticket=<ticket>` al conectar el WebSocket.
           type: string
-          x-struct:
-          x-validate:
       required:
         - ticket
         - expires_in
       title: SocketTicket
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.SocketTicket
-      x-validate:
     UploadTicket:
       properties:
         expires_in:
           description: Segundos que el ticket es válido desde que se emite.
           type: integer
-          x-struct:
-          x-validate:
         ticket:
           description: Ticket de un solo uso. Se manda en el header `X-Upload-Ticket` al subir el archivo.
           type: string
-          x-struct:
-          x-validate:
       required:
         - ticket
         - expires_in
       title: UploadTicket
       type: object
-      x-struct: Elixir.MessagingWeb.Schemas.UploadTicket
-      x-validate:
+    VoiceAccess:
+      properties:
+        allowed:
+          type: boolean
+      required:
+        - allowed
+      title: VoiceAccess
+      type: object
 info:
   description: Mensajes de canal en tiempo real (envío por WebSocket, historial por REST). Todos los endpoints responden 403 ACCOUNT_SUSPENDED a una cuenta suspendida por el staff y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado. Las rutas de un canal de un servidor suspendido por el staff responden 403 SERVER_SUSPENDED, al owner también; los mensajes se conservan y vuelven al reactivarlo.
   title: Discordia — Messaging
@@ -609,8 +439,6 @@ paths:
             text/plain:
               schema:
                 type: string
-                x-struct:
-                x-validate:
           description: ok
       summary: Liveness -- confirma que el proceso responde, sin tocar Mongo ni el broker
       tags:
@@ -626,16 +454,12 @@ paths:
             application/json:
               schema:
                 type: object
-                x-struct:
-                x-validate:
           description: ready
         '503':
           content:
             application/json:
               schema:
                 type: object
-                x-struct:
-                x-validate:
           description: Mongo o Postgres no responden
       summary: Readiness -- confirma que el servicio puede operar (pinguea Mongo y Postgres)
       tags:
@@ -680,32 +504,24 @@ paths:
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Id del usuario destinatario de un mensaje directo
           in: query
           name: to
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Nombre con el que se muestra el archivo (máx 100 caracteres)
           in: query
           name: filename
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
       requestBody:
         content:
           application/octet-stream:
             schema:
               format: binary
               type: string
-              x-struct:
-              x-validate:
         description: Contenido del archivo
         required: false
       responses:
@@ -778,40 +594,30 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Canal de texto de un servidor donde se va a enviar el mensaje
           in: query
           name: channel_id
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Id del usuario destinatario de un mensaje directo
           in: query
           name: to
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Nombre con el que se muestra el archivo (máx 100 caracteres)
           in: query
           name: filename
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
       requestBody:
         content:
           application/octet-stream:
             schema:
               format: binary
               type: string
-              x-struct:
-              x-validate:
         description: Contenido del archivo
         required: false
       responses:
@@ -884,8 +690,6 @@ paths:
           required: false
           schema:
             type: integer
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -956,8 +760,6 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
       responses:
         '204':
           description: Usuario desbloqueado
@@ -994,8 +796,6 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
       responses:
         '204':
           description: Menciones del canal marcadas como leídas
@@ -1026,16 +826,12 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Tamaño de página (default 50, máx 100)
           in: query
           name: limit
           required: false
           schema:
             type: integer
-            x-struct:
-            x-validate:
         - description: Id de mensaje devuelto como next_cursor al pedir la página anterior
           in: query
           name: before
@@ -1043,8 +839,6 @@ paths:
           schema:
             minLength: 1
             type: string
-            x-struct:
-            x-validate:
         - description: Id del último mensaje que el cliente ya tiene; devuelve los posteriores
           in: query
           name: after
@@ -1052,8 +846,6 @@ paths:
           schema:
             minLength: 1
             type: string
-            x-struct:
-            x-validate:
         - description: 'Id de un mensaje: devuelve hasta limit/2 mensajes antes y después de él, y el mensaje'
           in: query
           name: around
@@ -1061,8 +853,6 @@ paths:
           schema:
             minLength: 1
             type: string
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1109,16 +899,12 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: UUID del mensaje
           in: path
           name: message_id
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
       responses:
         '204':
           description: Mensaje eliminado
@@ -1154,16 +940,12 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: UUID del mensaje
           in: path
           name: message_id
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
       requestBody:
         content:
           application/json:
@@ -1217,8 +999,6 @@ paths:
           required: false
           schema:
             type: integer
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1247,8 +1027,6 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
       responses:
         '204':
           description: Conversación marcada como leída
@@ -1279,8 +1057,6 @@ paths:
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1321,8 +1097,6 @@ paths:
           required: false
           schema:
             type: integer
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1352,8 +1126,6 @@ paths:
           schema:
             pattern: '[^,\s]'
             type: string
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1395,8 +1167,6 @@ paths:
           schema:
             pattern: '[^,\s]'
             type: string
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1437,40 +1207,30 @@ paths:
           required: true
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Texto a buscar (se recorta; hasta 100 caracteres)
           in: query
           name: q
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Id del autor de los mensajes
           in: query
           name: author_id
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Buscar solo en este canal del servidor
           in: query
           name: channel_id
           required: false
           schema:
             type: string
-            x-struct:
-            x-validate:
         - description: Tamaño de página (default 25, máx 50)
           in: query
           name: limit
           required: false
           schema:
             type: integer
-            x-struct:
-            x-validate:
         - description: Id devuelto como next_cursor, para traer las coincidencias más viejas
           in: query
           name: before
@@ -1478,8 +1238,6 @@ paths:
           schema:
             minLength: 1
             type: string
-            x-struct:
-            x-validate:
       responses:
         '200':
           content:
@@ -1548,6 +1306,58 @@ paths:
       summary: Emite un ticket de un solo uso para conectar el WebSocket
       tags:
         - auth
+  /v1/voice-access/{recipient_id}:
+    get:
+      callbacks: {}
+      description: 'Lo consume el servicio de señalización de voz antes de admitir a un usuario en una llamada privada: responde 200 `{"allowed": true}` si el usuario puede llamar al destinatario en esa conversación. En cualquier otro caso responde con el sobre de error y el cliente sólo mira el status.'
+      operationId: MessagingWeb.VoiceAccessController.show
+      parameters:
+        - description: Id del destinatario
+          in: path
+          name: recipient_id
+          required: true
+          schema:
+            type: string
+        - description: Id de la conversación directa
+          in: query
+          name: conversation_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAccess'
+          description: Puede llamar
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Falta `conversation_id`
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No puede llamar a ese usuario en esa conversación
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo verificar al destinatario
+      summary: Autorización de llamada privada de voz
+      tags:
+        - voice
 security: []
 servers:
   - url: http://localhost:4000
