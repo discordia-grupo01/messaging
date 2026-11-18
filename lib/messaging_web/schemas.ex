@@ -369,14 +369,29 @@ defmodule MessagingWeb.Schemas do
         error: %Schema{
           type: :object,
           properties: %{
-            code: %Schema{type: :string},
-            message: %Schema{type: :string},
-            details: %Schema{type: :object}
+            code: %Schema{
+              type: :string,
+              pattern: "^[A-Z][A-Z0-9_]*$",
+              example: "CHANNEL_NOT_FOUND"
+            },
+            message: %Schema{type: :string, minLength: 1},
+            details: %Schema{type: :object, additionalProperties: true}
           },
           required: [:code, :message, :details]
         }
       },
       required: [:error]
+    })
+  end
+
+  defmodule VoiceAccess do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "VoiceAccess",
+      type: :object,
+      properties: %{allowed: %Schema{type: :boolean}},
+      required: [:allowed]
     })
   end
 
