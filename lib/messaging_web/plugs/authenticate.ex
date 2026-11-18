@@ -33,7 +33,7 @@ defmodule MessagingWeb.Plugs.Authenticate do
   def unauthorized(conn, message) do
     conn
     |> put_status(401)
-    |> Phoenix.Controller.json(%{error: %{code: "UNAUTHORIZED", message: message, details: %{}}})
+    |> Phoenix.Controller.json(ApiError.payload({:unauthorized, message}))
     |> halt()
   end
 end
