@@ -3,6 +3,7 @@ defmodule Messaging.Chat.PrivateVoiceTest do
   import Mox
 
   alias Messaging.Chat
+  alias Messaging.Chat.Conversation
 
   setup :verify_on_exit!
 
@@ -37,9 +38,25 @@ defmodule Messaging.Chat.PrivateVoiceTest do
     assert :ok = Chat.authorize_private_voice(@caller, @recipient, @conversation)
   end
 
-  test "rejects a call when the caller blocked the recipient" do
-    expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation -> conversation_doc() end)
+  test "allows a draft call and creates the direct conversation deterministically" do
+    conversation_id = Conversation.id(@caller, @recipient)
 
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+    expect(Messaging.Chat.RepoMock, :get_channel, fn ^conversation_id -> nil end)
+    expect(Messaging.Chat.RepoMock, :user_known?, fn @recipient -> true end)
+
+    expect(Messaging.Chat.RepoMock, :ensure_conversation, fn doc ->
+      assert doc["_id"] == conversation_id
+      assert doc["kind"] == "dm"
+      assert Enum.sort(doc["participants"]) == Enum.sort([@caller, @recipient])
+      :ok
+    end)
+
+    assert {:ok, ^conversation_id} =
+             Chat.authorize_private_voice(@caller, @recipient, nil)
+  end
+
+  test "rejects a call when the caller blocked the recipient" do
     expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
       {:ok, [%{"_id" => @caller <> ":" <> @recipient}]}
     end)
@@ -49,8 +66,6 @@ defmodule Messaging.Chat.PrivateVoiceTest do
   end
 
   test "rejects a call when the recipient blocked the caller" do
-    expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation -> conversation_doc() end)
-
     expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids ->
       {:ok, [%{"_id" => @recipient <> ":" <> @caller}]}
     end)
@@ -60,12 +75,16 @@ defmodule Messaging.Chat.PrivateVoiceTest do
   end
 
   test "rejects a server channel or a non-participant" do
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
+
     expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation ->
       %{conversation_doc() | "server_id" => "server-1"}
     end)
 
     assert {:error, :forbidden} =
              Chat.authorize_private_voice(@caller, @recipient, @conversation)
+
+    expect(Messaging.Chat.RepoMock, :get_blocks, fn _ids -> {:ok, []} end)
 
     expect(Messaging.Chat.RepoMock, :get_channel, fn @conversation ->
       %{conversation_doc() | "participants" => [@caller, "other"]}
