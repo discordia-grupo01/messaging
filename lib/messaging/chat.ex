@@ -40,20 +40,37 @@ defmodule Messaging.Chat do
   def max_message_length, do: @max_message_length
   def max_page_limit, do: @max_page_limit
 
-  @spec authorize_private_voice(String.t(), String.t(), String.t()) ::
-          :ok | {:error, term()}
+  @spec authorize_private_voice(String.t(), String.t(), String.t() | nil) ::
+          {:ok, String.t()} | :ok | {:error, term()}
   def authorize_private_voice(user_id, recipient_id, conversation_id) do
     with :ok <- Suspension.ensure_active(user_id),
-         {:ok, channel} <- fetch_channel(conversation_id),
-         true <- channel.server_id == nil,
-         true <- user_id in channel.participants,
-         true <- recipient_id in channel.participants,
+         :ok <- validate_recipient(user_id, recipient_id),
          :ok <- Blocks.check_contact(user_id, recipient_id) do
-      :ok
+      authorize_private_voice_conversation(user_id, recipient_id, conversation_id)
     else
       false -> {:error, :forbidden}
       {:error, :user_blocked} -> {:error, :forbidden}
       {:error, :dm_not_delivered} -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp authorize_private_voice_conversation(user_id, recipient_id, conversation_id)
+       when is_binary(conversation_id) and conversation_id != "" do
+    with {:ok, channel} <- fetch_channel(conversation_id),
+         true <- channel.server_id == nil,
+         true <- user_id in channel.participants,
+         true <- recipient_id in channel.participants do
+      :ok
+    else
+      false -> {:error, :forbidden}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp authorize_private_voice_conversation(user_id, recipient_id, _conversation_id) do
+    case ensure_conversation(user_id, recipient_id) do
+      {:ok, channel} -> {:ok, channel.channel_id}
       {:error, _reason} = error -> error
     end
   end
