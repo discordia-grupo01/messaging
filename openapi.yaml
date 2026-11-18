@@ -223,14 +223,18 @@ components:
         error:
           properties:
             code:
+              example: CHANNEL_NOT_FOUND
+              pattern: ^[A-Z][A-Z0-9_]*$
               type: string
               x-struct:
               x-validate:
             details:
+              additionalProperties: true
               type: object
               x-struct:
               x-validate:
             message:
+              minLength: 1
               type: string
               x-struct:
               x-validate:
@@ -591,6 +595,23 @@ components:
       title: UploadTicket
       type: object
       x-struct: Elixir.MessagingWeb.Schemas.UploadTicket
+      x-validate:
+    VoiceAccess:
+      properties:
+        allowed:
+          type: boolean
+          x-struct:
+          x-validate:
+        conversation_id:
+          description: Conversación directa resuelta
+          type: string
+          x-struct:
+          x-validate:
+      required:
+        - allowed
+      title: VoiceAccess
+      type: object
+      x-struct: Elixir.MessagingWeb.Schemas.VoiceAccess
       x-validate:
 info:
   description: Mensajes de canal en tiempo real (envío por WebSocket, historial por REST). Todos los endpoints responden 403 ACCOUNT_SUSPENDED a una cuenta suspendida por el staff y 503 SUSPENSION_UNAVAILABLE si no se pudo verificar su estado. Las rutas de un canal de un servidor suspendido por el staff responden 403 SERVER_SUSPENDED, al owner también; los mensajes se conservan y vuelven al reactivarlo.
@@ -1548,6 +1569,56 @@ paths:
       summary: Emite un ticket de un solo uso para conectar el WebSocket
       tags:
         - auth
+  /v1/voice-access/{recipient_id}:
+    get:
+      callbacks: {}
+      description: 'Lo consume el servicio de señalización de voz antes de admitir a un usuario en una llamada privada: responde 200 `{"allowed": true}` si el usuario puede llamar al destinatario. `conversation_id` es opcional: si no se envía, se resuelve la conversación directa existente y se devuelve en la respuesta. En cualquier otro caso responde con el sobre de error y el cliente sólo mira el status.'
+      operationId: MessagingWeb.VoiceAccessController.show
+      parameters:
+        - description: Id del destinatario
+          in: path
+          name: recipient_id
+          required: true
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+        - description: Id de la conversación directa; si falta, se resuelve a partir del destinatario
+          in: query
+          name: conversation_id
+          required: false
+          schema:
+            type: string
+            x-struct:
+            x-validate:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAccess'
+          description: Puede llamar
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 'Falta o es inválido el Authorization: Bearer <jwt>'
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No puede llamar a ese usuario
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: No se pudo verificar al destinatario
+      summary: Autorización de llamada privada de voz
+      tags:
+        - voice
 security: []
 servers:
   - url: http://localhost:4000

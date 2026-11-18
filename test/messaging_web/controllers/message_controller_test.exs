@@ -429,7 +429,7 @@ defmodule MessagingWeb.MessageControllerTest do
     test "400 when content is missing or not a string", %{conn: conn} do
       for body <- [%{}, %{"content" => 123}, %{"content" => %{"a" => 1}}, %{"content" => nil}] do
         conn = conn |> authed() |> patch(@path, body)
-        assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+        assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
       end
     end
 
@@ -719,7 +719,7 @@ defmodule MessagingWeb.MessageControllerTest do
     test "rejects a missing or empty ids parameter", %{conn: conn} do
       for path <- ["/v1/messages", "/v1/messages?ids=", "/v1/messages?ids=,%20,"] do
         response = conn |> authed() |> get(path)
-        assert json_response(response, 400)["error"]["code"] == "INVALID_PAYLOAD"
+        assert json_response(response, 400)["error"]["code"] == "INVALID_BODY"
       end
     end
 
@@ -728,7 +728,7 @@ defmodule MessagingWeb.MessageControllerTest do
 
       conn = conn |> authed() |> get("/v1/messages?ids=#{ids}")
 
-      assert json_response(conn, 400)["error"]["code"] == "INVALID_PAYLOAD"
+      assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
     end
 
     test "accepts exactly 50 ids", %{conn: conn} do

@@ -143,7 +143,7 @@ defmodule MessagingWeb.UserChannelTest do
 
       ref = push(ana, "send_dm", %{"to" => @beto, "content" => "hola", "client_id" => 7})
 
-      assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+      assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
     end
 
     test "CA1: the recipient is notified on their own topic even with no conversation open" do
@@ -341,13 +341,13 @@ defmodule MessagingWeb.UserChannelTest do
             %{"to" => @beto, "content" => 5}
           ] do
         ref = push(ana, "send_dm", payload)
-        assert_reply ref, :error, %{error: %{code: "INVALID_PAYLOAD"}}
+        assert_reply ref, :error, %{error: %{code: "INVALID_BODY"}}
       end
 
       for bad <- [%{"$ne" => "x"}, 5, "../me", "a.b"] do
         ref = push(ana, "send_dm", %{"to" => bad, "content" => "hola"})
         assert_reply ref, :error, %{error: %{code: code}}
-        assert code in ["INVALID_PAYLOAD", "RECIPIENT_NOT_FOUND"]
+        assert code in ["INVALID_BODY", "RECIPIENT_NOT_FOUND"]
       end
 
       stub_new_conversation(@ana, @beto)
