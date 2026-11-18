@@ -602,6 +602,11 @@ components:
           type: boolean
           x-struct:
           x-validate:
+        conversation_id:
+          description: Conversación directa resuelta
+          type: string
+          x-struct:
+          x-validate:
       required:
         - allowed
       title: VoiceAccess
@@ -1567,7 +1572,7 @@ paths:
   /v1/voice-access/{recipient_id}:
     get:
       callbacks: {}
-      description: 'Lo consume el servicio de señalización de voz antes de admitir a un usuario en una llamada privada: responde 200 `{"allowed": true}` si el usuario puede llamar al destinatario en esa conversación. En cualquier otro caso responde con el sobre de error y el cliente sólo mira el status.'
+      description: 'Lo consume el servicio de señalización de voz antes de admitir a un usuario en una llamada privada: responde 200 `{"allowed": true}` si el usuario puede llamar al destinatario. `conversation_id` es opcional: si no se envía, se resuelve la conversación directa existente y se devuelve en la respuesta. En cualquier otro caso responde con el sobre de error y el cliente sólo mira el status.'
       operationId: MessagingWeb.VoiceAccessController.show
       parameters:
         - description: Id del destinatario
@@ -1578,10 +1583,10 @@ paths:
             type: string
             x-struct:
             x-validate:
-        - description: Id de la conversación directa
+        - description: Id de la conversación directa; si falta, se resuelve a partir del destinatario
           in: query
           name: conversation_id
-          required: true
+          required: false
           schema:
             type: string
             x-struct:
@@ -1593,12 +1598,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/VoiceAccess'
           description: Puede llamar
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Falta `conversation_id`
         '401':
           content:
             application/json:
@@ -1610,7 +1609,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: No puede llamar a ese usuario en esa conversación
+          description: No puede llamar a ese usuario
         '503':
           content:
             application/json:
