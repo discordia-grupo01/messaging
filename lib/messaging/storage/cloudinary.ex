@@ -3,6 +3,7 @@ defmodule Messaging.Storage.Cloudinary do
 
   require Logger
 
+  alias Messaging.CircuitBreaker
   alias Messaging.Log
 
   @delete_batch 100
@@ -32,7 +33,9 @@ defmodule Messaging.Storage.Cloudinary do
 
       opts = [form_multipart: form, receive_timeout: 30_000, retry: false] ++ plug_opt()
 
-      case Req.post("#{config.api_base}/v1_1/#{config.cloud_name}/auto/upload", opts) do
+      case CircuitBreaker.call(:cloudinary, fn ->
+             Req.post("#{config.api_base}/v1_1/#{config.cloud_name}/auto/upload", opts)
+           end) do
         {:ok, %Req.Response{status: 200, body: response}} -> decode_upload(response)
         {:ok, %Req.Response{status: status}} -> upload_failed({:unexpected_status, status})
         {:error, reason} -> upload_failed(reason)
@@ -79,7 +82,9 @@ defmodule Messaging.Storage.Cloudinary do
 
     url = "#{config.api_base}/v1_1/#{config.cloud_name}/resources/#{resource_type}/upload"
 
-    case Req.request([method: :delete, url: url] ++ opts) do
+    case CircuitBreaker.call(:cloudinary, fn ->
+           Req.request([method: :delete, url: url] ++ opts)
+         end) do
       {:ok, %Req.Response{status: status}} when status in 200..299 ->
         :ok
 

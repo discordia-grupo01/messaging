@@ -7,6 +7,8 @@ defmodule Messaging.Storage.SupabaseTest do
   @secret "sb_secret_test"
 
   setup do
+    Messaging.CircuitBreaker.reset(:supabase_storage)
+    on_exit(fn -> Messaging.CircuitBreaker.reset(:supabase_storage) end)
     previous_plug = Application.get_env(:messaging, :storage_http_plug)
     previous_config = Application.get_env(:messaging, :supabase_storage)
 
@@ -106,5 +108,39 @@ defmodule Messaging.Storage.SupabaseTest do
     assert Supabase.owns?("supabase/chan-1/a")
     refute Supabase.owns?("image/discordia/attachments/chan-1/a")
     refute Supabase.owns?("raw/discordia/attachments/chan-1/a")
+  end
+
+  describe "circuit breaker" do
+    test "stops calling the storage when it keeps failing" do
+      test_pid = self()
+
+      Req.Test.stub(Supabase, fn conn ->
+        send(test_pid, :hit)
+        Plug.Conn.send_resp(conn, 502, "")
+      end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        for _ <- 1..5, do: assert({:error, _reason} = Supabase.put("k", "body", "image/png"))
+      end)
+
+      for _ <- 1..5, do: assert_received(:hit)
+      assert Messaging.CircuitBreaker.state(:supabase_storage) == :open
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, _reason} = Supabase.put("k", "body", "image/png")
+      end)
+
+      refute_received :hit
+    end
+
+    test "client errors do not open it" do
+      Req.Test.stub(Supabase, fn conn -> Plug.Conn.send_resp(conn, 400, "") end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        for _ <- 1..7, do: assert({:error, _reason} = Supabase.put("k", "body", "image/png"))
+      end)
+
+      assert Messaging.CircuitBreaker.state(:supabase_storage) == :closed
+    end
   end
 end
