@@ -16,6 +16,7 @@ defmodule Messaging.Application do
     children =
       log_shipper_children() ++
         [
+          Messaging.CircuitBreaker,
           {Phoenix.PubSub, name: Messaging.PubSub},
           {Mongo,
            Messaging.MongoOptions.build(

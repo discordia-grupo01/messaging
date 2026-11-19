@@ -8,6 +8,7 @@ defmodule Messaging.Storage.Supabase do
 
   require Logger
 
+  alias Messaging.CircuitBreaker
   alias Messaging.Log
 
   @path_prefix "supabase/"
@@ -37,7 +38,9 @@ defmodule Messaging.Storage.Supabase do
         [body: body, headers: headers, receive_timeout: @upload_timeout_ms, retry: false] ++
           plug_opt()
 
-      case Req.post("#{config.url}/storage/v1/object/#{config.bucket}/#{key}", opts) do
+      case CircuitBreaker.call(:supabase_storage, fn ->
+             Req.post("#{config.url}/storage/v1/object/#{config.bucket}/#{key}", opts)
+           end) do
         {:ok, %Req.Response{status: 200}} ->
           {:ok, %{url: public_url(config, key), path: @path_prefix <> key}}
 
@@ -63,7 +66,7 @@ defmodule Messaging.Storage.Supabase do
           retry: false
         ] ++ plug_opt()
 
-      case Req.request(opts) do
+      case CircuitBreaker.call(:supabase_storage, fn -> Req.request(opts) end) do
         {:ok, %Req.Response{status: 200}} ->
           :ok
 
