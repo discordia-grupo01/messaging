@@ -6,6 +6,8 @@ defmodule Messaging.Storage.CloudinaryTest do
   @secret "s3cr3t-api-secret"
 
   setup do
+    Messaging.CircuitBreaker.reset(:cloudinary)
+    on_exit(fn -> Messaging.CircuitBreaker.reset(:cloudinary) end)
     previous_plug = Application.get_env(:messaging, :storage_http_plug)
     previous_config = Application.get_env(:messaging, :cloudinary)
 
@@ -212,6 +214,40 @@ defmodule Messaging.Storage.CloudinaryTest do
       end)
 
       assert {:ok, _} = Cloudinary.put("k", "x", "image/png")
+    end
+  end
+
+  describe "circuit breaker" do
+    test "stops calling the storage when it keeps failing" do
+      test_pid = self()
+
+      Req.Test.stub(Cloudinary, fn conn ->
+        send(test_pid, :hit)
+        Plug.Conn.send_resp(conn, 502, "")
+      end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        for _ <- 1..5, do: assert({:error, _reason} = Cloudinary.put("k", "body", "image/png"))
+      end)
+
+      for _ <- 1..5, do: assert_received(:hit)
+      assert Messaging.CircuitBreaker.state(:cloudinary) == :open
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, _reason} = Cloudinary.put("k", "body", "image/png")
+      end)
+
+      refute_received :hit
+    end
+
+    test "client errors do not open it" do
+      Req.Test.stub(Cloudinary, fn conn -> Plug.Conn.send_resp(conn, 400, "") end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        for _ <- 1..7, do: assert({:error, _reason} = Cloudinary.put("k", "body", "image/png"))
+      end)
+
+      assert Messaging.CircuitBreaker.state(:cloudinary) == :closed
     end
   end
 end
