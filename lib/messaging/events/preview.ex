@@ -4,9 +4,8 @@ defmodule Messaging.Events.Preview do
   @max_length 140
   @attachment_text "Archivo adjunto"
   @mention_width String.length("@usuario")
-  @exact_user_token ~r/\A<@[A-Za-z0-9_-]{1,64}>\z/
-  @role_token ~r/<@&[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/
-  @user_token ~r/<@[A-Za-z0-9_-]{1,64}>/
+  @exact_mention_token ~r/\A<@&?[A-Za-z0-9_-]{1,64}>\z/
+  @mention_token ~r/<@&?[A-Za-z0-9_-]{1,64}>/
 
   @spec max_length() :: pos_integer()
   def max_length, do: @max_length
@@ -22,7 +21,6 @@ defmodule Messaging.Events.Preview do
 
   defp normalize(content) do
     content
-    |> String.replace(@role_token, "@rol")
     |> String.replace(~r/\s+/u, " ")
     |> String.trim()
   end
@@ -36,10 +34,10 @@ defmodule Messaging.Events.Preview do
   end
 
   defp segments(text) do
-    @user_token
+    @mention_token
     |> Regex.split(text, include_captures: true, trim: true)
     |> Enum.map(fn piece ->
-      if Regex.match?(@exact_user_token, piece), do: {:mention, piece}, else: {:text, piece}
+      if Regex.match?(@exact_mention_token, piece), do: {:mention, piece}, else: {:text, piece}
     end)
   end
 
