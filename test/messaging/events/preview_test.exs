@@ -29,20 +29,20 @@ defmodule Messaging.Events.PreviewTest do
              "hola <@2f6c8a10-4d6e-4b6a-9c11-0a1b2c3d4e5f> ¿venís?"
   end
 
-  test "a role mention becomes @rol" do
+  test "a role mention is kept, so the notification can put the name of the role" do
     role = "0a1b2c3d-0000-4000-8000-000000000000"
 
-    assert Preview.of(message("<@&#{role}> reunión a las 5")) == "@rol reunión a las 5"
+    assert Preview.of(message("<@&#{role}> reunión a las 5")) == "<@&#{role}> reunión a las 5"
   end
 
   test "several mentions in the same text are all kept" do
     assert Preview.of(message("<@a1> <@b2> y <@c3>")) == "<@a1> <@b2> y <@c3>"
   end
 
-  test "a role mention is still replaced while a user mention next to it is kept" do
+  test "a role mention and a user mention next to each other are both kept" do
     role = "0a1b2c3d-0000-4000-8000-000000000000"
 
-    assert Preview.of(message("<@&#{role}> y <@ana>")) == "@rol y <@ana>"
+    assert Preview.of(message("<@&#{role}> y <@ana>")) == "<@&#{role}> y <@ana>"
   end
 
   test "an @everyone stays as plain text" do
@@ -61,6 +61,23 @@ defmodule Messaging.Events.PreviewTest do
     text = String.duplicate("#{token} ", 15) |> String.trim()
 
     assert Preview.of(message(text)) == text
+  end
+
+  test "a role mention counts as the mention it will become, not as its long id" do
+    token = "<@&0a1b2c3d-0000-4000-8000-000000000000>"
+    text = String.duplicate("#{token} ", 15) |> String.trim()
+
+    assert Preview.of(message(text)) == text
+  end
+
+  test "the cut never splits a role mention either" do
+    token = "<@&0a1b2c3d-0000-4000-8000-000000000000>"
+    text = String.duplicate("x", Preview.max_length() - 4) <> " #{token} fin"
+
+    preview = Preview.of(message(text))
+
+    assert preview == String.duplicate("x", Preview.max_length() - 4) <> "…"
+    refute preview =~ "<@"
   end
 
   test "the cut never splits a mention: it stops before the one that does not fit" do
