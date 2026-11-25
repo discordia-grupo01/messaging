@@ -198,6 +198,7 @@ defmodule Messaging.Events.ServerBoostsConsumer do
          {:ok, _info} <- AMQP.Queue.declare(chan, queue, durable: true),
          :ok <- DeadLetter.declare(chan, queue),
          :ok <- AMQP.Queue.bind(chan, queue, @exchange, routing_key: @boost_updated),
+         :ok <- AMQP.Basic.qos(chan, prefetch_count: 10),
          {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
       {:ok, conn, chan}
     end
