@@ -387,6 +387,7 @@ defmodule Messaging.Events.AdminEventsConsumer do
          {:ok, _info} <- AMQP.Queue.declare(chan, queue, durable: true),
          :ok <- DeadLetter.declare(chan, queue),
          :ok <- bind_routing_keys(chan, queue),
+         :ok <- AMQP.Basic.qos(chan, prefetch_count: 10),
          {:ok, _consumer_tag} <- AMQP.Basic.consume(chan, queue) do
       {:ok, conn, chan}
     end
