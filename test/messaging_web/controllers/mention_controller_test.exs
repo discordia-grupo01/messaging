@@ -68,15 +68,19 @@ defmodule MessagingWeb.MentionControllerTest do
              ] = body["mentions"]
     end
 
-    test "passes a valid limit and falls back to the default otherwise", %{conn: conn} do
+    test "passes a valid limit and rejects one that is not an integer", %{conn: conn} do
       expect(Messaging.Chat.RepoMock, :list_unread_mentions, fn @me, 5 -> {:ok, []} end)
-      expect(Messaging.Chat.RepoMock, :list_unread_mentions, fn @me, 50 -> {:ok, []} end)
 
       assert %{"mentions" => []} =
                conn |> authed() |> get("/v1/mentions?limit=5") |> json_response(200)
 
-      assert %{"mentions" => []} =
-               build_conn() |> authed() |> get("/v1/mentions?limit=nope") |> json_response(200)
+      for bad <- ["nope", "12abc", ""] do
+        assert %{"error" => %{"code" => "INVALID_BODY"}} =
+                 build_conn()
+                 |> authed()
+                 |> get("/v1/mentions?limit=#{bad}")
+                 |> json_response(400)
+      end
     end
 
     test "a store failure is a 503, not a crash", %{conn: conn} do

@@ -25,7 +25,8 @@ defmodule MessagingWeb.PresenceController do
         in: :query,
         schema: %OpenApiSpex.Schema{
           type: :string,
-          pattern: "^\\s*[A-Za-z0-9_-]{1,64}\\s*(,\\s*[A-Za-z0-9_-]{1,64}\\s*)*$"
+          pattern: "^\\s*[A-Za-z0-9_-]{1,64}\\s*(,\\s*[A-Za-z0-9_-]{1,64}\\s*)*$",
+          maxLength: 6600
         },
         required: true,
         description: "Ids separados por coma, hasta #{Presence.max_snapshot_users()}"
@@ -36,6 +37,8 @@ defmodule MessagingWeb.PresenceController do
       bad_request:
         {"Faltan los ids, son más de #{Presence.max_snapshot_users()} o alguno no es válido",
          "application/json", Schemas.ErrorResponse},
+      request_uri_too_long:
+        "URI demasiado larga: el servidor HTTP rechaza las que superan los 8 KB",
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

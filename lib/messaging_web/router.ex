@@ -7,6 +7,7 @@ defmodule MessagingWeb.Router do
 
   pipeline :authenticated do
     plug MessagingWeb.Plugs.Authenticate
+    plug MessagingWeb.Plugs.PathParamLength
   end
 
   pipeline :upload_ticket do

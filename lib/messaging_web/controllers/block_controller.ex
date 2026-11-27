@@ -4,6 +4,7 @@ defmodule MessagingWeb.BlockController do
 
   alias Messaging.Chat.{Blocks, Message}
   alias MessagingWeb.ApiError
+  alias MessagingWeb.LimitParam
   alias MessagingWeb.Schemas
 
   tags ["blocks"]
@@ -23,25 +24,25 @@ defmodule MessagingWeb.BlockController do
     ],
     responses: [
       ok: {"Usuarios bloqueados", "application/json", Schemas.BlockList},
+      bad_request:
+        {"`limit` no es un número entero (`INVALID_BODY`)", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse}
     ]
 
   def index(conn, params) do
-    limit = params |> Map.get("limit") |> parse_limit()
-
-    case Blocks.list(conn.assigns.user_id, limit: limit) do
-      {:ok, blocks} ->
-        json(conn, %{
-          "blocks" =>
-            Enum.map(blocks, fn block ->
-              %{"user_id" => block.user_id, "created_at" => Message.iso8601_z(block.created_at)}
-            end)
-        })
-
-      {:error, reason} ->
-        error(conn, reason)
+    with {:ok, limit} <- LimitParam.parse(Map.get(params, "limit")),
+         {:ok, blocks} <- Blocks.list(conn.assigns.user_id, limit: limit) do
+      json(conn, %{
+        "blocks" =>
+          Enum.map(blocks, fn block ->
+            %{"user_id" => block.user_id, "created_at" => Message.iso8601_z(block.created_at)}
+          end)
+      })
+    else
+      {:error, reason} -> error(conn, reason)
     end
   end
 
@@ -84,7 +85,7 @@ defmodule MessagingWeb.BlockController do
     parameters: [
       user_id: [
         in: :path,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, minLength: 1, maxLength: 64},
         required: true,
         description: "Id del usuario a desbloquear"
       ]
@@ -108,13 +109,4 @@ defmodule MessagingWeb.BlockController do
 
   defp error(conn, reason),
     do: conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
-
-  defp parse_limit(nil), do: nil
-
-  defp parse_limit(raw) when is_binary(raw) do
-    case Integer.parse(raw) do
-      {n, _rest} -> n
-      :error -> nil
-    end
-  end
 end

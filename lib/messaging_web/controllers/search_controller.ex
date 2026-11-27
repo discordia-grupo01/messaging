@@ -5,9 +5,11 @@ defmodule MessagingWeb.SearchController do
   alias Messaging.Chat
   alias Messaging.Chat.Message
   alias MessagingWeb.ApiError
+  alias MessagingWeb.LimitParam
   alias MessagingWeb.Schemas
 
   @known_errors [
+    :invalid_payload,
     :invalid_search_query,
     :invalid_cursor,
     :not_server_member,
@@ -29,7 +31,12 @@ defmodule MessagingWeb.SearchController do
         "Los resultados van del más nuevo al más viejo y no incluyen mensajes eliminados. " <>
         "Sin coincidencias responde 200 con `messages` vacío.",
     parameters: [
-      server_id: [in: :path, type: :string, required: true, description: "UUID del servidor"],
+      server_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{type: :string, format: :uuid},
+        required: true,
+        description: "UUID del servidor"
+      ],
       q: [
         in: :query,
         type: :string,
@@ -81,18 +88,19 @@ defmodule MessagingWeb.SearchController do
     ]
 
   def index(conn, %{"server_id" => server_id} = params) do
-    search = %{
-      server_id: server_id,
-      user_id: conn.assigns.user_id,
-      text: Map.get(params, "q"),
-      author_id: Map.get(params, "author_id"),
-      channel_id: Map.get(params, "channel_id"),
-      before: Map.get(params, "before"),
-      limit: params |> Map.get("limit") |> parse_limit()
-    }
-
-    case Chat.search_messages(search) do
-      {:ok, page} -> json(conn, render_page(page))
+    with {:ok, limit} <- LimitParam.parse(Map.get(params, "limit")),
+         {:ok, page} <-
+           Chat.search_messages(%{
+             server_id: server_id,
+             user_id: conn.assigns.user_id,
+             text: Map.get(params, "q"),
+             author_id: Map.get(params, "author_id"),
+             channel_id: Map.get(params, "channel_id"),
+             before: Map.get(params, "before"),
+             limit: limit
+           }) do
+      json(conn, render_page(page))
+    else
       {:error, reason} -> respond_error(conn, reason)
     end
   end
@@ -111,15 +119,4 @@ defmodule MessagingWeb.SearchController do
 
   defp respond_error(conn, _reason),
     do: conn |> put_status(503) |> json(ApiError.payload(:search_unavailable))
-
-  defp parse_limit(nil), do: nil
-
-  defp parse_limit(raw) when is_binary(raw) do
-    case Integer.parse(raw) do
-      {n, _rest} -> n
-      :error -> nil
-    end
-  end
-
-  defp parse_limit(_other), do: nil
 end

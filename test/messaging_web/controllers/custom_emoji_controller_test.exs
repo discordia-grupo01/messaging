@@ -53,6 +53,12 @@ defmodule MessagingWeb.CustomEmojiControllerTest do
     assert %{"emojis" => []} = conn |> authed() |> get("/v1/custom-emojis") |> json_response(200)
   end
 
+  test "an ids parameter longer than the documented 4096 characters is a 400", %{conn: conn} do
+    conn = conn |> authed() |> get("/v1/custom-emojis?ids=#{String.duplicate("a", 4097)}")
+
+    assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
+  end
+
   test "more ids than allowed is a 400", %{conn: conn} do
     ids = List.duplicate(@id, 101) |> Enum.join(",")
     conn = conn |> authed() |> get("/v1/custom-emojis?ids=#{ids}")

@@ -137,13 +137,13 @@ defmodule MessagingWeb.BlockControllerTest do
       assert conn |> authed() |> get("/v1/blocks?limit=10") |> json_response(200) == %{
                "blocks" => []
              }
+    end
 
-      expect(Messaging.Chat.RepoMock, :list_blocks, fn _id, 50 -> {:ok, []} end)
-
-      Phoenix.ConnTest.build_conn()
-      |> authed()
-      |> get("/v1/blocks?limit=abc")
-      |> json_response(200)
+    test "a limit that is not an integer is rejected", %{conn: conn} do
+      for bad <- ["abc", "12abc", ":"] do
+        assert %{"error" => %{"code" => "INVALID_BODY"}} =
+                 conn |> authed() |> get("/v1/blocks?limit=#{bad}") |> json_response(400)
+      end
     end
   end
 end

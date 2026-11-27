@@ -5,6 +5,7 @@ defmodule MessagingWeb.MentionController do
   alias Messaging.Chat
   alias Messaging.Chat.UserMention
   alias MessagingWeb.ApiError
+  alias MessagingWeb.LimitParam
   alias MessagingWeb.Schemas
 
   tags ["mentions"]
@@ -26,20 +27,20 @@ defmodule MessagingWeb.MentionController do
     ],
     responses: [
       ok: {"Menciones sin leer", "application/json", Schemas.MentionList},
+      bad_request:
+        {"`limit` no es un número entero (`INVALID_BODY`)", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse}
     ]
 
   def index(conn, params) do
-    limit = params |> Map.get("limit") |> parse_limit()
-
-    case Chat.list_mentions(conn.assigns.user_id, limit: limit) do
-      {:ok, mentions} ->
-        json(conn, %{"mentions" => Enum.map(mentions, &UserMention.to_api/1)})
-
-      {:error, reason} ->
-        respond_error(conn, reason)
+    with {:ok, limit} <- LimitParam.parse(Map.get(params, "limit")),
+         {:ok, mentions} <- Chat.list_mentions(conn.assigns.user_id, limit: limit) do
+      json(conn, %{"mentions" => Enum.map(mentions, &UserMention.to_api/1)})
+    else
+      {:error, reason} -> respond_error(conn, reason)
     end
   end
 
@@ -49,10 +50,18 @@ defmodule MessagingWeb.MentionController do
       "Marca como leídas todas tus menciones en ese canal (por ejemplo, al abrirlo). " <>
         "Las que lleguen después siguen sin leer. Es idempotente.",
     parameters: [
-      channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"]
+      channel_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{type: :string, format: :uuid},
+        required: true,
+        description: "UUID del canal"
+      ]
     ],
     responses: [
       no_content: "Menciones del canal marcadas como leídas",
+      bad_request:
+        {"Un parámetro de la ruta supera los 64 caracteres (`INVALID_BODY`)", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
@@ -68,6 +77,7 @@ defmodule MessagingWeb.MentionController do
 
   defp respond_error(conn, reason)
        when reason in [
+              :invalid_payload,
               :channel_not_found,
               :channel_not_text,
               :server_suspended,
@@ -77,13 +87,4 @@ defmodule MessagingWeb.MentionController do
 
   defp respond_error(conn, _reason),
     do: conn |> put_status(503) |> json(ApiError.payload(:mentions_unavailable))
-
-  defp parse_limit(nil), do: nil
-
-  defp parse_limit(raw) when is_binary(raw) do
-    case Integer.parse(raw) do
-      {n, _rest} -> n
-      :error -> nil
-    end
-  end
 end
