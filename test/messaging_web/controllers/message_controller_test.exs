@@ -250,21 +250,12 @@ defmodule MessagingWeb.MessageControllerTest do
     assert json_response(conn, 400)["error"]["code"] == "INVALID_CURSOR"
   end
 
-  test "an unparseable `limit` falls back to the default page size", %{conn: conn} do
-    expect(Messaging.Chat.RepoMock, :get_channel, fn @channel_id -> text_channel_doc() end)
+  test "a `limit` that is not an integer is rejected", %{conn: conn} do
+    for bad <- ["not-a-number", "12abc", ":"] do
+      conn = build_conn() |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=#{bad}")
 
-    expect(Messaging.Chat.PermissionsStoreMock, :can_view_channel?, fn _channel, _uid ->
-      {:ok, true}
-    end)
-
-    expect(Messaging.Chat.RepoMock, :list_messages, fn @channel_id, opts ->
-      assert Keyword.get(opts, :limit) == 51
-      {:ok, []}
-    end)
-
-    conn = conn |> authed() |> get("/v1/channels/#{@channel_id}/messages?limit=not-a-number")
-
-    assert json_response(conn, 200)["messages"] == []
+      assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
+    end
   end
 
   test "the history carries each message's reactions as the caller sees them", %{conn: conn} do
@@ -589,6 +580,12 @@ defmodule MessagingWeb.MessageControllerTest do
   end
 
   describe "GET /v1/messages (lookup)" do
+    test "an ids parameter longer than the documented 2048 characters is a 400", %{conn: conn} do
+      conn = conn |> authed() |> get("/v1/messages?ids=#{String.duplicate("a", 2049)}")
+
+      assert json_response(conn, 400)["error"]["code"] == "INVALID_BODY"
+    end
+
     @other_channel_id "chan-2"
     @at ~U[2026-09-28 12:00:00Z]
 

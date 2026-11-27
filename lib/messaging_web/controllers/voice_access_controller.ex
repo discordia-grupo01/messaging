@@ -17,7 +17,17 @@ defmodule MessagingWeb.VoiceAccessController do
         "directa existente y se devuelve en la respuesta. En cualquier otro caso responde con el " <>
         "sobre de error y el cliente sólo mira el status.",
     parameters: [
-      recipient_id: [in: :path, type: :string, required: true, description: "Id del destinatario"],
+      recipient_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{
+          type: :string,
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[A-Za-z0-9_-]+$"
+        },
+        required: true,
+        description: "Id del destinatario"
+      ],
       conversation_id: [
         in: :query,
         type: :string,
@@ -28,6 +38,9 @@ defmodule MessagingWeb.VoiceAccessController do
     ],
     responses: [
       ok: {"Puede llamar", "application/json", Schemas.VoiceAccess},
+      bad_request:
+        {"El id del destinatario o la conversación no son válidos", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

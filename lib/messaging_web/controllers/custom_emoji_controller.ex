@@ -21,7 +21,7 @@ defmodule MessagingWeb.CustomEmojiController do
     parameters: [
       ids: [
         in: :query,
-        type: :string,
+        schema: %OpenApiSpex.Schema{type: :string, maxLength: 4096},
         required: false,
         description: "Ids separados por coma (hasta 100); sin ids devuelve la lista vacía"
       ]
@@ -29,6 +29,8 @@ defmodule MessagingWeb.CustomEmojiController do
     responses: [
       ok: {"Emojis encontrados", "application/json", Schemas.CustomEmojiList},
       bad_request: {"Más de 100 ids", "application/json", Schemas.ErrorResponse},
+      request_uri_too_long:
+        "URI demasiado larga: el servidor HTTP rechaza las que superan los 8 KB",
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
@@ -37,14 +39,18 @@ defmodule MessagingWeb.CustomEmojiController do
     ]
 
   def index(conn, params) do
-    ids = params |> Map.get("ids", "") |> to_string() |> String.split(",", trim: true)
+    raw = params |> Map.get("ids", "") |> to_string()
 
-    case Chat.list_custom_emojis(ids) do
-      {:ok, emojis} ->
-        json(conn, %{"emojis" => emojis})
+    if length(String.codepoints(raw)) > 4096 do
+      conn |> put_status(400) |> json(ApiError.payload(:invalid_payload))
+    else
+      case Chat.list_custom_emojis(String.split(raw, ",", trim: true)) do
+        {:ok, emojis} ->
+          json(conn, %{"emojis" => emojis})
 
-      {:error, reason} ->
-        conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
+        {:error, reason} ->
+          conn |> put_status(ApiError.http_status(reason)) |> json(ApiError.payload(reason))
+      end
     end
   end
 end
