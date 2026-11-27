@@ -37,6 +37,8 @@ defmodule MessagingWeb.PresenceController do
       bad_request:
         {"Faltan los ids, son más de #{Presence.max_snapshot_users()} o alguno no es válido",
          "application/json", Schemas.ErrorResponse},
+      request_uri_too_long:
+        "URI demasiado larga: el servidor HTTP rechaza las que superan los 8 KB",
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

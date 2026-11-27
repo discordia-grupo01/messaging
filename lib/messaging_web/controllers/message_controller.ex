@@ -109,6 +109,8 @@ defmodule MessagingWeb.MessageController do
       ok: {"Mensajes visibles", "application/json", Schemas.MessageLookup},
       bad_request:
         {"Falta `ids`, viene vacío o tiene más de 50", "application/json", Schemas.ErrorResponse},
+      request_uri_too_long:
+        "URI demasiado larga: el servidor HTTP rechaza las que superan los 8 KB",
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},

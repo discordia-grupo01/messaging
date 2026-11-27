@@ -29,6 +29,8 @@ defmodule MessagingWeb.CustomEmojiController do
     responses: [
       ok: {"Emojis encontrados", "application/json", Schemas.CustomEmojiList},
       bad_request: {"Más de 100 ids", "application/json", Schemas.ErrorResponse},
+      request_uri_too_long:
+        "URI demasiado larga: el servidor HTTP rechaza las que superan los 8 KB",
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
