@@ -114,12 +114,17 @@ defmodule MessagingWeb.ConversationControllerTest do
       assert json_response(conn, 200) == %{"conversations" => []}
     end
 
-    test "limit is passed on, and an unparseable one falls back to the default", %{conn: conn} do
+    test "limit is passed on, and one that is not an integer is rejected", %{conn: conn} do
       expect(Messaging.Chat.RepoMock, :list_conversations, fn _uid, 10 -> {:ok, []} end)
       conn |> authed() |> get("/v1/conversations?limit=10") |> json_response(200)
 
-      expect(Messaging.Chat.RepoMock, :list_conversations, fn _uid, 50 -> {:ok, []} end)
-      conn |> authed() |> get("/v1/conversations?limit=abc") |> json_response(200)
+      for bad <- ["abc", "12abc", ":"] do
+        assert %{"error" => %{"code" => "INVALID_BODY"}} =
+                 build_conn()
+                 |> authed()
+                 |> get("/v1/conversations?limit=#{bad}")
+                 |> json_response(400)
+      end
     end
 
     test "the last message of a conversation can be null once it was deleted", %{conn: conn} do

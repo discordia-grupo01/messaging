@@ -7,6 +7,7 @@ defmodule MessagingWeb.MessageController do
   alias Messaging.Chat
   alias Messaging.Chat.Message
   alias MessagingWeb.ApiError
+  alias MessagingWeb.LimitParam
   alias MessagingWeb.Schemas
 
   tags ["messages"]
@@ -21,7 +22,12 @@ defmodule MessagingWeb.MessageController do
         "un resultado de la búsqueda), y la respuesta trae además `newer_cursor`. " <>
         "`before`, `after` y `around` son excluyentes.",
     parameters: [
-      channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
+      channel_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{type: :string, format: :uuid},
+        required: true,
+        description: "UUID del canal"
+      ],
       limit: [
         in: :query,
         type: :integer,
@@ -66,9 +72,9 @@ defmodule MessagingWeb.MessageController do
 
   def index(conn, %{"channel_id" => channel_id} = params) do
     user_id = conn.assigns.user_id
-    limit = params |> Map.get("limit") |> parse_limit()
 
-    with {:ok, channel} <- Chat.channel_exists?(channel_id),
+    with {:ok, limit} <- LimitParam.parse(Map.get(params, "limit")),
+         {:ok, channel} <- Chat.channel_exists?(channel_id),
          {:ok, true} <- Chat.can_view_channel?(channel, user_id),
          {:ok, messages, cursors} <- fetch_page(channel_id, params, limit),
          {:ok, reactions} <- Chat.reactions_for(messages, user_id) do
@@ -94,7 +100,7 @@ defmodule MessagingWeb.MessageController do
     parameters: [
       ids: [
         in: :query,
-        schema: %OpenApiSpex.Schema{type: :string, pattern: "[^,\\s]"},
+        schema: %OpenApiSpex.Schema{type: :string, pattern: "[^,\\s]", maxLength: 2048},
         required: true,
         description: "Ids de mensaje separados por coma (de 1 a 50)"
       ]
@@ -134,7 +140,12 @@ defmodule MessagingWeb.MessageController do
         "marca como editado ni se emite nada. Al editar, el mensaje completo se emite en tiempo " <>
         "real a los miembros con el canal abierto como evento `message_updated`.",
     parameters: [
-      channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
+      channel_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{type: :string, format: :uuid},
+        required: true,
+        description: "UUID del canal"
+      ],
       message_id: [in: :path, type: :string, required: true, description: "UUID del mensaje"]
     ],
     request_body: {"Contenido nuevo", "application/json", Schemas.EditMessageRequest},
@@ -178,11 +189,19 @@ defmodule MessagingWeb.MessageController do
         "`message_deleted`, y los clientes desconectados lo reciben al reconectar en " <>
         "`changed_messages.deleted_ids`. Eliminar un mensaje ya eliminado responde 404.",
     parameters: [
-      channel_id: [in: :path, type: :string, required: true, description: "UUID del canal"],
+      channel_id: [
+        in: :path,
+        schema: %OpenApiSpex.Schema{type: :string, format: :uuid},
+        required: true,
+        description: "UUID del canal"
+      ],
       message_id: [in: :path, type: :string, required: true, description: "UUID del mensaje"]
     ],
     responses: [
       no_content: "Mensaje eliminado",
+      bad_request:
+        {"Un parámetro de la ruta supera los 64 caracteres (`INVALID_BODY`)", "application/json",
+         Schemas.ErrorResponse},
       unauthorized:
         {"Falta o es inválido el Authorization: Bearer <jwt>", "application/json",
          Schemas.ErrorResponse},
@@ -228,6 +247,14 @@ defmodule MessagingWeb.MessageController do
   end
 
   defp parse_ids(%{"ids" => raw}) when is_binary(raw) do
+    if length(String.codepoints(raw)) > 2048,
+      do: {:error, :invalid_payload},
+      else: parse_id_list(raw)
+  end
+
+  defp parse_ids(_params), do: {:error, :invalid_payload}
+
+  defp parse_id_list(raw) do
     ids =
       raw
       |> String.split(",", trim: true)
@@ -238,17 +265,6 @@ defmodule MessagingWeb.MessageController do
     if ids == [], do: {:error, :invalid_payload}, else: {:ok, ids}
   end
 
-  defp parse_ids(_params), do: {:error, :invalid_payload}
-
   defp fetch_content(%{"content" => content}) when is_binary(content), do: {:ok, content}
   defp fetch_content(_params), do: {:error, :invalid_payload}
-
-  defp parse_limit(nil), do: nil
-
-  defp parse_limit(raw) when is_binary(raw) do
-    case Integer.parse(raw) do
-      {n, _rest} -> n
-      :error -> nil
-    end
-  end
 end

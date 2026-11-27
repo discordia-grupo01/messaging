@@ -25,7 +25,8 @@ defmodule MessagingWeb.PresenceController do
         in: :query,
         schema: %OpenApiSpex.Schema{
           type: :string,
-          pattern: "^\\s*[A-Za-z0-9_-]{1,64}\\s*(,\\s*[A-Za-z0-9_-]{1,64}\\s*)*$"
+          pattern: "^\\s*[A-Za-z0-9_-]{1,64}\\s*(,\\s*[A-Za-z0-9_-]{1,64}\\s*)*$",
+          maxLength: 6600
         },
         required: true,
         description: "Ids separados por coma, hasta #{Presence.max_snapshot_users()}"

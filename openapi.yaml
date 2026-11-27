@@ -914,6 +914,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/BlockList'
           description: Usuarios bloqueados
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: '`limit` no es un número entero (`INVALID_BODY`)'
         '401':
           content:
             application/json:
@@ -976,6 +982,8 @@ paths:
           name: user_id
           required: true
           schema:
+            maxLength: 64
+            minLength: 1
             type: string
             x-struct:
             x-validate:
@@ -1014,12 +1022,19 @@ paths:
           name: channel_id
           required: true
           schema:
+            format: uuid
             type: string
             x-struct:
             x-validate:
       responses:
         '204':
           description: Menciones del canal marcadas como leídas
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Un parámetro de la ruta supera los 64 caracteres (`INVALID_BODY`)
         '401':
           content:
             application/json:
@@ -1046,6 +1061,7 @@ paths:
           name: channel_id
           required: true
           schema:
+            format: uuid
             type: string
             x-struct:
             x-validate:
@@ -1129,6 +1145,7 @@ paths:
           name: channel_id
           required: true
           schema:
+            format: uuid
             type: string
             x-struct:
             x-validate:
@@ -1143,6 +1160,12 @@ paths:
       responses:
         '204':
           description: Mensaje eliminado
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Un parámetro de la ruta supera los 64 caracteres (`INVALID_BODY`)
         '401':
           content:
             application/json:
@@ -1174,6 +1197,7 @@ paths:
           name: channel_id
           required: true
           schema:
+            format: uuid
             type: string
             x-struct:
             x-validate:
@@ -1247,6 +1271,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ConversationList'
           description: Conversaciones del usuario
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: '`limit` no es un número entero (`INVALID_BODY`)'
         '401':
           content:
             application/json:
@@ -1267,12 +1297,19 @@ paths:
           name: id
           required: true
           schema:
+            maxLength: 64
             type: string
             x-struct:
             x-validate:
       responses:
         '204':
           description: Conversación marcada como leída
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Un parámetro de la ruta supera los 64 caracteres (`INVALID_BODY`)
         '401':
           content:
             application/json:
@@ -1299,6 +1336,7 @@ paths:
           name: ids
           required: false
           schema:
+            maxLength: 4096
             type: string
             x-struct:
             x-validate:
@@ -1351,6 +1389,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MentionList'
           description: Menciones sin leer
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: '`limit` no es un número entero (`INVALID_BODY`)'
         '401':
           content:
             application/json:
@@ -1371,6 +1415,7 @@ paths:
           name: ids
           required: true
           schema:
+            maxLength: 2048
             pattern: '[^,\s]'
             type: string
             x-struct:
@@ -1414,6 +1459,7 @@ paths:
           name: user_ids
           required: true
           schema:
+            maxLength: 6600
             pattern: ^\s*[A-Za-z0-9_-]{1,64}\s*(,\s*[A-Za-z0-9_-]{1,64}\s*)*$
             type: string
             x-struct:
@@ -1457,6 +1503,7 @@ paths:
           name: server_id
           required: true
           schema:
+            format: uuid
             type: string
             x-struct:
             x-validate:
@@ -1580,6 +1627,9 @@ paths:
           name: recipient_id
           required: true
           schema:
+            maxLength: 64
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
             x-struct:
             x-validate:
@@ -1598,6 +1648,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/VoiceAccess'
           description: Puede llamar
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: El id del destinatario o la conversación no son válidos
         '401':
           content:
             application/json:
